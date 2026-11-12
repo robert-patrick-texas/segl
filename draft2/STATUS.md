@@ -4,8 +4,8 @@ This file is the source of truth for what is done and what to do next. Update it
 
 - Updated: 2026-11-12
 - Phase: P0 collaborative slots
-- Next task: T01b
-- Completed: T00, T00b, T01
+- Next task: T02
+- Completed: T00, T00b, T01, T01b
 - Blocked: no
 - Application code: Python skeleton (`src/segl`), health route only
 
@@ -62,3 +62,27 @@ This file is the source of truth for what is done and what to do next. Update it
     - `astral-sh/setup-uv` moved from v10.3.2 to v10.3.3 in both workflows.
   - Not listed in `versions.toml`: the uv 0.13.7 image digest in `deploy/Containerfile`. T01b's `check` covers the Actions pins and could cover this one.
   - Next action T01b.
+- 2026-11-12: T01b done, continued in the same session at the user's request. Evidence, all on commit `a0bfd11`:
+  - `uv run pytest` gave 105 passed. The 47 new tests are in `tests/test_release_check.py`, `tests/test_release_upgrade.py`, and `tests/test_release_publish.py`, with the fakes and the temporary repository in `tests/conftest.py`. They cover each acceptance case:
+    - The gate fails for an unheld newer release, passes for a held one, and fails again once a release newer than the held one appears.
+    - `upgrade` holds the component whose move fails the suite and keeps the others.
+    - `cut` leaves `versions.toml`, `pyproject.toml`, and `CHANGELOG.md` unchanged when the gate or the suite fails.
+    - A successful `cut` writes the version and the changelog section.
+    - `publish` stops at each preflight failure (eight cases) and never publishes `0.0.0`.
+    - A successful `publish` creates the annotated tag and calls `gh release create` with the notes.
+  - Four deliberate breakages of the script (gate ignoring a stale hold, `0.0.0` allowed, no restore after a failed move, `cut` skipping the gate) each failed a test.
+  - `uv run ruff check .` and `uv run ty check` printed `All checks passed!`. `uv run ruff format --check .` printed `29 files already formatted`.
+  - Against the real services, `python3 scripts/release.py check --gate` listed Python, ten packages, and five actions, all current, and exited 0. It also ran under Python 3.11.
+  - In a scratch copy with ruff, mdit-py-plugins, and setup-uv set back one release, the real `upgrade` moved all three, including md2html's inline metadata and the commit pin in both workflows, and the gate then passed. The real `cut` there wrote 0.1.0, and the suite passed on the result.
+  - `python3 scripts/release.py publish` in this repository stopped at `FAIL CHANGELOG.md has a 0.0.0 section` and created no tag.
+  - `docker build --no-cache -f deploy/Containerfile .` ran 105 passed. The image now installs git for the release tests.
+  - CI run 43166322740 and Pages run 43166322748 succeeded.
+  - Choices the task left open:
+    - The script is `scripts/release.py` plus sibling `release_*` modules, standard library only.
+    - "The suite" is the five commands CI runs. The web commands join once `web/package.json` exists, and T04 should add the browser tests to `WEB_SUITE` in `scripts/release_upgrade.py`.
+    - `upgrade` runs the suite before any move and changes nothing if that fails, so a broken tree does not hold every component.
+    - `cut` also writes the version to `pyproject.toml` and runs `uv lock`, because `uv.lock` records it and CI uses `uv sync --locked`.
+    - `cut --publish` is gone. `publish` is its own command.
+  - Not exercised for real: a hold written by a real failing release, a real `publish`, the web and Node paths (no `web/` yet), and PyPI upload.
+  - Still not listed in `versions.toml` or checked: the uv 0.13.7 image digest in `deploy/Containerfile`.
+  - Next action T02.

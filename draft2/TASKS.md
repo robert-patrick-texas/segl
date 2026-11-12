@@ -83,7 +83,7 @@ Out of scope: the release command (T01b), React, Excalidraw, SQLite, nginx, the 
 
 ## T01b — Release command
 
-- Status: next
+- Status: done
 - Requires: T01
 - Requirements: D2-020
 - Read: `docs/RELEASING.md`, `docs/DECISIONS.md` D2-016, D2-020, and D2-022
@@ -109,7 +109,7 @@ ruff and ty pass.
 
 ## T02 — Config, relative mount, nginx harness
 
-- Status: pending
+- Status: next
 - Requires: T01
 - Requirements: S-006, S-007
 - Read: `docs/DEPLOY.md`, `docs/ARCHITECTURE.md` (mount and navigation), `docs/API.md` (config route), `docs/SECURITY.md`
