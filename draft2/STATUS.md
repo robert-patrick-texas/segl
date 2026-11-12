@@ -4,10 +4,10 @@ This file is the source of truth for what is done and what to do next. Update it
 
 - Updated: 2026-11-12
 - Phase: P0 collaborative slots
-- Next task: T06
-- Completed: T00, T00b, T01, T01b, T02, T03, T04, T05
+- Next task: T07
+- Completed: T00, T00b, T01, T01b, T02, T03, T04, T05, T06
 - Blocked: no
-- Application code: Python service (`src/segl`) with settings, SQLite storage for the nine slots, the health, config, and slot read routes, and the pages of the web build. Display names: the word file, the allocation route, and its limit per client address. Browser application (`web/`) with the segl bar, this browser's display name in it, and the Excalidraw canvas for each slot. Nothing drawn is saved or shared yet
+- Application code: Python service (`src/segl`) with settings, SQLite storage for the nine slots, the health, config, and slot routes, and the pages of the web build. Display names: the word file, the allocation route, and its limit per client address. Live collaboration: the WebSocket at `/collab`, a room for each slot, the title route, the edit gate, and the Origin check. Browser application (`web/`) with the segl bar (slots, title, who is here, connection state, this browser's name) and the Excalidraw canvas for each slot, shared live. A drawing is in the server's memory only. Nothing drawn is saved yet
 
 ## Log
 
@@ -250,3 +250,80 @@ This file is the source of truth for what is done and what to do next. Update it
     - Rootless Docker and Podman were not tried. `scripts/release.py check --gate` was not run in this task.
   - Still not listed in `versions.toml` or checked: the uv 0.13.7 and Node 26.13.1 image digests in `deploy/Containerfile`.
   - Next action T06.
+- 2026-11-12: T06 done. Evidence, all on commit `8a9502f`:
+  - Acceptance, on the host with Node 26.13.1, nginx 1.28.3, and Chromium from the `mcr.microsoft.com/playwright:v1.65.0-noble` container through `PW_WS_ENDPOINT`:
+    - `npm --prefix web run e2e` gave 108 passed in 2.9 minutes: 36 tests in each of `direct`, `root`, and `board`, run one at a time. The 12 new tests are the ten of `web/e2e/collab.spec.ts`, the one of `web/e2e/reconcile.spec.ts`, and one from splitting a test in `web/e2e/slot.spec.ts`. "Two browsers" is two browser contexts against the one server.
+    - T-001: a rectangle drawn in one context appeared in the other under the same id at the same place, and one drawn in the second appeared in the first.
+    - S-002's cursors: the second context's pointer showed on the first one's canvas with its name, and a move of 120 by 50 pixels arrived as that move.
+    - T-002: both contexts drew at the same moment, and both rectangles were in both, at the same version.
+    - T-003: one context moved a rectangle, the other saw the move and deleted it, it went from both, and it was still gone after each reloaded and had the room's scene again.
+    - T-004: with one context's socket closed by the test, its bar said `Disconnected` and the other's count fell to 1. That context drew, and the other drew and moved a rectangle both held. With the socket let through again the bar said `Live`, each had what the other drew, and the first had the other's move, not its own older copy.
+    - T-013, the WebSocket half: in the `board` project those tests run over `wss://127.0.0.1:18951/board/collab?slot=5`, and the test checks that this is the only socket the page opened. `web/e2e/mount.spec.ts` now also fails for a socket outside the mount.
+    - T-014, the broadcast: a rename to `john smith` showed as `John Smith` in another context's list and beside the cursor, for both tabs of the browser that renamed.
+    - T-015: two connections on slot 3 showed count 2 and both labels, a context on slot 1 showed 1, and closing one context dropped the count to 1. Two tabs of one browser counted as two with one label.
+    - T-016: a title typed in one context's bar showed in the other's heading, page title, and slot link, and was still there after a reload. `POST api/v1/slots` and `DELETE api/v1/slots/4` answered `405`.
+    - T-008, by pytest, in process and from a `python -m segl --config` process with `edit_token` in its TOML: a connection without the token, or with a wrong one, got `viewOnly` true, received an editor's elements, and had its own answered with `view_only` and sent to nobody. `PATCH` without the header was `403` with `view_only`, and with it `200`. With no token configured both connections edited. History has no route yet (T08).
+    - `uv run pytest` gave 694 passed and none skipped. The 301 new tests are 88 in `tests/test_room.py`, 81 in `tests/test_reconcile.py`, 78 in `tests/test_collab.py`, and 54 in `tests/test_origin.py`, counted with `pytest --collect-only` on this commit and on `6680c5b`.
+    - `uv run ruff check .` and `uv run ty check` printed `All checks passed!`. `uv run ruff format --check .` printed `50 files already formatted`.
+    - `npm --prefix web run check` passed. `npm --prefix web test` gave 280 passed in 15 files, 155 of them new in 7 files. `npm --prefix web run format:check` passed.
+  - Through nginx by pytest (`tests/test_collab.py`), with the `deploy/nginx/` files in front of a real process and the `websockets` client: two sockets synced an element at `/board/collab` and at a host root, and a title change through the mount reached both. A handshake, a `PATCH`, and `POST api/v1/display-name` were each `403` with `bad_origin` for four origins: another site, the site's name without its port, another name on the same port, and the site's name on the next port. With the mount's own origin they passed. The accepted handshakes set no cookie.
+  - The reconcile rule: `tests/reconcile_cases.json` has 15 cases. pytest holds `segl.reconcile` to it, in both directions and applied twice. `web/e2e/reconcile.spec.ts` holds the pinned editor's `reconcileElements` to it in the page, with either side as the local one. Vitest holds the browser's own rule for what to send to it.
+  - CI run 43199807171 succeeded on Node 26.13.1 with 694 pytest, 280 Vitest, and 108 browser tests passed. Pages run 43199807302 succeeded. `python3 scripts/build_docs.py` found 0 broken links.
+  - `docker build --progress=plain -f deploy/Containerfile .` (rootful Docker) ran 280 Vitest tests, Prettier, the build, and 694 pytest tests, all passed. The journal entry was written after that build.
+  - `python3 scripts/release.py check --gate` listed `python websockets 17.4: current` with every other component, printed `gate: every component is current or held`, and exited 0.
+  - A real run on a scratch port with the packaged list and the production build:
+    - `PATCH /api/v1/slots/4` with `Origin: https://evil.example` was `403` with `bad_origin`. With the server's own origin it was `200` with the title trimmed to `Core network`. `DELETE` was `405` with `allow: GET, PATCH`.
+    - A socket's handshake was `101` with no `Set-Cookie`, `hello` as `McKinley7` got a `welcome` naming `McKinley7` as written, and a handshake from another site was `403` with the JSON error. The log has `"WebSocket /collab?slot=4" [accepted]` and `"WebSocket /collab?slot=4" 403`.
+    - Two contexts in the container's Chromium: a rectangle drawn in one was in both, and after a rename both lists read `John Smith` and `Bravo2`, each marking its own entry `you`. A screenshot at 1280 px showed the title `Core network`, the count 2 with its list open, `Live`, the rectangle, and the other's cursor labelled `Bravo2`. One at 390 px showed the bar wrapped onto several lines, with the open list over the canvas.
+  - The same build against a server with `edit_token` set, by hand in the container's Chromium: a context without the token had no toolbar and a title that is not a button, and saw the rectangle a context with the stored token drew. That one changed the title, and the first showed it. A `PATCH` forced from the first page was `403` with `view_only`. No request URL had the token, and the server log had it 0 times. No test covers this in a browser (T10).
+  - The dev loop: `npm run dev` with `SEGL_API_URL` at that server. Two contexts on `http://127.0.0.1:5173/s/1` drew to each other, a rename reached the other's list, and a move to slot 2 gave an empty canvas there and count 1 on slot 1. The socket was `ws://127.0.0.1:5173/collab?slot=1`, through Vite's proxy.
+  - Deliberate breakages, one at a time, each restored afterwards:
+    - 42 in the server and in `deploy/nginx/`. 41 failed a test. The 42nd, the lock that keeps two title changes in one order, failed none: the test did not force the two to overlap. It does now, and the breakage fails it.
+    - 34 in the browser's own logic, against Vitest. All 34 failed a test.
+    - 15 against the browser tests. 13 failed one. Sending offline edits only at the next change failed none in the browser, because the canvas reports a change right after the merge. The same breakage is one of the 34 and fails Vitest. Mounting a scene that was loaded for another slot failed none and showed nothing: the editor is ready only after that render is gone. That rule is now `loadedScene` in `web/src/load.ts` with tests of its own, and the breakage fails them.
+    - Among them: the version and nonce comparisons reversed, a viewer allowed to send, the epoch not checked, the Origin middleware removed, the port left out of the comparison, the token not asked for on `PATCH`, `NaN` read, a message of any size taken, the nginx `Upgrade` header dropped, `Host` passed without its port, what arrives replacing the canvas, deletions not sent, cursors not drawn, the socket asked for at the host root, and no retry after a drop.
+  - Found while doing it, and fixed in the task:
+    - The connection handler waited for its two tasks with `asyncio.gather`. Once in the first 12 runs a test client's socket closed with a bare `CancelledError`. With `asyncio.wait` in its place, 25 runs of `tests/test_origin.py` passed.
+    - The editor is constructed after its language file loads, and in development React constructs it twice. `web/src/canvas/Canvas.tsx` hands the editor on at its first change, and takes the one that has loaded. Before that the page never connected on the Vite dev server.
+    - From reading the code, not from a failure: a name typed between `hello` and `welcome` was not sent. It now waits for `welcome`, and a Vitest test holds that.
+  - Tests that existed and changed, because a room keeps what a test drew and the title is now a button:
+    - `web/e2e/slot.spec.ts`: the test of the empty scene and the canvas tools is two tests, the first on slot 9, which no test draws on.
+    - `web/e2e/mount.spec.ts`: it uses slot 2, waits for the font from before the page loads, places its text at a place of the project's own, and looks only at the element it placed.
+    - `web/e2e/names.spec.ts`: it leaves the name field by pressing the notice, not the heading.
+    - `tests/test_config.py`: the options given to uvicorn now include `ws` and `ws_max_size`.
+  - Differences from the task text, and choices it left open:
+    - A participant has no `color`, and the client's `presence` is a cursor alone (D2-027). The pinned editor draws a remote cursor in a color it computes from the collaborator's id and ignores one it is given. A first version had the server assign colors, and its swatch in the list did not match the cursor.
+    - `websockets` 17.4 is a new dependency (D2-027). Plain uvicorn has no WebSocket protocol, and the tests use its client.
+    - The room keeps the scene in memory, from the first connection to a slot until segl stops. A drawing outlasts every browser leaving, a reload gets it back from the room, and a restart loses it. `GET /api/v1/slots/{n}/scene` still returns the stored head. T07 writes the head.
+    - T-003 as tested: the deletion is the later edit, and wins. A deletion made at the same moment as a move is settled by D2-025 like any two edits, so a move that made more versions wins over it. `tests/reconcile_cases.json` has both cases.
+    - The edit token is read once per connection, from `hello`. `docs/ARCHITECTURE.md` also named later mutation messages. The page already sends a stored token in `hello` and in the `PATCH` header, and puts the editor in view mode when `welcome` says so. T10 keeps the `#e=` link, the wording in the bar, and the browser test.
+    - `hello` must be the first message, within 10 seconds, with a `clientId` of 1–64 letters, digits, `_`, and `-`. Its `displayName` is taken as written, or is null for a browser the server has refused a name. Such a browser says `hello` again, on a new socket, once it has a name, because `rename` would title-case it.
+    - `welcome` has `connectionId`, so the page can mark its own entry and leave itself off its canvas. A rename is sent to its sender too.
+    - New error codes in `docs/API.md`: `bad_message`, `unknown_type`, and `invalid_name` on the socket, and `bad_request` (400), `invalid_title` (422), and `payload_too_large` (413, for a title body over 4096 bytes) on the route. A title with a control character, such as a line break, is refused.
+    - The Origin check is middleware in front of every route. Any method but `GET`, `HEAD`, and `OPTIONS` is a mutation, so `POST /api/v1/display-name` is covered. A port left out is the scheme's own. A request without `Origin` passes.
+    - A browser that stops reading is closed with code 1013 once 1024 messages or 16 MiB wait for it. A message over `max_scene_bytes` closes its connection with 1009. A message with `NaN` or `Infinity` is `bad_message`, because Python would send it on and a browser could not parse it.
+    - `GET` and `PATCH` of a slot are one route, so that a `405` names both in `Allow`.
+    - The page opens the socket once the canvas is mounted with the slot's scene. It sends edits at most every 30 ms and cursors every 50 ms, and after a drop tries again after 0.5, 1, 2, and then every 5 seconds.
+    - The presence control shows nothing while the socket is not live. The editor's own row of avatars is hidden with CSS, because pressing one follows that person's view, which segl does not carry.
+    - The browser tests run with `workers: 1`. `SLOTS` in `web/e2e/pages.ts` says which slot each kind of test may change. `window.SEGL_CANVAS` gained `reconcile()` and `peers()`.
+    - `journal/2026-11-12-the-slots-became-shared.md` has the three stories: the shared slots, the cancellation, and the color.
+  - For T07:
+    - `Room.from_head` keeps the elements and drops the rest of the stored document. The flush needs the rest, such as `appState`, to write a whole document back, with `ordered(room.elements.values())` as its elements.
+    - `Room._elements` is where a room becomes dirty, and `connection.display_name` there is the editor label, which may be `None`.
+    - The flush on SIGTERM goes in the lifespan hook of `src/segl/app.py`, before `repository.close()`. Rooms are never unloaded, so the flush on last leave belongs where `Room.leave` empties `connections`.
+    - `files` is an `unknown_type` today. The page ignores a type it does not know, so `saved` breaks nothing until `web/src/collab/session.ts` reads it. `ConnectionStatus` and `statusLabel` take `saving` and `saved`.
+    - `max_scene_bytes` limits one message. Nothing limits the size of a room's whole scene yet.
+  - Not done or not exercised:
+    - T-008 in a browser test, and the notice for a viewer (T10). History under the gate (T08).
+    - The number of connections is not limited, and neither is a room's memory.
+    - The canvas's background color and grid are not shared. The laser pointer and following another person's view are not carried.
+    - The editor keeps this browser's copy of an element it is editing when a newer one arrives. What the two browsers then show until the next edit was not tested.
+    - A browser's batch of offline edits larger than `max_scene_bytes` would be refused each time it reconnects. Not tried.
+    - The page does not check that an open socket is still alive. It relies on the browser noticing. The server's 20-second ping was not waited for, and neither was an idle socket through nginx's 120-second timeout.
+    - Runs of the browser tests in this task: one of `direct` alone with 1 failure, which led to the change in `web/e2e/names.spec.ts`, one of all three projects with 2 failures, which led to the changes in `web/e2e/mount.spec.ts`, then two with 108 passed, and CI's. Only Chromium was run.
+    - `uv run segl` on its default port was not run. The real runs used `--config` on a scratch port.
+    - The editor logs `Permissions policy violation: unload is not allowed in this document` in Chromium's console. Whether it did before this task was not looked into.
+    - The 10-editor and 1,000-element runs (T11). The dev container does not run the browser tests (T11). Rootless Docker and Podman were not tried.
+    - The Python packages have no attribution in `NOTICE`, `websockets` now among them. T12 settles what the `.deb` carries.
+  - Still not listed in `versions.toml` or checked: the uv 0.13.7 and Node 26.13.1 image digests in `deploy/Containerfile`.
+  - Next action T07.
