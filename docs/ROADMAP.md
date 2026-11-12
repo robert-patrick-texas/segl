@@ -14,7 +14,7 @@ Symbol palette and typed links from the draft1 baseline: cable, circuit, relatio
 
 ## P2 — Inventory files and protected workspaces (L-002, L-004)
 
-Bearer-token login stored in `localStorage`. Named boards at `/{team}/{project}/{board-slug}` with multiple boards per project folder. CSV, JSON, and TOML import into those workspaces only. Slot routes and slot tables do not join to inventory tables. The first path segment `s` remains the slots.
+Bearer-token login stored in `localStorage`. This is where real user authentication starts: RADIUS as one option, and SAML or other methods after it. Until then P0's access codes (D2-033) keep editing to people who were given a code, and they authenticate nobody. Some boards may stay open to read without signing in. Named boards at `/{team}/{project}/{board-slug}` with multiple boards per project folder. CSV, JSON, and TOML import into those workspaces only. Slot routes and slot tables do not join to inventory tables. The first path segment `s` remains the slots.
 
 ## P3 — Scale-out stores and adapters (L-003, L-006)
 

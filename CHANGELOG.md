@@ -65,6 +65,7 @@ The project is specified, licensed, and public on GitHub. A Python service reads
 - The notice in the bar says where this browser stands with the edit gate (S-016): that it has the token and can edit, that editing is locked for want of the token, or that segl did not take the token it has.
 - Tests for the edit gate in a browser: `web/e2e/token.spec.ts` (T-008), against a second test server that has a token, directly and through nginx at `/board/` and at a host root. `web/e2e/origin.spec.ts` shows a page of another site refused by the Origin check, for a request and for the collaboration socket (T-012).
 - `tests/test_sweep.py` is T-012 as one walk over every route: no answer sets a cookie or carries a CORS header, a mutation or a WebSocket upgrade from another site is `bad_origin`, and a mutation without the token is `view_only`, in process and through nginx. A route that is added and is not in the walk fails a test.
+- A task for access codes, T10b, is in the queue (D2-033). The site will list codes or phrases beside a server secret, a browser will enter one on an access page and be issued a signed pass with its time of issue, which the site can limit in hours or end, and `internal_networks` will close segl to every other address. Not built yet.
 
 ### Changed
 

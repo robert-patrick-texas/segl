@@ -255,10 +255,58 @@ The page takes the fragment out of the address at once and stores the token only
 
 Acceptance: T-008 in the browser, including the fragment link. T-012 across the routes that now exist, including a WebSocket handshake and the Origin refusals. ruff, ty, and the web checks pass.
 
-## T11 — P0 browser matrix in the dev container
+## T10b — Access codes, passes, and internal networks
 
 - Status: pending
 - Requires: T10
+- Requirements: S-008 (which this task rewords), S-007, S-016, and a new S-018 for `internal_networks`
+- Read: `docs/DECISIONS.md` D2-033, D2-032, and D2-027, `docs/SECURITY.md`, `docs/ARCHITECTURE.md` (edit gate), and texas2step's `docs/access.md` and `src/texas2step/access.py` in `/home/netops/code/texas2step`, whose access codes this follows in their simplest form
+
+Added on 2026-11-12 at the user's request, after T10. It replaces the one static `edit_token` with access codes that buy a pass (D2-033). The aim is to keep honest people on an internal network from changing or deleting a board by mistake while segl is introduced. It is not authentication: there are no users and no accounts, and a pass says only that someone knew a code. Real authentication comes in a later phase, with RADIUS as one option and SAML or other methods after it (`docs/ROADMAP.md`). Keep this task small.
+
+Settings, each in `docs/DEPLOY.md` and `deploy/segl.toml.example`:
+
+- `access_codes`: a list of codes, words, or phrases, `[]` by default. Empty means everyone edits, as an empty `edit_token` does today. With one or more, editing needs a pass, and `GET api/v1/config` says `editRequired` true.
+- `access_secret`: the server's secret, which signs a pass. segl does not start with codes and no secret. It is never in a log, a page, or an answer, and stays out of the `Settings` repr, as the token does today.
+- `access_pass_hours`: how long a pass can be used from the moment it was issued, 12 by default, and `0` for no limit.
+- `access_passes_after`: an optional time. A pass issued before it is refused. Setting it and restarting ends every pass issued so far, while the codes still work.
+- `internal_networks`: a list of IPv4 and IPv6 networks in CIDR form, `[]` by default.
+- `edit_token` goes: no release shipped with it. A file that still has it stops segl by the unknown-key rule, and the message should point at `access_codes`.
+
+A code is compared as texas2step compares one (`normalize` there): lowercase letters and digits, with any run of other characters as one separator, so `Maple River 42` and `maple.river.42` are one code. The comparison is constant-time, against every code in the list. A code with fewer than 8 letters and digits, or one that is in the list twice, stops segl at startup, and the message gives the entry's place in the list and not its text.
+
+A pass is texas2step's: the time it was issued, and a signature over it under `access_secret`, as `<issued>.<signature>`. The code it was bought with goes into what is signed, so taking a code out of the list ends the passes that code bought. Anything else the pass needs to carry goes in the same way, signed. It is printable ASCII and far under 256 characters, so T10's rule for what a page can send in a header still holds for it. The server keeps no list of passes. It takes a pass when the signature fits one of the codes, compared in constant time, when the pass was issued at or after `access_passes_after`, when it is not from more than five minutes ahead of the server's clock, and when it is younger than `access_pass_hours` as that is set now.
+
+The server:
+
+- `POST api/v1/access` takes `{ "code" }`, a JSON object of at most 4096 bytes, and answers `{ "pass", "expiresAt" }` with `Cache-Control: no-store`. `expiresAt` is null when there is no limit. A wrong code is `403` with a new code such as `wrong_code`. It sets no cookie, and it is a mutation for the Origin check.
+- Wrong codes are counted per client address, in memory, as the display-name limit counts: after five in a row, every code from that address is `429` with `rate_limited` and `Retry-After` for fifteen minutes, and a right code starts the count again. texas2step counts by network and keeps a file. That is more than this needs.
+- The gate checks a pass wherever `may_edit` compares the token today: in `hello`, and in the header of a title change, a restore, an import, and an upload. The header and the field keep their names, `X-Segl-Edit-Token` and `editToken`, and carry the pass.
+- A pass can end while a socket is open. The connection keeps the time its pass ends, from `hello`, and an `elements` or `files` message after that time is answered `view_only`, as any viewer's is. The page already turns view-only when it is told so.
+- With `internal_networks` set, segl answers nobody outside it. Every request and every WebSocket handshake from another address is `403` with a new code such as `outside_network`, before any route and before the Origin check, the health route and the pages among them. The address is the one segl already believes, `X-Forwarded-For` from `trusted_proxies` (`docs/SECURITY.md`). Loopback counts as inside, as in texas2step's `is_internal`, and an IPv4 address written as IPv6 is read as IPv4. An entry that is not a network stops segl at startup. `docs/DEPLOY.md` has to say that a proxy missing from `trusted_proxies` makes every client look like the proxy. A firewall can do the same job. This is the second check.
+
+The page:
+
+- A browser that may not edit has a button in the bar, by the notice, such as `Enter access code`. It opens the access page, `access` under segl's root, which Python serves as it serves `/`. Add `access` to the reserved first segments in `docs/API.md`. The page has one field. A right code stores the pass under the `basePath` key, where the token is today, and goes back to the slot the person came from, where the page says `hello` again and may edit. A wrong code is answered in words, and so is a browser that has to wait.
+- It is called the access page, not a login: a login has a user, and that name is kept for the later phase.
+- T10's notice keeps its states. Its `refused` state now also means a pass that has ended, and its words say so and point at the button.
+- The `#e=` link of T10 stays and carries a pass, unless the user says to remove it. D2-032 holds either way: what a link carries is proven before it is stored.
+- No cookie (S-007). The pass lives in `localStorage` and goes to the server in the header and in `hello`, and in no URL.
+
+Tests:
+
+- pytest: codes and their normal form, the pass and each of the four reasons to refuse one, with a clock the test moves, the route, the count of wrong codes, and each gate. A real process with codes in its TOML, and the access route through nginx. `tests/test_sweep.py` takes the new route into its walk, and the `outside_network` answer sets no cookie either.
+- `internal_networks` in process, and against a real process that trusts `127.0.0.1` and is sent `X-Forwarded-For`, as `tests/test_names.py` does for the name limit. The test nginx overwrites that header with `127.0.0.1`, so through it every client is inside.
+- The browser: the server of the `token-` projects gets `access_codes` in place of `edit_token`, and `web/e2e/token.spec.ts` has a viewer press the button, enter the code, and edit. A pass that ends needs a server of its own with a short `access_pass_hours`, as `web/e2e/server.ts` starts one for the restart tests.
+
+Documents: reword S-008 and T-008 from the token to codes and a pass. Add S-018, and test-plan rows after T-018 for codes and passes and for `internal_networks`. Take the new rows into T11's and T13's ranges and into the gate line of `docs/ROADMAP.md`. Update `docs/API.md`, `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/DEPLOY.md` (its operator notes name `edit_token`), `docs/DEVELOPMENT.md`, rule 9 of `draft2/AGENTS.md`, `README.md`, and `CHANGELOG.md`.
+
+Acceptance: T-008 as reworded, the new rows, and T-012 with the new route. ruff, ty, and the web checks pass.
+
+## T11 — P0 browser matrix in the dev container
+
+- Status: pending
+- Requires: T10b
 - Requirements: S-017 and the browser rows of `docs/TEST-PLAN.md`
 - Read: `docs/TEST-PLAN.md`, `docs/DEVELOPMENT.md` (browsers)
 
