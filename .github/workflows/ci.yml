@@ -40,5 +40,12 @@ jobs:
       - name: Types
         run: uv run ty check
 
+      # The mount tests run nginx with the deploy/nginx/ files. They skip on a
+      # host without nginx; SEGL_REQUIRE_NGINX makes that a failure here.
+      - name: Install nginx for the mount tests
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends nginx openssl
+
       - name: Tests
         run: uv run pytest
+        env:
+          SEGL_REQUIRE_NGINX: "1"

@@ -4,7 +4,7 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
-The project is specified, licensed, and public on GitHub. Application code has started with a Python skeleton that serves a health route, checked by CI and a dev container.
+The project is specified, licensed, and public on GitHub. Application code has started with a Python service that reads its settings and serves a health and a config route. CI and a dev container check it, including through nginx at `/board/`.
 
 ### New
 
@@ -19,6 +19,10 @@ The project is specified, licensed, and public on GitHub. Application code has s
 - The release command (`scripts/release.py`, `docs/RELEASING.md`): `check --gate` covers Python, every direct dependency, and the pinned GitHub Actions. `upgrade` moves one component at a time and holds one that fails the suite. `cut` writes the version and the changelog section. `publish` runs its preflight, tags, and creates the GitHub Release.
 - CI (`.github/workflows/ci.yml`) runs those checks on pushes to `main` and on pull requests.
 - The dev container, `deploy/Containerfile`: Ubuntu 26.04 and uv, running the suite with uv's Python.
+- Every setting in `docs/DEPLOY.md`, with `deploy/segl.toml.example` as the file the package will install. Without `--config`, segl uses the development defaults and reads a local `segl.toml` when one exists. A key segl does not know, or a value it cannot use, stops it at startup with a message that names the key.
+- `GET /api/v1/config` returns `{ "editRequired" }`.
+- segl believes `X-Forwarded-For` and `X-Forwarded-Proto` only from `trusted_proxies`, which takes addresses and networks. It sends no redirect of its own, so a trailing slash on an API path is a `404`.
+- Mount tests: `uv run pytest` runs nginx with the `deploy/nginx/` files in front of a real segl process, at `/board/` and at a host root (`tests/test_mount.py`, `tests/harness.py`). They skip without nginx or openssl. The dev container and CI install nginx and set `SEGL_REQUIRE_NGINX=1`, which turns the skip into a failure.
 
 ### Changed
 

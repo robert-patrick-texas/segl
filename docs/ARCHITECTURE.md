@@ -43,7 +43,7 @@ Vite builds with `base: './'`, so the built `index.html` names its files `./asse
 
 `editRequired` is true when `edit_token` is non-empty. The token value is never injected. In the Vite dev server, which serves the page itself at the host root, a missing `SEGL_CONFIG` means `root` is the host root, and `editRequired` comes from `GET api/v1/config`.
 
-segl's own redirects are relative. nginx's `/board` to `/board/` redirect is in `deploy/nginx/segl-board.conf`.
+segl's own redirects are relative. It sends none today: the framework's trailing-slash redirect is absolute and is turned off, so `/api/v1/health/` is a `404`. nginx's `/board` to `/board/` redirect is in `deploy/nginx/segl-board.conf`, and is relative too.
 
 `localStorage` keys include `basePath` so two mounts on one origin stay separate:
 

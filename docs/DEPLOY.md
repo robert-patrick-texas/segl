@@ -2,7 +2,7 @@
 
 ## Configuration
 
-`/opt/segl/etc/segl.toml` on the server. `deploy/segl.toml.example` (T02) is that file as the `.deb` installs it:
+`/opt/segl/etc/segl.toml` on the server. `deploy/segl.toml.example` is that file as the `.deb` installs it, with a comment on each key:
 
 ```toml
 bind = "127.0.0.1:8000"
@@ -18,11 +18,15 @@ history_interval_seconds = 1
 head_flush_seconds = 0.2
 ```
 
-There is no base-path setting. segl serves at its root, and nginx strips the path it mounts segl under (`ARCHITECTURE.md`, mount and navigation). `trusted_proxies` lists the addresses whose `X-Forwarded-For` header segl believes. Keep it to the nginx host.
+There is no base-path setting. segl serves at its root, and nginx strips the path it mounts segl under (`ARCHITECTURE.md`, mount and navigation).
 
-`bind` is `host:port`. Write an IPv6 host in brackets, as in `[::1]:8000`. When the file `--config` names does not exist, segl starts with the defaults.
+`trusted_proxies` lists the addresses whose `X-Forwarded-For` and `X-Forwarded-Proto` headers segl believes. An entry is an IP address or a network such as `10.0.0.0/8`. Keep it to the nginx host. An empty list believes nobody. `*` is refused, because it would let any client choose the address segl records for it.
 
-Without `--config`, segl runs with development defaults: the values above, except `database = "var/segl.sqlite"`, `assets_dir = "var/assets"`, and `display_names = "deploy/display-names.txt"`, relative to the working directory. Git ignores `var/`. A local `segl.toml`, also ignored, can override any of them. Tests point `database`, `assets_dir`, and `display_names` at temporary paths and may shorten the flush interval.
+`bind` is `host:port`. Write an IPv6 host in brackets, as in `[::1]:8000`. When the file `--config` names does not exist, segl starts with the defaults above.
+
+segl checks the file when it starts. A key it does not know, such as a misspelled `edit_token` or the removed `base_path`, or a value it cannot use, stops it with exit status 2 and a message that names the key. The message never repeats the token. The sizes and `history_limit` are whole numbers, 1 or more. The two intervals are seconds above 0.
+
+Without `--config`, segl runs with development defaults: the values above, except `database = "var/segl.sqlite"`, `assets_dir = "var/assets"`, and `display_names = "deploy/display-names.txt"`, relative to the working directory. Git ignores `var/`. Without `--config`, segl also reads `segl.toml` from the working directory when that file exists, so a local file, which git ignores too, can override any of them. With `--config`, only the named file is read. Tests point `database`, `assets_dir`, and `display_names` at temporary paths and may shorten the flush interval.
 
 The example file ships with `edit_token = ""`. Operators who set a token restrict the file to mode `0640`, owner `root`, group `segl`.
 
@@ -88,11 +92,13 @@ What the proxy settings do:
 
 To mount segl at another path, change `/board` in the three places in `segl-board.conf`. segl needs no change. TLS certificates are the site's. The examples include Ubuntu's `snippets/snakeoil.conf` as a placeholder.
 
-T00 checked these files with nginx 1.28.3 on 2026-11-11. `nginx -t` passed for both site examples. A run in front of a stub backend showed the prefix stripped, the port kept in `Host`, a client-sent `X-Forwarded-For` replaced, the upgrade headers passed through, a 51 MiB body accepted and a 53 MiB body refused with 413, and the server block's HSTS header kept. T02's harness repeats the check against segl itself.
+T00 checked these files with nginx 1.28.3 on 2026-11-11. `nginx -t` passed for both site examples. A run in front of a stub backend showed the prefix stripped, the port kept in `Host`, a client-sent `X-Forwarded-For` replaced, the upgrade headers passed through, a 51 MiB body accepted and a 53 MiB body refused with 413, and the server block's HSTS header kept.
+
+The test suite repeats the check against segl itself on every run (`tests/test_mount.py`, T02). It copies these files into a temporary folder laid out like `/etc/nginx`, and runs nginx there in front of a real segl process. The copies differ from the shipped files only in the upstream port, the listening ports, and a test certificate in place of snakeoil. The tests run `nginx -t` on each site example, then check the `/board` redirect, the health and config routes under `/board/` and at a host root, the path and client address segl sees, and that no response sets a cookie.
 
 ## Dev container
 
-`deploy/Containerfile` is based on Ubuntu 26.04 and installs uv, Node for the web build, nginx for the mount tests, and the browser Playwright needs. It does not install the production `.deb` layout. Tests run with `uv sync` and `uv run` inside the container, using the project's pinned Python. Rootful Docker, rootless Docker, or rootless Podman can build and run it (D2-015). T01 created the file with uv alone, pinned by image digest, and its build runs `uv run pytest` as the image's unprivileged `ubuntu` account. T02 adds nginx, T04 Node, and T11 the browser. T11 is the first task that must pass the full browser suite inside it. The host tools are in `DEVELOPMENT.md`.
+`deploy/Containerfile` is based on Ubuntu 26.04 and installs uv, Node for the web build, nginx for the mount tests, and the browser Playwright needs. It does not install the production `.deb` layout. Tests run with `uv sync` and `uv run` inside the container, using the project's pinned Python. Rootful Docker, rootless Docker, or rootless Podman can build and run it (D2-015). T01 created the file with uv alone, pinned by image digest, and its build runs `uv run pytest` as the image's unprivileged `ubuntu` account. T02 added nginx and openssl, and set `SEGL_REQUIRE_NGINX=1`, so the tests through nginx fail there instead of skipping. T04 adds Node, and T11 the browser. T11 is the first task that must pass the full browser suite inside it. The host tools are in `DEVELOPMENT.md`.
 
 ## Production container
 

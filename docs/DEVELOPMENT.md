@@ -15,7 +15,8 @@ These versions were verified on the development host, Ubuntu 26.04.1 LTS on amd6
 | cloc | 2.06 | The line count in release notes (`RELEASING.md`). | T00 |
 | Docker | 29.8.2, rootful | The dev container, `FROM ubuntu:26.04`. Rootless Docker or rootless Podman also work (D2-015). | T01 |
 | Node.js and npm | 24.22.1 and 11.19.1 | Building and testing `web/`. The project's Node version is `web/.node-version` (D2-023). | T04 |
-| nginx | 1.28.3 | Trying the `deploy/nginx/` files on the host. The dev container installs its own for the mount tests. | T02 |
+| nginx | 1.28.3 | The mount tests, which run it without root on loopback ports with the `deploy/nginx/` files. They need 1.25.1 or newer. The dev container installs its own. | T02 |
+| openssl | 3.5.5 | The mount tests' certificate. | T02 |
 | dpkg-deb | 1.23.7 | Building the `.deb`. | T12 |
 
 Python-side tools come from `uv.lock`, not the host: ruff, ty, pytest, and httpx2 (T01). httpx2 is the transport of the FastAPI test client. Starlette deprecates plain httpx there. Web-side tools come from `web/package-lock.json`: Vite, TypeScript, Vitest, Playwright, and Prettier (T04).
@@ -45,7 +46,7 @@ uv run ruff format --check .
 uv run ty check
 ```
 
-`uv run pytest` covers `tests/` and `tools/md2html`. The release script's tests use fakes for the network, `gh`, and `git push`, and real `git` in a temporary repository. One test builds the wheel with `uv build` to confirm it carries `versions.toml`, so it needs the network the first time. ruff's settings are in `pyproject.toml`: 100-character lines, Markdown left alone, and `scripts/` kept to Python 3.11 syntax because the host's `python3` runs them.
+`uv run pytest` covers `tests/` and `tools/md2html`. Some tests start a real `segl` process on a free loopback port. The mount tests (`tests/test_mount.py`) also start nginx in front of it, from a temporary copy of the `deploy/nginx/` files (`tests/harness.py`). On a host without nginx or openssl they skip, and the summary line says why. With `SEGL_REQUIRE_NGINX=1` they fail instead. The dev container and CI set it. The release script's tests use fakes for the network, `gh`, and `git push`, and real `git` in a temporary repository. One test builds the wheel with `uv build` to confirm it carries `versions.toml`, so it needs the network the first time. ruff's settings are in `pyproject.toml`: 100-character lines, Markdown left alone, and `scripts/` kept to Python 3.11 syntax because the host's `python3` runs them.
 
 The dev container runs the same suite while it builds, from the repository root:
 
@@ -62,7 +63,7 @@ npm --prefix web run format:check   # Prettier
 npm --prefix web run e2e            # Playwright, against Python serving the production build
 ```
 
-CI runs the same commands (`.github/workflows/ci.yml`, from T01).
+CI runs the same commands (`.github/workflows/ci.yml`, from T01). It installs nginx first and sets `SEGL_REQUIRE_NGINX=1`.
 
 ## Dev loop
 

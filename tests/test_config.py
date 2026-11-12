@@ -12,37 +12,157 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Settings from ``--config``: the bind address, and a missing file."""
+"""Settings: every key in docs/DEPLOY.md, the two sets of defaults, and refusals."""
 
+import re
+import tomllib
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from segl import cli
-from segl.config import DEFAULT_BIND, ConfigError, Settings, load_settings, parse_bind
+from segl.config import (
+    DEFAULT_BIND,
+    DEFAULTS,
+    ConfigError,
+    Settings,
+    load_settings,
+    parse_bind,
+    parse_trusted_proxies,
+)
+
+ROOT = Path(__file__).resolve().parents[1]
+EXAMPLE = ROOT / "deploy" / "segl.toml.example"
+
+PRODUCTION = Settings(
+    host="127.0.0.1",
+    port=8000,
+    trusted_proxies=("127.0.0.1", "::1"),
+    edit_token="",
+    database=Path("/opt/segl/var/segl.sqlite"),
+    assets_dir=Path("/opt/segl/var/assets"),
+    display_names=Path("/opt/segl/etc/display-names.txt"),
+    max_asset_bytes=10 * 1024 * 1024,
+    max_scene_bytes=50 * 1024 * 1024,
+    history_limit=50,
+    history_interval_seconds=1.0,
+    head_flush_seconds=0.2,
+)
 
 
-def test_defaults_without_a_config_path() -> None:
+@pytest.fixture
+def empty_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Run the test in a working directory that has no ``segl.toml``."""
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
+
+
+def write(folder: Path, text: str) -> Path:
+    config = folder / "segl.toml"
+    config.write_text(text, encoding="utf-8")
+    return config
+
+
+def test_a_missing_config_file_gives_the_production_defaults(tmp_path: Path) -> None:
+    settings = load_settings(tmp_path / "absent.toml")
+
+    assert settings == PRODUCTION
+    assert settings.bind == DEFAULT_BIND
+    assert not settings.edit_required
+
+
+def test_an_empty_config_file_gives_the_production_defaults(tmp_path: Path) -> None:
+    assert load_settings(write(tmp_path, "")) == PRODUCTION
+
+
+def test_the_example_file_lists_every_key_at_its_default() -> None:
+    example = tomllib.loads(EXAMPLE.read_text(encoding="utf-8"))
+
+    assert example == dict(DEFAULTS)
+    assert list(example) == list(DEFAULTS)
+    assert load_settings(EXAMPLE) == PRODUCTION
+
+
+def test_the_deployment_page_shows_the_example_files_values() -> None:
+    page = (ROOT / "docs" / "DEPLOY.md").read_text(encoding="utf-8")
+    block = re.search(r"^```toml\n(.*?)^```$", page, flags=re.MULTILINE | re.DOTALL)
+    assert block
+
+    assert tomllib.loads(block.group(1)) == tomllib.loads(EXAMPLE.read_text(encoding="utf-8"))
+
+
+def test_no_config_flag_gives_the_development_defaults(empty_directory: Path) -> None:
     settings = load_settings()
 
-    assert settings == Settings(host="127.0.0.1", port=8000)
+    assert settings.database == Path("var/segl.sqlite")
+    assert settings.assets_dir == Path("var/assets")
+    assert settings.display_names == Path("deploy/display-names.txt")
     assert settings.bind == DEFAULT_BIND
+    assert settings.trusted_proxies == PRODUCTION.trusted_proxies
+    assert settings.head_flush_seconds == PRODUCTION.head_flush_seconds
 
 
-def test_a_missing_file_gives_the_defaults(tmp_path: Path) -> None:
-    assert load_settings(tmp_path / "absent.toml") == load_settings()
+def test_a_local_segl_toml_overrides_the_development_defaults(empty_directory: Path) -> None:
+    write(empty_directory, 'bind = "127.0.0.1:9001"\nedit_token = "local"\n')
+
+    settings = load_settings()
+
+    assert (settings.host, settings.port) == ("127.0.0.1", 9001)
+    assert settings.edit_required
+    assert settings.database == Path("var/segl.sqlite")
 
 
-def test_bind_comes_from_the_file(tmp_path: Path) -> None:
-    config = tmp_path / "segl.toml"
-    config.write_text('bind = "0.0.0.0:9001"\n', encoding="utf-8")
+def test_a_local_segl_toml_is_not_read_with_a_config_flag(empty_directory: Path) -> None:
+    write(empty_directory, 'bind = "127.0.0.1:9001"\n')
 
-    assert load_settings(config) == Settings(host="0.0.0.0", port=9001)
+    assert load_settings(empty_directory / "absent.toml") == PRODUCTION
+
+
+def test_every_key_comes_from_the_file(tmp_path: Path) -> None:
+    config = write(
+        tmp_path,
+        """
+        bind = "[::1]:9001"
+        trusted_proxies = ["10.0.0.5", "192.168.0.0/24", "2001:DB8::1"]
+        edit_token = "s3cret"
+        database = "data/segl.sqlite"
+        assets_dir = "/srv/segl/assets"
+        display_names = "names.txt"
+        max_asset_bytes = 1
+        max_scene_bytes = 2
+        history_limit = 3
+        history_interval_seconds = 0.5
+        head_flush_seconds = 4
+        """,
+    )
+
+    assert load_settings(config) == Settings(
+        host="::1",
+        port=9001,
+        trusted_proxies=("10.0.0.5", "192.168.0.0/24", "2001:db8::1"),
+        edit_token="s3cret",
+        database=Path("data/segl.sqlite"),
+        assets_dir=Path("/srv/segl/assets"),
+        display_names=Path("names.txt"),
+        max_asset_bytes=1,
+        max_scene_bytes=2,
+        history_limit=3,
+        history_interval_seconds=0.5,
+        head_flush_seconds=4.0,
+    )
+
+
+def test_the_edit_token_is_not_in_the_settings_repr(tmp_path: Path) -> None:
+    settings = load_settings(write(tmp_path, 'edit_token = "s3cret"\n'))
+
+    assert settings.edit_required
+    assert "s3cret" not in repr(settings)
 
 
 def test_an_ipv6_bind_uses_brackets() -> None:
     assert parse_bind("[::1]:8000") == ("::1", 8000)
-    assert Settings(host="::1", port=8000).bind == "[::1]:8000"
+    assert replace(PRODUCTION, host="::1").bind == "[::1]:8000"
 
 
 @pytest.mark.parametrize(
@@ -53,12 +173,64 @@ def test_an_unusable_bind_is_refused(value: object) -> None:
         parse_bind(value)
 
 
-def test_invalid_toml_is_a_config_error(tmp_path: Path) -> None:
-    config = tmp_path / "segl.toml"
-    config.write_text("bind = \n", encoding="utf-8")
+def test_an_empty_proxy_list_believes_nobody() -> None:
+    assert parse_trusted_proxies([]) == ()
 
-    with pytest.raises(ConfigError, match=r"segl\.toml"):
+
+@pytest.mark.parametrize(
+    "value",
+    ["127.0.0.1", ["*"], ["proxy.example"], ["10.0.0.1/8"], [""], [7], ["127.0.0.1", "nope"]],
+)
+def test_an_unusable_proxy_list_is_refused(value: object) -> None:
+    with pytest.raises(ConfigError, match="trusted_proxies"):
+        parse_trusted_proxies(value)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "edit_token = 5",
+        'database = ""',
+        "assets_dir = 3",
+        "display_names = []",
+        "max_asset_bytes = 0",
+        "max_scene_bytes = 1.5",
+        'history_limit = "50"',
+        "history_limit = true",
+        "history_interval_seconds = 0",
+        "head_flush_seconds = -1",
+        "head_flush_seconds = true",
+        "head_flush_seconds = nan",
+        "history_interval_seconds = inf",
+    ],
+)
+def test_an_unusable_value_is_refused_by_key(tmp_path: Path, line: str) -> None:
+    key = line.split(" = ")[0]
+
+    with pytest.raises(ConfigError, match=key):
+        load_settings(write(tmp_path, line + "\n"))
+
+
+def test_an_unknown_key_is_refused_by_name(tmp_path: Path) -> None:
+    # base_path was removed (D2-007). A misspelled edit_token must not pass quietly.
+    config = write(tmp_path, 'base_path = "/board"\nedit_tokn = "s3cret"\n')
+
+    with pytest.raises(ConfigError, match=r"unknown key base_path, edit_tokn") as refused:
         load_settings(config)
+
+    assert "s3cret" not in str(refused.value)
+
+
+def test_a_bad_edit_token_is_not_echoed(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError) as refused:
+        load_settings(write(tmp_path, "edit_token = 12345678\n"))
+
+    assert "12345678" not in str(refused.value)
+
+
+def test_invalid_toml_is_a_config_error(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match=r"segl\.toml"):
+        load_settings(write(tmp_path, "bind = \n"))
 
 
 def test_the_command_serves_with_a_missing_config_file(
@@ -66,20 +238,33 @@ def test_the_command_serves_with_a_missing_config_file(
 ) -> None:
     served: dict[str, object] = {}
 
-    def fake_run(app: object, *, host: str, port: int) -> None:
-        served.update(host=host, port=port)
+    def fake_run(app: object, **options: object) -> None:
+        served.update(options)
 
     monkeypatch.setattr(cli.uvicorn, "run", fake_run)
 
     assert cli.main(["--config", str(tmp_path / "absent.toml")]) == 0
-    assert served == {"host": "127.0.0.1", "port": 8000}
+    assert served == {
+        "host": "127.0.0.1",
+        "port": 8000,
+        "proxy_headers": True,
+        "forwarded_allow_ips": ["127.0.0.1", "::1"],
+    }
+
+
+def test_the_command_passes_the_trusted_proxies_to_uvicorn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    served: dict[str, object] = {}
+    monkeypatch.setattr(cli.uvicorn, "run", lambda app, **options: served.update(options))
+
+    assert cli.main(["--config", str(write(tmp_path, "trusted_proxies = []\n"))]) == 0
+    # An empty list, not None: None would make uvicorn fall back to its own default.
+    assert served["forwarded_allow_ips"] == []
 
 
 def test_the_command_reports_a_bad_config_and_exits_2(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    config = tmp_path / "segl.toml"
-    config.write_text('bind = "nowhere"\n', encoding="utf-8")
-
-    assert cli.main(["--config", str(config)]) == 2
+    assert cli.main(["--config", str(write(tmp_path, 'bind = "nowhere"\n'))]) == 2
     assert "is not host:port" in capsys.readouterr().err

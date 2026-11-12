@@ -11,7 +11,7 @@ A mutation, or a WebSocket upgrade, whose `Origin` header is present and does no
 | Method | Path | Function |
 |---|---|---|
 | GET | `/api/v1/health` | `{ "status": "ok" }` |
-| GET | `/api/v1/config` | `{ "editRequired" }`. Same fact as the injected script. No token. |
+| GET | `/api/v1/config` | `{ "editRequired" }`, true when `edit_token` is set. Same fact as the injected script. No token, and the token is never in the response. |
 | GET | `/api/v1/slots` | Nine entries: number, title, epoch, savedAt. |
 | GET | `/api/v1/slots/{n}` | One slot's metadata. |
 | PATCH | `/api/v1/slots/{n}` | Body `{ "title" }`. Trimmed, 1–80 characters. Edit token when set. Broadcasts a `slot` message to the room. |
@@ -21,6 +21,8 @@ A mutation, or a WebSocket upgrade, whose `Origin` header is present and does no
 | POST | `/api/v1/slots/{n}/restore` | Body `{ "revision" }`. Replaces the head, increments epoch, appends a revision, broadcasts to the room. Edit token when set. |
 | POST | `/api/v1/display-name` | Allocates the next `WordN`. No edit token. Rate-limited to 30 calls per minute per client address (`SECURITY.md`). |
 | POST | `/api/v1/slots/{n}/import` | Body is an Excalidraw JSON document. Same epoch rules as restore. Edit token when set. Reject above `max_scene_bytes` with `413` and `payload_too_large`. |
+
+Paths are exact. A trailing slash, as in `/api/v1/health/`, is a `404` and is not redirected.
 
 `{n}` outside 1–9 returns `404` with `invalid_slot`. The app sends those URLs to slot 1 before calling the API.
 

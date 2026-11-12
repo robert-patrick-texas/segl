@@ -14,22 +14,16 @@
 
 """The health route, in process and from a running ``segl`` process."""
 
-import json
-import socket
-import subprocess
-import sys
-import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from harness import make_settings, running_segl
 
 from segl.app import create_app
 
 
 def test_health_answers_ok() -> None:
-    response = TestClient(create_app()).get("/api/v1/health")
+    response = TestClient(create_app(make_settings())).get("/api/v1/health")
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
@@ -37,62 +31,16 @@ def test_health_answers_ok() -> None:
 
 
 def test_generated_documentation_pages_are_off() -> None:
-    client = TestClient(create_app())
+    client = TestClient(create_app(make_settings()))
 
     for path in ("/docs", "/redoc", "/openapi.json"):
         assert client.get(path).status_code == 404
 
 
-def free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return probe.getsockname()[1]
-
-
-def fetch_health(port: int, process: subprocess.Popen[str]) -> dict[str, str]:
-    """Poll the health route until the process answers, exits, or ten seconds pass."""
-    url = f"http://127.0.0.1:{port}/api/v1/health"
-    deadline = time.monotonic() + 10
-    while True:
-        try:
-            with urllib.request.urlopen(url, timeout=2) as response:
-                return json.load(response)
-        except urllib.error.URLError, ConnectionError:
-            if process.poll() is not None or time.monotonic() > deadline:
-                raise
-            time.sleep(0.05)
-
-
-def serve(config: Path) -> tuple[subprocess.Popen[str], int]:
-    """Start ``segl --config`` with ``bind`` set to a free loopback port, when the file exists."""
-    port = free_port()
-    if config.is_file():
-        config.write_text(f'bind = "127.0.0.1:{port}"\n', encoding="utf-8")
-    process = subprocess.Popen(
-        [sys.executable, "-m", "segl", "--config", str(config)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    return process, port
-
-
-def stop(process: subprocess.Popen[str]) -> str:
-    process.terminate()
-    try:
-        output, _ = process.communicate(timeout=10)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        output, _ = process.communicate()
-    return output
-
-
 def test_process_serves_health_on_the_configured_bind(tmp_path: Path) -> None:
-    config = tmp_path / "segl.toml"
-    config.touch()
-    process, port = serve(config)
-    try:
-        assert fetch_health(port, process) == {"status": "ok"}
-    finally:
-        output = stop(process)
-    assert f"127.0.0.1:{port}" in output
+    with running_segl(tmp_path) as server:
+        reply = server.get("/api/v1/health")
+
+        assert reply.status == 200
+        assert reply.json() == {"status": "ok"}
+        assert f"127.0.0.1:{server.port}" in server.logged_line("Uvicorn running on")

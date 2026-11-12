@@ -16,23 +16,35 @@
 
 from fastapi import FastAPI
 
+from segl.config import Settings
 from segl.versions import app_version
 
 
-def create_app() -> FastAPI:
-    """Build the application."""
+def create_app(settings: Settings) -> FastAPI:
+    """Build the application for these settings."""
     # FastAPI's generated documentation pages are off. docs/API.md is the
     # contract, and those pages use absolute URLs that a path mount would break.
+    #
+    # The trailing-slash redirect is off for the same reason. It is absolute,
+    # built from the path segl sees, so under /board/ it would send the browser
+    # outside the mount. Any redirect segl does send must be relative.
     app = FastAPI(
         title="segl",
         version=app_version(),
         openapi_url=None,
         docs_url=None,
         redoc_url=None,
+        redirect_slashes=False,
     )
+    app.state.settings = settings
 
     @app.get("/api/v1/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/api/v1/config")
+    def config() -> dict[str, bool]:
+        # The fact only. The token itself is never sent to a browser.
+        return {"editRequired": settings.edit_required}
 
     return app

@@ -47,5 +47,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ConfigError as exc:
         print(f"segl: {exc}", file=sys.stderr)
         return 2
-    uvicorn.run(create_app(), host=settings.host, port=settings.port)
+    uvicorn.run(
+        create_app(settings),
+        host=settings.host,
+        port=settings.port,
+        # X-Forwarded-For and X-Forwarded-Proto count only when the connection
+        # comes from one of these addresses, which is nginx (docs/SECURITY.md).
+        proxy_headers=True,
+        forwarded_allow_ips=list(settings.trusted_proxies),
+    )
     return 0

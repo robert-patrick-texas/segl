@@ -73,12 +73,13 @@ select = ["E", "W", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.ty.environment]
 python-version = "3.15"
-# md2html's and the release script's modules import their siblings by bare name.
-extra-paths = ["tools/md2html", "scripts"]
+# md2html's and the release script's modules import their siblings by bare
+# name, and the tests import tests/harness.py the same way.
+extra-paths = ["tools/md2html", "scripts", "tests"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "tools"]
 # md2html's and the release script's modules import their siblings the way
-# the scripts do at runtime.
-pythonpath = ["tools/md2html", "scripts"]
+# the scripts do at runtime. tests/harness.py is imported as `harness`.
+pythonpath = ["tools/md2html", "scripts", "tests"]
 addopts = ["-ra", "--strict-markers", "--import-mode=importlib"]
