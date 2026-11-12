@@ -1,0 +1,110 @@
+/*
+ * Copyright 2026 segl contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+.segl-bar {
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	min-height: 2.75rem;
+	padding: 0.25rem 0.75rem;
+	background: #1b3a57;
+	color: #f4f1e8;
+	font-size: 0.875rem;
+}
+
+.segl-bar__brand {
+	font-weight: 700;
+	letter-spacing: 0.04em;
+}
+
+.segl-bar__slots {
+	display: flex;
+	gap: 0.25rem;
+}
+
+.segl-bar__slot {
+	display: grid;
+	place-items: center;
+	width: 1.75rem;
+	height: 1.75rem;
+	border: 1px solid rgb(244 241 232 / 35%);
+	border-radius: 0.375rem;
+	color: inherit;
+	font-variant-numeric: tabular-nums;
+	text-decoration: none;
+}
+
+.segl-bar__slot:hover {
+	background: rgb(244 241 232 / 15%);
+}
+
+.segl-bar__slot:focus-visible {
+	outline: 2px solid #7fd1ae;
+	outline-offset: 2px;
+}
+
+.segl-bar__slot.active {
+	border-color: #7fd1ae;
+	background: #7fd1ae;
+	color: #10263a;
+	font-weight: 700;
+}
+
+.segl-bar__title {
+	flex: 0 1 auto;
+	min-width: 0;
+	margin: 0;
+	overflow: hidden;
+	font-size: 1rem;
+	font-weight: 600;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.segl-bar__presence {
+	flex: 0 0 auto;
+	min-width: 2.5rem;
+}
+
+.segl-bar__notice {
+	flex: 1 1 12rem;
+	min-width: 0;
+	margin: 0;
+	color: #d9e4ec;
+	font-size: 0.8125rem;
+	line-height: 1.25;
+	text-align: right;
+}
+
+.segl-bar__version {
+	flex: 0 0 auto;
+	color: #a9bccb;
+	font-size: 0.75rem;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+	.segl-bar {
+		flex-wrap: wrap;
+		row-gap: 0.25rem;
+	}
+
+	.segl-bar__notice {
+		flex-basis: 100%;
+		text-align: left;
+	}
+}

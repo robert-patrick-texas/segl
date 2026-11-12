@@ -12,8 +12,9 @@ license = "Apache-2.0"
 # Exact CPython. `scripts/release.py check` reports a newer one from
 # `uv python list`; `upgrade` moves to it after the tests pass (D2-016).
 python = "3.15.2"
-# Node builds the frontend. T04 sets the newest LTS release; empty until then.
-node = ""
+# Node builds the frontend and runs its tests; it is not a runtime service.
+# The newest LTS release. web/.node-version mirrors it (D2-023).
+node = "26.13.1"
 
 [python.dependencies]
 fastapi = "0.162.5"
@@ -36,9 +37,23 @@ hatchling = "1.33.0"
 markdown-it-py = "4.3.0"
 mdit-py-plugins = "0.7.0"
 
+# web/package.json mirrors these two tables: dependencies and devDependencies.
 [web.dependencies]
+"@excalidraw/excalidraw" = "0.18.1"
+react = "19.3.1"
+react-dom = "19.3.1"
+react-router = "8.5.1"
 
 [web.dev]
+"@playwright/test" = "1.65.0"
+"@types/node" = "26.6.6"
+"@types/react" = "19.3.0"
+"@types/react-dom" = "19.3.0"
+"@vitejs/plugin-react" = "6.3.0"
+prettier = "3.10.1"
+typescript = "7.0.2"
+vite = "8.3.8"
+vitest = "5.1.0"
 
 # Filled by scripts/release.py when a newer release fails tests.
 # Example:

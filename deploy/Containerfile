@@ -6,21 +6,31 @@
 #     podman build -f deploy/Containerfile .
 #
 # Rootful Docker, rootless Docker, and rootless Podman all build it (D2-015).
-# T02 added nginx for the mount tests. Later tasks add Node (T04) and the
-# Playwright browser (T11).
+# T02 added nginx for the mount tests, and T04 Node for the web checks and
+# the web build. T11 adds the Playwright browser and runs the browser tests.
 
 # uv 0.13.7, pinned by image digest, as Sunstone's images pin it.
 FROM ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490 AS uv
 
+# Node 26.13.1, web/.node-version, pinned by image digest, as Sunstone's
+# images pin it. Only node and npm are taken from it.
+FROM docker.io/library/node:26.13.1-trixie-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc AS node
+
 FROM docker.io/library/ubuntu:26.04
 # uv downloads CPython and packages over HTTPS. The release script's tests
 # run git in a temporary repository. The mount tests run nginx with the
-# deploy/nginx/ files, and openssl makes their certificate.
+# deploy/nginx/ files, and openssl makes their certificate. Node's own
+# binary needs libatomic.
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        ca-certificates git nginx openssl \
+        ca-certificates git libatomic1 nginx openssl \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=uv /uv /uvx /usr/local/bin/
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+    && node --version && npm --version
 
 # The suite runs as the image's unprivileged account, not as root.
 RUN install -d -o ubuntu -g ubuntu /work
@@ -30,13 +40,25 @@ WORKDIR /work
 ENV UV_LINK_MODE=copy \
     UV_PYTHON_PREFERENCE=only-managed \
     UV_COMPILE_BYTECODE=0 \
-    SEGL_REQUIRE_NGINX=1
+    SEGL_REQUIRE_NGINX=1 \
+    npm_config_update_notifier=false
 
 # Python and the locked packages first, so a source change reuses this layer.
 COPY --chown=ubuntu:ubuntu .python-version pyproject.toml uv.lock versions.toml ./
 RUN uv sync --locked --no-install-project
 
+# The locked web packages, in a layer of their own for the same reason.
+COPY --chown=ubuntu:ubuntu web/package.json web/package-lock.json web/.npmrc web/.node-version web/
+RUN npm --prefix web ci --ignore-scripts --no-audit --no-fund
+
 COPY --chown=ubuntu:ubuntu . .
-RUN uv sync --locked && uv run pytest
+# The web checks and the build, then pytest, which also holds its stand-in
+# for the build to the real one.
+RUN uv sync --locked \
+    && npm --prefix web run check \
+    && npm --prefix web test \
+    && npm --prefix web run format:check \
+    && npm --prefix web run build \
+    && uv run pytest
 
 CMD ["uv", "run", "pytest"]

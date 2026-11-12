@@ -84,7 +84,9 @@ def test_console_module_prints_the_application_version() -> None:
     assert completed.stdout == f"segl {ROOT_VERSION}\n"
 
 
-def test_the_built_wheel_carries_versions_toml_and_the_migrations(tmp_path: Path) -> None:
+def test_the_built_wheel_carries_versions_toml_the_migrations_and_the_empty_scene(
+    tmp_path: Path,
+) -> None:
     uv = shutil.which("uv")
     if uv is None:
         pytest.skip("uv is not on PATH, so the wheel cannot be built")
@@ -103,3 +105,6 @@ def test_the_built_wheel_carries_versions_toml_and_the_migrations(tmp_path: Path
         for migration in sorted((ROOT / "src" / "segl" / "migrations").glob("*.sql")):
             assert archive.read(f"segl/migrations/{migration.name}") == migration.read_bytes()
         assert "segl/migrations/0001_slots.sql" in archive.namelist()
+        # The scene a new slot starts with.
+        empty_scene = ROOT / "src" / "segl" / "empty_scene.json"
+        assert archive.read("segl/empty_scene.json") == empty_scene.read_bytes()

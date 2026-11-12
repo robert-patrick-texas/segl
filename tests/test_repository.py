@@ -15,6 +15,7 @@
 """The SQLite repository: migrations, the nine slots, and every method in
 docs/DATA-MODEL.md."""
 
+import json
 import re
 import sqlite3
 from collections.abc import Iterator
@@ -24,9 +25,11 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from harness import EMPTY_SCENE, EMPTY_SCENE_FILE
 
 from segl.repository import (
     PLACEHOLDER_SCENE,
+    SYSTEM_LABEL,
     EpochMismatch,
     InvalidSlot,
     Migration,
@@ -36,6 +39,7 @@ from segl.repository import (
     Slot,
     StorageError,
     apply_migrations,
+    load_empty_scene,
     load_migrations,
 )
 
@@ -43,6 +47,8 @@ ROOT = Path(__file__).resolve().parents[1]
 START = datetime(2026, 11, 12, 9, 0, 0, tzinfo=UTC)
 STARTED = "2026-11-12T09:00:00.000Z"
 DRAWN = '{"elements":[{"id":"a","version":1}]}'
+# The head of a new slot, as the repository stores it.
+EMPTY = load_empty_scene()
 
 
 class Clock:
@@ -129,13 +135,75 @@ def test_bootstrap_creates_nine_slots(repo: Repository) -> None:
     ]
 
 
-def test_a_new_slot_has_the_placeholder_scene(repo: Repository) -> None:
+def test_a_new_slot_has_the_editors_empty_scene(repo: Repository) -> None:
     for n in range(1, 10):
         head = repo.get_head(n)
 
         assert (head.slot, head.epoch, head.editor_label) == (n, 1, "System")
-        assert head.scene_json == PLACEHOLDER_SCENE == '{"elements":[]}'
+        assert head.scene_json == EMPTY
         assert head.saved_at == STARTED
+
+
+def test_the_empty_scene_is_the_captured_file_without_its_whitespace() -> None:
+    assert json.loads(EMPTY) == EMPTY_SCENE
+    assert json.dumps(EMPTY_SCENE, separators=(",", ":")) == EMPTY
+    assert list(json.loads(EMPTY)) == list(EMPTY_SCENE), "the keys keep the editor's order"
+
+
+def test_the_empty_scene_is_an_excalidraw_document_with_no_elements() -> None:
+    """What the editor wrote, not a hand-made schema (docs/DATA-MODEL.md)."""
+    assert EMPTY_SCENE["type"] == "excalidraw"
+    assert EMPTY_SCENE["source"] == "segl"
+    assert EMPTY_SCENE["elements"] == []
+    assert isinstance(EMPTY_SCENE["version"], int)
+    assert isinstance(EMPTY_SCENE["appState"], dict)
+    # No host name of the machine it was captured on.
+    assert "://" not in EMPTY_SCENE_FILE.read_text(encoding="utf-8")
+
+
+def placeholder_database(database: Path, clock: Clock) -> None:
+    """Leave ``database`` as T03 made one: every head holds the placeholder."""
+    with Repository(database, clock=clock) as repo:
+        repo.bootstrap()
+    with closing(sqlite3.connect(database)) as db:
+        db.execute("UPDATE slot_head SET scene_json = ?", (PLACEHOLDER_SCENE,))
+        db.commit()
+
+
+def test_bootstrap_gives_a_placeholder_head_the_empty_scene(database: Path, clock: Clock) -> None:
+    placeholder_database(database, clock)
+
+    clock.advance(60)
+    with Repository(database, clock=clock) as repo:
+        repo.bootstrap()
+
+        for n in range(1, 10):
+            head = repo.get_head(n)
+            assert (head.scene_json, head.epoch, head.editor_label) == (EMPTY, 1, "System")
+            assert head.saved_at == "2026-11-12T09:01:00.000Z"
+        assert repo.list_revisions(1) == []
+
+
+def test_bootstrap_leaves_every_other_head_alone(database: Path, clock: Clock) -> None:
+    placeholder_database(database, clock)
+    spaced = '{"elements": []}'
+    with Repository(database, clock=clock) as repo:
+        # Saved by a person: drawn on, the placeholder's own text, and nearly that text.
+        repo.save_head(2, 1, DRAWN, "Alpha1")
+        repo.save_head(3, 1, PLACEHOLDER_SCENE, "Bravo2")
+        repo.save_head(4, 1, spaced, SYSTEM_LABEL)
+
+    clock.advance(60)
+    with Repository(database, clock=clock) as repo:
+        repo.bootstrap()
+
+        assert repo.get_head(1).scene_json == EMPTY
+        assert [repo.get_head(n).scene_json for n in (2, 3, 4)] == [
+            DRAWN,
+            PLACEHOLDER_SCENE,
+            spaced,
+        ]
+        assert [repo.get_head(n).saved_at for n in (2, 3, 4)] == [STARTED] * 3
 
 
 def test_a_head_does_not_show_its_scene_when_logged(repo: Repository) -> None:
@@ -164,7 +232,8 @@ def test_a_second_bootstrap_keeps_what_is_stored(database: Path, clock: Clock) -
         ]
         assert second.get_head(2).scene_json == DRAWN
         assert second.get_head(2).saved_at == STARTED
-        assert second.get_head(1).scene_json == PLACEHOLDER_SCENE
+        assert second.get_head(1).scene_json == EMPTY
+        assert second.get_head(1).saved_at == STARTED
         assert second.allocate_display_name(["Guest"]) == "Guest2"
 
 
@@ -306,7 +375,7 @@ def test_save_head_writes_one_slot(repo: Repository, clock: Clock) -> None:
     assert head.saved_at == saved_at
     assert repo.get_slot(2).saved_at == saved_at
     for other in (1, 3, 4, 5, 6, 7, 8, 9):
-        assert repo.get_head(other).scene_json == PLACEHOLDER_SCENE
+        assert repo.get_head(other).scene_json == EMPTY
         assert repo.get_head(other).saved_at == STARTED
 
 
@@ -316,7 +385,7 @@ def test_save_head_refuses_an_epoch_that_is_not_current(repo: Repository, epoch:
         repo.save_head(1, epoch, DRAWN, "Alpha1")
 
     assert (refusal.value.slot, refusal.value.current, refusal.value.given) == (1, 1, epoch)
-    assert repo.get_head(1).scene_json == PLACEHOLDER_SCENE
+    assert repo.get_head(1).scene_json == EMPTY
     assert repo.get_head(1).editor_label == "System"
 
 

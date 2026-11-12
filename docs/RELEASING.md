@@ -25,7 +25,7 @@ python3 scripts/release.py cut            # gate and suite, then the version bum
 python3 scripts/release.py publish        # preflight, tag, and GitHub Release
 ```
 
-The script needs only the host's `python3` (3.11 or newer). It runs `uv`, `gh`, `git`, and `cloc`, and `npm` once `web/` exists.
+The script needs only the host's `python3` (3.11 or newer). It runs `uv`, `gh`, `git`, `cloc`, and `npm`, with the Node of `web/.node-version` first on `PATH`.
 
 - `check` lists every pinned component beside its newest stable release:
   - Python, from `uv python list`.
@@ -34,7 +34,7 @@ The script needs only the host's `python3` (3.11 or newer). It runs `uv`, `gh`, 
   - Each action the workflows in `.github/workflows/` pin, from `gh api`. A tag pin such as `actions/checkout@v7` is current while 7.y.z is the newest series. A commit pin is compared by the version in its trailing comment (`# v10.3.3`). A branch pin, or a commit pin without that comment, cannot be checked.
 - `check --gate` exits 1 when a component has a newer release and no hold, when a component could not be checked, or when a hold is stale because a release newer than the skipped one exists.
 - `upgrade` first runs the suite as the tree stands, and changes nothing if that fails. Then it moves each outdated component on its own, runs the suite, and keeps the move when the suite passes. When the suite fails it restores the files it changed and records `[held.<name>]` with `version`, `skipped`, `reason` (the first failing test, or the check that failed), and `since`. It updates `versions.toml` and the mirrors, including md2html's inline metadata for a `[python.docs]` package and the commit and comment of a commit-pinned action. When the Python minor moves, `requires-python` and the ruff and ty targets move with it. A hold is removed when its component moves or is current again. It leaves the changes uncommitted, and it exits 1 when a component could not be checked.
-- The suite is what CI runs: `uv sync`, `uv run ruff check .`, `uv run ruff format --check .`, `uv run ty check`, and `uv run pytest`. Once `web/package.json` exists it also runs `npm install`, `check`, `test`, and `format:check` in `web/`.
+- The suite is what CI runs, in CI's order: `uv sync` and `npm install` in `web/`, which bring both environments to the pins; `uv run ruff check .`, `uv run ruff format --check .`, and `uv run ty check`; `check`, `test`, `format:check`, and `build` in `web/`; `uv run pytest`; and `e2e` in `web/`. pytest comes after `npm install` because it holds the web lockfile to `versions.toml`, and after the build because it compares its stand-in for the build with the real one. The browser tests need a browser of the pinned `@playwright/test` version (`DEVELOPMENT.md`, browsers for the tests). A move of `@playwright/test` needs the browser of the new version: install it, or start the browser server at that version, before `upgrade`, or the move fails the suite and is held.
 - `notes` prints the notes for `Unreleased`, or for the current version's section when `Unreleased` is empty after a cut. Each hold adds an Additional Notes bullet.
 - `cut` requires a summary of one to three sentences, at least one bullet, `check --gate`, and the suite. Then it writes the new application version into `versions.toml` and `pyproject.toml`, runs `uv lock`, turns `Unreleased` into `## <version> — <date>`, and opens a fresh `Unreleased`. It leaves those files unchanged when a check fails. Commit and push the result, and CI runs on it.
 - `publish` runs a preflight and stops at the first failure. The tree must be clean, `HEAD` must be on `main`, `CHANGELOG.md` must have the version's section, the version must not be `0.0.0`, tag `v<version>` must exist neither locally nor on `origin`, every GitHub check run for `HEAD` must have passed, and `check --gate` must pass now. Then it tags `v<version>`, pushes the tag, and runs `gh release create v<version> --verify-tag` with the notes and, once T12 builds one, the `.deb` from `dist/`. It uploads to PyPI, with `uv build` and `uv publish`, only when `publish.pypi` is true.
@@ -97,4 +97,4 @@ cloc . --json --quiet --fullpath \
 
 ## GitHub Actions
 
-T01 adds `.github/workflows/ci.yml` to run ruff, ty, and pytest, and T04 adds the web checks. `publish` requires those checks to pass for the release commit. CI does not publish.
+`.github/workflows/ci.yml` runs ruff, ty, and pytest (T01), and the web typecheck, Vitest, Prettier, the build, and the browser tests (T04). `publish` requires those checks to pass for the release commit. CI does not publish.

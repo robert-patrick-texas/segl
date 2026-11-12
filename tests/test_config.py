@@ -44,6 +44,7 @@ PRODUCTION = Settings(
     database=Path("/opt/segl/var/segl.sqlite"),
     assets_dir=Path("/opt/segl/var/assets"),
     display_names=Path("/opt/segl/etc/display-names.txt"),
+    web_dir=Path("/opt/segl/app/web/dist"),
     max_asset_bytes=10 * 1024 * 1024,
     max_scene_bytes=50 * 1024 * 1024,
     history_limit=50,
@@ -99,6 +100,7 @@ def test_no_config_flag_gives_the_development_defaults(empty_directory: Path) ->
     assert settings.database == Path("var/segl.sqlite")
     assert settings.assets_dir == Path("var/assets")
     assert settings.display_names == Path("deploy/display-names.txt")
+    assert settings.web_dir == Path("web/dist")
     assert settings.bind == DEFAULT_BIND
     assert settings.trusted_proxies == PRODUCTION.trusted_proxies
     assert settings.head_flush_seconds == PRODUCTION.head_flush_seconds
@@ -130,6 +132,7 @@ def test_every_key_comes_from_the_file(tmp_path: Path) -> None:
         database = "data/segl.sqlite"
         assets_dir = "/srv/segl/assets"
         display_names = "names.txt"
+        web_dir = "/srv/segl/web"
         max_asset_bytes = 1
         max_scene_bytes = 2
         history_limit = 3
@@ -146,6 +149,7 @@ def test_every_key_comes_from_the_file(tmp_path: Path) -> None:
         database=Path("data/segl.sqlite"),
         assets_dir=Path("/srv/segl/assets"),
         display_names=Path("names.txt"),
+        web_dir=Path("/srv/segl/web"),
         max_asset_bytes=1,
         max_scene_bytes=2,
         history_limit=3,
@@ -194,6 +198,8 @@ def test_an_unusable_proxy_list_is_refused(value: object) -> None:
         'database = ""',
         "assets_dir = 3",
         "display_names = []",
+        "web_dir = false",
+        'web_dir = ""',
         "max_asset_bytes = 0",
         "max_scene_bytes = 1.5",
         'history_limit = "50"',

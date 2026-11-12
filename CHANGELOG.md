@@ -4,7 +4,7 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
-The project is specified, licensed, and public on GitHub. Application code has started with a Python service that reads its settings, keeps nine slots in SQLite, and serves them with a health and a config route. CI and a dev container check it, including through nginx at `/board/`.
+The project is specified, licensed, and public on GitHub. A Python service reads its settings, keeps nine slots in SQLite, and serves them, and a browser application shows each slot as an Excalidraw canvas under the segl bar. Nothing drawn is saved or shared yet. CI and a dev container check both, including through nginx at `/board/`.
 
 ### New
 
@@ -24,8 +24,16 @@ The project is specified, licensed, and public on GitHub. Application code has s
 - segl believes `X-Forwarded-For` and `X-Forwarded-Proto` only from `trusted_proxies`, which takes addresses and networks. It sends no redirect of its own, so a trailing slash on an API path is a `404`.
 - Mount tests: `uv run pytest` runs nginx with the `deploy/nginx/` files in front of a real segl process, at `/board/` and at a host root (`tests/test_mount.py`, `tests/harness.py`). They skip without nginx or openssl. The dev container and CI install nginx and set `SEGL_REQUIRE_NGINX=1`, which turns the skip into a failure.
 - SQLite storage (`src/segl/repository.py`, `docs/DATA-MODEL.md`). segl creates the `database` file at startup, in WAL mode, applies the numbered SQL files in `src/segl/migrations/`, and adds slots 1–9 as `Workspace 1` to `Workspace 9`. A database it cannot open, or one from a newer segl, stops it with exit status 1.
-- `GET /api/v1/slots`, `GET /api/v1/slots/{n}`, and `GET /api/v1/slots/{n}/scene`. A new slot's scene is the placeholder `{ "elements": [] }` until T04 captures the editor's own. Anything but `1` to `9` for `{n}` is a `404` with `invalid_slot`.
+- `GET /api/v1/slots`, `GET /api/v1/slots/{n}`, and `GET /api/v1/slots/{n}/scene`. Anything but `1` to `9` for `{n}` is a `404` with `invalid_slot`.
+- A new slot's scene is the editor's own empty scene, `src/segl/empty_scene.json`, captured from the running editor. A browser test compares the file with what the pinned editor produces. A head that still holds the earlier placeholder `{"elements":[]}` gets the empty scene at startup.
 - Every error has the `{ "error", "message" }` shape, including an unknown path (`not_found`), a method a path does not take (`method_not_allowed`), and a failure inside segl (`internal_error`).
+- The web application, `web/`: Vite, React, TypeScript, and React Router, embedding `@excalidraw/excalidraw` 0.18.1 unmodified (D2-025). The segl bar sits above the canvas with slot buttons 1–9, the slot's title, room for the presence count, the notice that the workspace is shared, and the application version from `versions.toml`. Only `web/src/canvas/` imports Excalidraw.
+- Navigation: segl's root opens the last slot this browser used, kept in `localStorage` under a key that carries the mount path, or slot 1. `s/N` opens slot N, and any other `s/...` goes to slot 1.
+- Python serves the build. `web_dir` is a new setting: `/opt/segl/app/web/dist` in production, `web/dist` in a checkout. `/` and `/s/{n}` return the page with file URLs relative to that page and `window.SEGL_CONFIG = { root, editRequired }`, so one build works at a host root and under `/board/`. Without a build, segl serves the API alone and says so when it starts.
+- The page asks for nothing outside segl (S-014, D2-026). The build copies the editor's canvas fonts into `web/dist/fonts/`, and the page points the editor at them in place of its public CDN.
+- Web checks: `npm --prefix web run check` (`tsc --noEmit`), `test` (Vitest), `format:check` (Prettier), `build`, and `e2e` (Playwright). The browser tests run against Python serving the build, directly and behind nginx with the `deploy/nginx/` files, at a host root and at `/board/`. They refuse every request to another origin and fail if the page attempted one. `PW_WS_ENDPOINT` uses a browser running elsewhere.
+- CI runs the web checks, the build, and the browser tests. The dev container has Node and runs the web checks and the build. `scripts/release.py upgrade` and `cut` run them too.
+- `versions.toml` lists Node 26.13.1 and every direct web dependency. `web/package.json`, `web/package-lock.json`, and `web/.node-version` mirror it, and a test holds them to it. `scripts/release.py check` covers them.
 
 ### Changed
 

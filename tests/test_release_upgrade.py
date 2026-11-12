@@ -20,7 +20,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from release_proc import Result
-from release_upgrade import PYTHON_SUITE, WEB_SUITE, suite_commands, upgrade
+from release_upgrade import suite_commands, upgrade
 
 TODAY = dt.date(2026, 11, 12)
 
@@ -169,7 +169,13 @@ def test_web_moves_edit_package_json_and_node_version(
     runner = fake_runner(tree, {("npm",): ""})
     sources = fake_sources(runner, {"node": "24.23.0", "@scope/pkg": "1.2.0"})
 
-    assert suite_commands(tree) == PYTHON_SUITE + WEB_SUITE
+    suite = [" ".join(argv) for argv in suite_commands(tree)]
+    # Both lockfiles are resolved before anything reads them, the build is
+    # made before pytest and the browser tests, and those come last.
+    assert suite[:2] == ["uv sync", "npm --prefix web install --no-audit --no-fund"]
+    assert suite.index("npm --prefix web run build") < suite.index("uv run pytest")
+    assert suite[-2:] == ["uv run pytest", "npm --prefix web run e2e"]
+    assert len(suite) == 11
     assert upgrade(tree, runner, sources, TODAY) == 0
 
     doc = versions(tree)
@@ -178,6 +184,7 @@ def test_web_moves_edit_package_json_and_node_version(
     assert (web / ".node-version").read_text() == "24.23.0\n"
     assert '"@scope/pkg": "1.2.0"' in (web / "package.json").read_text()
     assert runner.called("npm", "--prefix", "web", "test")
+    assert runner.called("npm", "--prefix", "web", "run", "e2e")
 
 
 def test_a_failed_lookup_is_reported_and_the_others_still_move(

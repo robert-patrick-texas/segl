@@ -25,6 +25,7 @@ from segl.app import create_app
 from segl.config import ConfigError, load_settings
 from segl.repository import Repository, StorageError
 from segl.versions import app_version
+from segl.web import WebBuildError
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -54,8 +55,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         with Repository(settings.database, history_limit=settings.history_limit) as repository:
             repository.bootstrap()
+            app = create_app(settings, repository)
+            if app.state.web_build is None:
+                # The API still answers, which is all the Vite dev server needs.
+                print(
+                    f"segl: no web application in {settings.web_dir} "
+                    "(build it with `npm --prefix web run build`); serving the API only",
+                    file=sys.stderr,
+                )
             uvicorn.run(
-                create_app(settings, repository),
+                app,
                 host=settings.host,
                 port=settings.port,
                 # X-Forwarded-For and X-Forwarded-Proto count only when the connection
@@ -63,7 +72,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 proxy_headers=True,
                 forwarded_allow_ips=list(settings.trusted_proxies),
             )
-    except StorageError as exc:
+    except (StorageError, WebBuildError) as exc:
         print(f"segl: {exc}", file=sys.stderr)
         return 1
     return 0

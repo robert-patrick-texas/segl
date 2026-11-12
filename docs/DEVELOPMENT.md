@@ -14,7 +14,7 @@ These versions were verified on the development host, Ubuntu 26.04.1 LTS on amd6
 | python3 | 3.14.4 (system) | Only `scripts/release.py`, which needs Python 3.11 or newer and the standard library. | T00 |
 | cloc | 2.06 | The line count in release notes (`RELEASING.md`). | T00 |
 | Docker | 29.8.2, rootful | The dev container, `FROM ubuntu:26.04`. Rootless Docker or rootless Podman also work (D2-015). | T01 |
-| Node.js and npm | 24.22.1 and 11.19.1 | Building and testing `web/`. The project's Node version is `web/.node-version` (D2-023). | T04 |
+| Node.js and npm | 26.13.1 and 11.20.0 | Building and testing `web/`. The version is `web/.node-version`, the newest LTS release (D2-023). npm refuses another major (`engine-strict`), so put this Node first on `PATH` when the host's default is a different one. | T04 |
 | nginx | 1.28.3 | The mount tests, which run it without root on loopback ports with the `deploy/nginx/` files. They need 1.25.1 or newer. The dev container installs its own. | T02 |
 | openssl | 3.5.5 | The mount tests' certificate. | T02 |
 | dpkg-deb | 1.23.7 | Building the `.deb`. | T12 |
@@ -33,7 +33,32 @@ $ docker run --rm --network host --init mcr.microsoft.com/playwright:v<version>-
 $ PW_WS_ENDPOINT=ws://127.0.0.1:3124/ npm --prefix web run e2e
 ```
 
-`<version>` must equal the `@playwright/test` version in `versions.toml`. T04 wires `PW_WS_ENDPOINT` into `web/playwright.config.ts`.
+`<version>` must equal the `@playwright/test` version in `versions.toml`, 1.65.0 today. `web/playwright.config.ts` reads `PW_WS_ENDPOINT`. The container shares the host's network, so its browser reaches the test servers on `127.0.0.1`. The tests pass the browser no launch arguments, which that server would drop unless started with `--unsafe`.
+
+CI installs the browser with `npx playwright install --with-deps chromium`, which also installs its system libraries.
+
+## What the browser tests start
+
+`npm --prefix web run e2e` runs `web/e2e/` against the production build, so build first. Playwright starts two things and stops them afterwards:
+
+- `uv run segl --config <temporary TOML>` on `127.0.0.1:18950`, with its database in a fresh folder under the system's temporary directory and `web_dir` pointing at `web/dist`.
+- `uv run python tests/e2e_nginx.py`, which puts nginx in front of that server with the `deploy/nginx/` files, through the same harness as the mount tests. Each site example gets an nginx of its own: segl at `/board/` on port 18951, and segl at a host root on port 18952.
+
+Every spec runs three times, as the projects `direct` (Python alone), `root` (nginx at a host root), and `board` (nginx at `/board/`). The specs open paths relative to the project's base URL, so the same test covers each mount. `SEGL_E2E_PORT` moves the three ports.
+
+The browser reaches nginx by address, as `https://127.0.0.1:18951/board/`, and does not check the test certificate, which names the example sites. The mount tests in `tests/test_mount.py` cover the site names and verify the certificate.
+
+`web/e2e/mount.spec.ts` is the page half of T-013 and T-010. It refuses every request to another origin, as with outbound network blocked, and fails if the page attempted one, asked for a path outside its mount, got an error status, or was sent a cookie.
+
+The canvas is pixels, so the specs read the scene through `window.SEGL_CANVAS.document()`, a read-only handle the canvas adapter publishes (`web/src/canvas/handle.ts`). It returns the scene document as the editor serializes it for storage.
+
+## The empty scene
+
+`src/segl/empty_scene.json` is the scene a new slot starts with (`DATA-MODEL.md`). `web/e2e/fixture.spec.ts` compares it with what the pinned editor produces for an empty canvas. When a new Excalidraw release changes that document, the test fails. Capture it again, and review the difference before committing it:
+
+```bash
+SEGL_UPDATE_FIXTURE=1 npm --prefix web run e2e -- fixture.spec.ts --project direct
+```
 
 ## Checks
 
@@ -46,7 +71,7 @@ uv run ruff format --check .
 uv run ty check
 ```
 
-`uv run pytest` covers `tests/` and `tools/md2html`. Some tests start a real `segl` process on a free loopback port. The mount tests (`tests/test_mount.py`) also start nginx in front of it, from a temporary copy of the `deploy/nginx/` files (`tests/harness.py`). On a host without nginx or openssl they skip, and the summary line says why. With `SEGL_REQUIRE_NGINX=1` they fail instead. The dev container and CI set it. The release script's tests use fakes for the network, `gh`, and `git push`, and real `git` in a temporary repository. One test builds the wheel with `uv build` to confirm it carries `versions.toml` and the SQL migrations, so it needs the network the first time. The repository and slot tests each use a SQLite file in pytest's temporary folder. ruff's settings are in `pyproject.toml`: 100-character lines, Markdown left alone, and `scripts/` kept to Python 3.11 syntax because the host's `python3` runs them.
+`uv run pytest` covers `tests/` and `tools/md2html`. The page tests (`tests/test_web.py`) use a small stand-in for `web/dist`, so pytest needs no web build. One of them holds the stand-in to the real build when `web/dist` exists, and skips when it does not. Some tests start a real `segl` process on a free loopback port. The mount tests (`tests/test_mount.py`) also start nginx in front of it, from a temporary copy of the `deploy/nginx/` files (`tests/harness.py`). On a host without nginx or openssl they skip, and the summary line says why. With `SEGL_REQUIRE_NGINX=1` they fail instead. The dev container and CI set it. The release script's tests use fakes for the network, `gh`, and `git push`, and real `git` in a temporary repository. One test builds the wheel with `uv build` to confirm it carries `versions.toml` and the SQL migrations, so it needs the network the first time. The repository and slot tests each use a SQLite file in pytest's temporary folder. ruff's settings are in `pyproject.toml`: 100-character lines, Markdown left alone, and `scripts/` kept to Python 3.11 syntax because the host's `python3` runs them.
 
 The dev container runs the same suite while it builds, from the repository root:
 
@@ -57,19 +82,34 @@ docker build -f deploy/Containerfile .    # or: podman build -f deploy/Container
 Web, from T04:
 
 ```bash
-npm --prefix web run check          # tsc --noEmit
-npm --prefix web test               # Vitest
-npm --prefix web run format:check   # Prettier
-npm --prefix web run e2e            # Playwright, against Python serving the production build
+npm --prefix web ci --ignore-scripts   # the locked packages, into web/node_modules
+npm --prefix web run check             # tsc --noEmit
+npm --prefix web test                  # Vitest
+npm --prefix web run format:check      # Prettier
+npm --prefix web run build             # web/dist, which Python serves
+npm --prefix web run e2e               # Playwright, against Python serving that build
 ```
 
-CI runs the same commands (`.github/workflows/ci.yml`, from T01). It installs nginx first and sets `SEGL_REQUIRE_NGINX=1`.
+`npm --prefix web run format` rewrites the files Prettier would complain about. Vitest covers the modules that need no browser: how the page finds segl's root, slot parsing and the last slot, the canvas adapter's reading of a stored scene, and the build scripts. A test (`tests/test_pins.py`) holds `web/package.json`, `web/package-lock.json`, and `web/.node-version` to `versions.toml`.
+
+CI runs the same commands (`.github/workflows/ci.yml`). It installs nginx and Chromium, sets `SEGL_REQUIRE_NGINX=1`, and builds `web/` before pytest. The dev container runs them too, except the browser tests, which join in T11.
 
 ## Dev loop
 
-From T04: run Python on `127.0.0.1:8000` with `uv run segl`, which uses the development defaults in `DEPLOY.md` and keeps its database in `var/segl.sqlite`, and the Vite dev server on `127.0.0.1:5173`. Vite proxies `/api` and `/collab` (the WebSocket) to Python with `changeOrigin: false`, so the Origin check still matches. Open `http://127.0.0.1:5173/s/1`.
+Two processes, each in its own terminal:
 
-The dev server serves the page at the host root. Mounting under a path such as `/board/` is tested through nginx and the production build, not the dev server (`TEST-PLAN.md` T-013).
+```bash
+uv run segl                 # Python on 127.0.0.1:8000, development defaults, data in var/
+npm --prefix web run dev    # Vite on 127.0.0.1:5173, with hot reload
+```
+
+Open `http://127.0.0.1:5173/s/1`. Vite proxies `/api` and `/collab` (the WebSocket) to Python with `changeOrigin: false`, so the Origin check still matches. `SEGL_API_URL` names a Python on another address. The dev server serves the editor's canvas fonts from the npm package at `/fonts/`, where the build puts a copy.
+
+The dev server serves the page itself, at the host root, with no `SEGL_CONFIG`. The app then takes the host root as segl's root and asks `api/v1/config` whether an edit token is needed (`ARCHITECTURE.md`). Mounting under a path such as `/board/` is tested through nginx and the production build, not the dev server (`TEST-PLAN.md` T-013).
+
+Python serves the production build as well. After `npm --prefix web run build`, `uv run segl` serves it at `http://127.0.0.1:8000/s/1`, from `web/dist` (`web_dir` in `DEPLOY.md`). Without a build it says `no web application in web/dist` and serves the API alone, which is all the dev server needs. Python reads the build when it starts, so restart it after building again.
+
+Everything that touches Excalidraw is in `web/src/canvas/`. The rest of the application imports that folder and never the package. The application version in the segl bar comes from `versions.toml` at build time (`web/scripts/app-version.ts`).
 
 ## Documentation site
 

@@ -36,6 +36,7 @@ DEFAULTS: Mapping[str, object] = {
     "database": "/opt/segl/var/segl.sqlite",
     "assets_dir": "/opt/segl/var/assets",
     "display_names": "/opt/segl/etc/display-names.txt",
+    "web_dir": "/opt/segl/app/web/dist",
     "max_asset_bytes": 10485760,
     "max_scene_bytes": 52428800,
     "history_limit": 50,
@@ -48,6 +49,7 @@ DEVELOPMENT_DEFAULTS: Mapping[str, object] = {
     "database": "var/segl.sqlite",
     "assets_dir": "var/assets",
     "display_names": "deploy/display-names.txt",
+    "web_dir": "web/dist",
 }
 
 # Read from the working directory when --config is absent. Git ignores it.
@@ -70,6 +72,8 @@ class Settings:
     database: Path
     assets_dir: Path
     display_names: Path
+    # The built web application, `web/dist` as Vite writes it.
+    web_dir: Path
     max_asset_bytes: int
     max_scene_bytes: int
     history_limit: int
@@ -203,6 +207,7 @@ def load_settings(path: Path | None = None) -> Settings:
         database=_path("database", values["database"]),
         assets_dir=_path("assets_dir", values["assets_dir"]),
         display_names=_path("display_names", values["display_names"]),
+        web_dir=_path("web_dir", values["web_dir"]),
         max_asset_bytes=_count("max_asset_bytes", values["max_asset_bytes"]),
         max_scene_bytes=_count("max_scene_bytes", values["max_scene_bytes"]),
         history_limit=_count("history_limit", values["history_limit"]),

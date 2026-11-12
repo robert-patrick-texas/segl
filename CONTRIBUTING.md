@@ -10,7 +10,7 @@ Run Python through uv. The version pin and the direct dependency versions live i
 
 ## License header
 
-New source files start with this header, in the comment syntax of the language. From T01, a test checks first-party source files for it.
+New source files start with this header, in the comment syntax of the language. A test checks the Python, SQL, TypeScript, and JavaScript files under `src/`, `tests/`, `scripts/`, and `web/` for it.
 
 ```text
 Copyright 2026 segl contributors
@@ -40,7 +40,7 @@ Files copied whole from another project keep their own header, and `NOTICE` name
 
 ## Checks
 
-The commands are in [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md#checks): pytest, ruff, and ty for Python, and the typecheck, Vitest, Prettier, and Playwright for `web/` once it exists. CI runs the same commands.
+The commands are in [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md#checks): pytest, ruff, and ty for Python, and the typecheck, Vitest, Prettier, the build, and Playwright for `web/`. CI runs the same commands.
 
 A release follows [`docs/RELEASING.md`](docs/RELEASING.md): every dependency moves to its newest release unless that release fails the tests. GitHub Releases are on. PyPI stays off until a demoable build. Do not publish `0.0.0`.
 

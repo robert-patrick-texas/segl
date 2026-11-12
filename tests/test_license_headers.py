@@ -20,8 +20,9 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-# web/src joins the list of folders once T04 creates it.
-SOURCE_DIRS = ("src", "tests", "scripts", "web/src")
+# All of web/ that is written here: the application in web/src, the browser
+# tests, the build scripts, and the Vite and Playwright configuration.
+SOURCE_DIRS = ("src", "tests", "scripts", "web")
 # Suffix → the line-comment marker that carries the header.
 LINE_COMMENT = {
     ".py": "#",
@@ -33,7 +34,8 @@ LINE_COMMENT = {
     ".mjs": "//",
     ".cjs": "//",
 }
-SKIP_DIRS = {"__pycache__", "node_modules"}
+# Dependencies and output, none of it written here.
+SKIP_DIRS = {"__pycache__", "node_modules", "dist", "test-results", "playwright-report"}
 
 
 def header_lines() -> list[str]:
@@ -84,7 +86,10 @@ def test_the_header_is_the_apache_notice() -> None:
 def test_the_checked_folders_hold_source_files() -> None:
     folders = {path.relative_to(ROOT).parts[0] for path in source_files()}
 
-    assert {"src", "tests", "scripts"} <= folders
+    assert {"src", "tests", "scripts", "web"} <= folders
+    paths = [path.relative_to(ROOT).parts for path in source_files()]
+    web = {parts[1] for parts in paths if parts[0] == "web"}
+    assert {"src", "e2e", "scripts", "vite.config.ts", "playwright.config.ts"} <= web
 
 
 def test_every_source_file_starts_with_the_header() -> None:

@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from harness import make_settings, running_segl
+from harness import EMPTY_SCENE, make_settings, running_segl
 
 from segl import cli
 from segl.app import create_app
@@ -59,14 +59,14 @@ def test_a_new_database_serves_nine_isolated_slots(tmp_path: Path) -> None:
 
         # Every slot starts empty, and a scene written to one slot stays in it.
         for n in range(1, 10):
-            assert client.get(f"/api/v1/slots/{n}/scene").json()["scene"] == {"elements": []}
+            assert client.get(f"/api/v1/slots/{n}/scene").json()["scene"] == EMPTY_SCENE
         repository.save_head(2, 1, DRAWN, "Bravo2")
         assert client.get("/api/v1/slots/2/scene").json()["scene"] == {
             "elements": [{"id": "a", "version": 1}],
             "appState": {"viewBackgroundColor": "#fff"},
         }
         for n in (1, 3, 4, 5, 6, 7, 8, 9):
-            assert client.get(f"/api/v1/slots/{n}/scene").json()["scene"] == {"elements": []}
+            assert client.get(f"/api/v1/slots/{n}/scene").json()["scene"] == EMPTY_SCENE
 
         for n in (0, 10):
             for path in (f"/api/v1/slots/{n}", f"/api/v1/slots/{n}/scene"):
@@ -116,10 +116,11 @@ def test_the_scene_route_returns_the_head(client: TestClient, repository: Reposi
     assert client.get("/api/v1/slots/5").json()["savedAt"] == saved_at
 
 
-def test_a_new_slots_scene_is_the_placeholder(client: TestClient) -> None:
+def test_a_new_slots_scene_is_the_editors_empty_scene(client: TestClient) -> None:
     body = client.get("/api/v1/slots/9/scene").json()
 
-    assert body["scene"] == {"elements": []}
+    assert body["scene"] == EMPTY_SCENE
+    assert body["scene"]["elements"] == []
     assert (body["epoch"], body["editorLabel"], body["files"]) == (1, "System", [])
     assert SAVED_AT.fullmatch(body["savedAt"])
 
@@ -171,7 +172,7 @@ def test_the_process_creates_its_database_and_keeps_it_across_restarts(tmp_path:
         assert [slot["title"] for slot in first.json()["slots"]] == [
             f"Workspace {n}" for n in range(1, 10)
         ]
-        assert server.get("/api/v1/slots/1/scene").json()["scene"] == {"elements": []}
+        assert server.get("/api/v1/slots/1/scene").json()["scene"] == EMPTY_SCENE
         assert server.get("/api/v1/slots/10").json() == INVALID_SLOT
         assert database.is_file()
 
@@ -186,7 +187,7 @@ def test_the_process_creates_its_database_and_keeps_it_across_restarts(tmp_path:
         scene = server.get("/api/v1/slots/2/scene").json()
         assert scene["scene"]["elements"] == [{"id": "a", "version": 1}]
         assert (scene["savedAt"], scene["editorLabel"]) == (saved_at, "Bravo2")
-        assert server.get("/api/v1/slots/1/scene").json()["scene"] == {"elements": []}
+        assert server.get("/api/v1/slots/1/scene").json()["scene"] == EMPTY_SCENE
         for reply in (server.get("/api/v1/slots"), server.get("/api/v1/slots/2/scene")):
             assert reply.headers["Set-Cookie"] is None
 

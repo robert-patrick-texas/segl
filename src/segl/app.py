@@ -21,12 +21,14 @@ from http import HTTPStatus
 from typing import Any
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from starlette.exceptions import HTTPException
+from starlette.staticfiles import StaticFiles
 
 from segl.config import Settings
 from segl.repository import InvalidSlot, Repository, Slot
 from segl.versions import app_version
+from segl.web import ROOT_PAGE, SLOT_PAGE, WebBuild, load_web_build, render_page
 
 # The only texts that name a slot. int() would also take "01", "+1", and the
 # digits of other scripts.
@@ -59,10 +61,55 @@ def _slot_json(slot: Slot) -> dict[str, object]:
     }
 
 
+def _add_web_routes(app: FastAPI, build: WebBuild, edit_required: bool) -> None:
+    """Serve the web application: the pages, then the files the build emitted."""
+    # Made once. A new build, or a new token, takes a restart.
+    pages = {
+        root: render_page(build.index, root=root, edit_required=edit_required)
+        for root in (ROOT_PAGE, SLOT_PAGE)
+    }
+
+    def page(root: str) -> HTMLResponse:
+        # The page names its files by content hash, so it is the one response
+        # a browser must ask for again after an upgrade.
+        return HTMLResponse(pages[root], headers={"Cache-Control": "no-cache"})
+
+    @app.get("/", include_in_schema=False)
+    @app.get("/s", include_in_schema=False)
+    def root_page() -> HTMLResponse:
+        return page(ROOT_PAGE)
+
+    # Any one segment after /s/ gets the page, and the page sends a segment
+    # that is not 1 to 9 to slot 1 (docs/ARCHITECTURE.md). A deeper path is
+    # not a page: its root would be two levels up.
+    @app.get("/s/", include_in_schema=False)
+    @app.get("/s/{n}", include_in_schema=False)
+    def slot_page() -> HTMLResponse:
+        return page(SLOT_PAGE)
+
+    # Only what the build holds is registered (docs/API.md, "Reserved paths"):
+    # Vite's assets/, the editor's fonts/, and the favicon. They come after
+    # every other route, so a build cannot shadow /api, /s, or /collab.
+    for name in build.files:
+        app.add_api_route(
+            f"/{name}",
+            lambda file=build.folder / name: FileResponse(file),
+            methods=["GET"],
+            include_in_schema=False,
+        )
+    for name in build.folders:
+        app.mount(f"/{name}", StaticFiles(directory=build.folder / name), name=f"web-{name}")
+
+
 def create_app(settings: Settings, repository: Repository) -> FastAPI:
     """Build the application for these settings, over a bootstrapped repository.
 
-    The application closes the repository when it shuts down.
+    The application closes the repository when it shuts down. It serves the
+    web application when ``settings.web_dir`` holds a build, and the API alone
+    when it does not.
+
+    Raises:
+        WebBuildError: When ``web_dir`` has an ``index.html`` segl cannot use.
     """
 
     @asynccontextmanager
@@ -89,6 +136,8 @@ def create_app(settings: Settings, repository: Repository) -> FastAPI:
         lifespan=lifespan,
     )
     app.state.settings = settings
+    web_build = load_web_build(settings.web_dir)
+    app.state.web_build = web_build
 
     @app.exception_handler(InvalidSlot)
     async def invalid_slot(request: Request, exc: InvalidSlot) -> JSONResponse:
@@ -142,4 +191,6 @@ def create_app(settings: Settings, repository: Repository) -> FastAPI:
             }
         )
 
+    if web_build is not None:
+        _add_web_routes(app, web_build, settings.edit_required)
     return app

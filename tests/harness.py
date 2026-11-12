@@ -49,6 +49,11 @@ from segl.config import Settings, load_settings
 ROOT = Path(__file__).resolve().parents[1]
 NGINX_FILES = ROOT / "deploy" / "nginx"
 
+# The scene a new slot starts with: the editor's own empty scene, captured in
+# T04 (docs/DATA-MODEL.md). web/e2e/fixture.spec.ts holds it to the editor.
+EMPTY_SCENE_FILE = ROOT / "src" / "segl" / "empty_scene.json"
+EMPTY_SCENE: Any = json.loads(EMPTY_SCENE_FILE.read_text(encoding="utf-8"))
+
 # Set in the dev container and in CI, where a missing nginx is a failure, not a skip.
 REQUIRE_NGINX = "SEGL_REQUIRE_NGINX"
 # `http2 on;` in the site examples needs this release.

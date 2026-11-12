@@ -90,6 +90,18 @@ The server applies `elements` and `files` only when the sender is an editor and 
 
 `rename` is allowed for viewers. The server title-cases the name, broadcasts `presence`, and does not write SQLite.
 
+## Pages and the build's files
+
+Served when `web_dir` holds a build (`DEPLOY.md`). Without one, these paths are `404` with `not_found`, and the API still answers.
+
+| Method | Path | Function |
+|---|---|---|
+| GET | `/` and `/s` | The web application, as a page at segl's root: its files are named `./assets/...`, and `SEGL_CONFIG.root` is `./`. |
+| GET | `/s/{n}` and `/s/` | The same page one level down: `../assets/...`, and `root` is `../`. Any one segment gets it. The page, not this route, sends a segment that is not `1` to `9` to slot 1. |
+| GET | `/assets/...`, `/fonts/...`, `/favicon.svg` | The files of the build, with `ETag` and `Last-Modified`. A file the build lacks is `404` with `not_found`. |
+
+A page is `text/html` with `Cache-Control: no-cache`. It carries `window.SEGL_CONFIG = { "root", "editRequired" }` (`ARCHITECTURE.md`, mount and navigation) and never the edit token. No URL in it starts with `/`. A deeper path, such as `/s/1/x`, is not a page.
+
 ## Reserved paths
 
-segl registers only these first segments: `s`, `api`, `collab`, and the static paths the Vite build emits (`assets`, the editor fonts, the favicon). Do not register `/{team}/{project}/{board}`.
+segl registers only these first segments: `s`, `api`, `collab`, and the folders and files at the top of the Vite build (`assets`, `fonts`, and `favicon.svg`). They are registered after the others, so a build cannot shadow them. Do not register `/{team}/{project}/{board}`.

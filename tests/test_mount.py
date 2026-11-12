@@ -159,7 +159,7 @@ def test_the_slot_routes_reach_segl(mount: Mount, site: str, prefix: str) -> Non
     assert [slot["title"] for slot in slots.json()["slots"]] == [
         f"Workspace {n}" for n in range(1, 10)
     ]
-    assert (scene.status, scene.json()["scene"]) == (200, {"elements": []})
+    assert (scene.status, scene.json()["scene"]) == (200, harness.EMPTY_SCENE)
     # segl's own 404, passed through, not an nginx error page.
     assert (invalid.status, invalid.json()["error"]) == (404, "invalid_slot")
     for reply in (slots, scene, invalid):

@@ -23,6 +23,7 @@ The schema is the numbered SQL files in ``segl/migrations``. The database
 records the number of the newest file applied to it in ``PRAGMA user_version``.
 """
 
+import json
 import re
 import sqlite3
 import threading
@@ -36,9 +37,12 @@ from typing import Self
 
 SLOT_NUMBERS = range(1, 10)
 
-# The head of a new slot until T04 captures the editor's own empty scene. T04
-# replaces a stored head only when it still equals this text.
+# What a new head held before T04 captured the editor's own empty scene.
+# bootstrap() replaces a stored head only when it still equals this text.
 PLACEHOLDER_SCENE = '{"elements":[]}'
+
+# The file beside this module that holds the head of a new slot.
+EMPTY_SCENE_FILE = "empty_scene.json"
 
 # The label on a head or a revision that no connection wrote.
 SYSTEM_LABEL = "System"
@@ -54,6 +58,16 @@ _SLOT_COLUMNS = (
     "SELECT slot.number, slot.title, slot.epoch, slot.updated_at, slot_head.saved_at "
     "FROM slot JOIN slot_head ON slot_head.slot = slot.number"
 )
+
+
+def load_empty_scene() -> str:
+    """Return the scene a new slot starts with, as compact JSON text.
+
+    It is the pinned editor's own empty scene, captured from the editor
+    (docs/DATA-MODEL.md). web/e2e/fixture.spec.ts holds the file to the editor.
+    """
+    text = resources.files("segl").joinpath(EMPTY_SCENE_FILE).read_text(encoding="utf-8")
+    return json.dumps(json.loads(text), separators=(",", ":"), ensure_ascii=False)
 
 
 class StorageError(Exception):
@@ -276,11 +290,14 @@ class Repository:
         """Apply the migrations, then add the nine slots and the name counter.
 
         Rows that already exist are left alone, so this runs at every startup.
+        The one exception is a head that still holds the placeholder segl
+        wrote before it had the editor's empty scene: it gets that scene.
 
         Raises:
             StorageError: When a migration fails, or a newer segl wrote the database.
         """
         migrations = load_migrations()
+        empty_scene = load_empty_scene()
         with self._reading() as db:
             apply_migrations(db, migrations)
         now = self._now()
@@ -294,8 +311,16 @@ class Repository:
                 db.execute(
                     "INSERT INTO slot_head (slot, epoch, scene_json, editor_label, saved_at) "
                     "VALUES (?, 1, ?, ?, ?) ON CONFLICT (slot) DO NOTHING",
-                    (number, PLACEHOLDER_SCENE, SYSTEM_LABEL, now),
+                    (number, empty_scene, SYSTEM_LABEL, now),
                 )
+            # A head written before T04, by a bootstrap, that nobody has saved
+            # since: the exact placeholder text, still labelled System. Its
+            # epoch stays, because no browser could load a scene before T04.
+            db.execute(
+                "UPDATE slot_head SET scene_json = ?, saved_at = ? "
+                "WHERE scene_json = ? AND editor_label = ?",
+                (empty_scene, now, PLACEHOLDER_SCENE, SYSTEM_LABEL),
+            )
             db.execute(
                 "INSERT INTO name_counter (id, next_value) VALUES (1, 1) "
                 "ON CONFLICT (id) DO NOTHING"

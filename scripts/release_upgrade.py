@@ -42,30 +42,48 @@ from release_components import (
 from release_proc import CommandError, Runner
 from release_versions import at_precision
 
-# The commands CI runs (docs/DEVELOPMENT.md, "Checks"). `uv sync` comes first:
-# it resolves the lockfile again after a pin moved.
-PYTHON_SUITE: tuple[tuple[str, ...], ...] = (
-    ("uv", "sync"),
+# The commands CI runs (docs/DEVELOPMENT.md, "Checks"), in CI's order.
+#
+# Both environments are brought to the pins first: `uv sync` and `npm install`
+# resolve the lockfiles again after a pin moved, and pytest holds
+# web/package-lock.json to versions.toml. The web build comes before pytest,
+# which compares its stand-in for the build with the real one, and before the
+# browser tests, which Python serves it to. Those need a browser of the pinned
+# Playwright version (docs/DEVELOPMENT.md).
+PYTHON_SYNC: tuple[str, ...] = ("uv", "sync")
+PYTHON_CHECKS: tuple[tuple[str, ...], ...] = (
     ("uv", "run", "ruff", "check", "."),
     ("uv", "run", "ruff", "format", "--check", "."),
     ("uv", "run", "ty", "check"),
-    ("uv", "run", "pytest"),
 )
-# Used once web/ exists. The browser tests join when T04 adds them.
-WEB_SUITE: tuple[tuple[str, ...], ...] = (
-    ("npm", "--prefix", "web", "install", "--no-audit", "--no-fund"),
+PYTHON_TESTS: tuple[str, ...] = ("uv", "run", "pytest")
+WEB_SYNC: tuple[str, ...] = ("npm", "--prefix", "web", "install", "--no-audit", "--no-fund")
+WEB_CHECKS: tuple[tuple[str, ...], ...] = (
     ("npm", "--prefix", "web", "run", "check"),
     ("npm", "--prefix", "web", "test"),
     ("npm", "--prefix", "web", "run", "format:check"),
+    ("npm", "--prefix", "web", "run", "build"),
 )
+WEB_E2E: tuple[str, ...] = ("npm", "--prefix", "web", "run", "e2e")
 MD2HTML = "tools/md2html/md2html.py"
 _FAILED_TEST = re.compile(r"^(?:FAILED|ERROR) (\S+)", flags=re.MULTILINE)
 
 
+def has_web(root: Path) -> bool:
+    """Report whether the tree at ``root`` has the web package."""
+    return (root / "web" / "package.json").is_file()
+
+
+def sync_commands(root: Path) -> tuple[tuple[str, ...], ...]:
+    """Return the commands that bring the environments to the pins."""
+    return (PYTHON_SYNC, WEB_SYNC) if has_web(root) else (PYTHON_SYNC,)
+
+
 def suite_commands(root: Path) -> tuple[tuple[str, ...], ...]:
     """Return the suite for the tree at ``root``."""
-    web = WEB_SUITE if (root / "web" / "package.json").is_file() else ()
-    return PYTHON_SUITE + web
+    if not has_web(root):
+        return (PYTHON_SYNC, *PYTHON_CHECKS, PYTHON_TESTS)
+    return (*sync_commands(root), *PYTHON_CHECKS, *WEB_CHECKS, PYTHON_TESTS, WEB_E2E)
 
 
 def run_suite(runner: Runner, root: Path) -> str | None:
@@ -220,7 +238,8 @@ def upgrade(root: Path, runner: Runner, sources: Sources, today: dt.date | None 
         held += 1
         print(f"{component.label}: kept, {status.latest} held ({reason})")
     if held:
-        # Put the environment back on the pins that were kept.
-        runner.run(suite_commands(root)[0], check=False)
+        # Put the environments back on the pins that were kept.
+        for argv in sync_commands(root):
+            runner.run(argv, check=False)
     load_versions(root)  # fails loudly if an edit left invalid TOML
     return 1 if unknown else 0

@@ -11,6 +11,7 @@ edit_token = ""
 database = "/opt/segl/var/segl.sqlite"
 assets_dir = "/opt/segl/var/assets"
 display_names = "/opt/segl/etc/display-names.txt"
+web_dir = "/opt/segl/app/web/dist"
 max_asset_bytes = 10485760
 max_scene_bytes = 52428800
 history_limit = 50
@@ -22,11 +23,13 @@ There is no base-path setting. segl serves at its root, and nginx strips the pat
 
 `trusted_proxies` lists the addresses whose `X-Forwarded-For` and `X-Forwarded-Proto` headers segl believes. An entry is an IP address or a network such as `10.0.0.0/8`. Keep it to the nginx host. An empty list believes nobody. `*` is refused, because it would let any client choose the address segl records for it.
 
+`web_dir` is the folder that holds the built web application: `index.html`, Vite's `assets/`, the editor's `fonts/`, and the favicon. segl reads it once, when it starts, so a new build takes a restart. When the folder has no `index.html`, segl serves the API and no page, and says so on its first line of output. An `index.html` that is not a build of `web/` stops it with exit status 1.
+
 `bind` is `host:port`. Write an IPv6 host in brackets, as in `[::1]:8000`. When the file `--config` names does not exist, segl starts with the defaults above.
 
 segl checks the file when it starts. A key it does not know, such as a misspelled `edit_token` or the removed `base_path`, or a value it cannot use, stops it with exit status 2 and a message that names the key. The message never repeats the token. The sizes and `history_limit` are whole numbers, 1 or more. The two intervals are seconds above 0.
 
-Without `--config`, segl runs with development defaults: the values above, except `database = "var/segl.sqlite"`, `assets_dir = "var/assets"`, and `display_names = "deploy/display-names.txt"`, relative to the working directory. Git ignores `var/`. Without `--config`, segl also reads `segl.toml` from the working directory when that file exists, so a local file, which git ignores too, can override any of them. With `--config`, only the named file is read. Tests point `database`, `assets_dir`, and `display_names` at temporary paths and may shorten the flush interval.
+Without `--config`, segl runs with development defaults: the values above, except `database = "var/segl.sqlite"`, `assets_dir = "var/assets"`, `display_names = "deploy/display-names.txt"`, and `web_dir = "web/dist"`, relative to the working directory. Git ignores `var/`. Without `--config`, segl also reads `segl.toml` from the working directory when that file exists, so a local file, which git ignores too, can override any of them. With `--config`, only the named file is read. Tests point `database`, `assets_dir`, and `display_names` at temporary paths and may shorten the flush interval.
 
 After the settings, segl opens `database`, before it listens. It creates the file, and its folder, when they are missing, applies the migrations the file lacks, and adds the nine slots (`DATA-MODEL.md`). A database it cannot open, or one written by a newer segl, stops it with exit status 1 and one line that names the file.
 
@@ -100,7 +103,7 @@ The test suite repeats the check against segl itself on every run (`tests/test_m
 
 ## Dev container
 
-`deploy/Containerfile` is based on Ubuntu 26.04 and installs uv, Node for the web build, nginx for the mount tests, and the browser Playwright needs. It does not install the production `.deb` layout. Tests run with `uv sync` and `uv run` inside the container, using the project's pinned Python. Rootful Docker, rootless Docker, or rootless Podman can build and run it (D2-015). T01 created the file with uv alone, pinned by image digest, and its build runs `uv run pytest` as the image's unprivileged `ubuntu` account. T02 added nginx and openssl, and set `SEGL_REQUIRE_NGINX=1`, so the tests through nginx fail there instead of skipping. T04 adds Node, and T11 the browser. T11 is the first task that must pass the full browser suite inside it. The host tools are in `DEVELOPMENT.md`.
+`deploy/Containerfile` is based on Ubuntu 26.04 and installs uv, Node for the web build, nginx for the mount tests, and the browser Playwright needs. It does not install the production `.deb` layout. Tests run with `uv sync` and `uv run` inside the container, using the project's pinned Python. Rootful Docker, rootless Docker, or rootless Podman can build and run it (D2-015). T01 created the file with uv alone, pinned by image digest, and its build runs `uv run pytest` as the image's unprivileged `ubuntu` account. T02 added nginx and openssl, and set `SEGL_REQUIRE_NGINX=1`, so the tests through nginx fail there instead of skipping. T04 added Node, at the version in `web/.node-version` and pinned by image digest, and the build now also runs `npm ci`, the web typecheck, Vitest, Prettier, and `vite build` before pytest. T11 adds the browser, and is the first task that must pass the browser suite inside it. The host tools are in `DEVELOPMENT.md`.
 
 ## Production container
 

@@ -48,9 +48,28 @@ CREATE TABLE name_counter (
 );
 ```
 
-Startup inserts slots 1–9 with title `Workspace N`, epoch 1, an empty scene the pinned editor accepts as `initialData`, and `name_counter.next_value = 1`. Rows that already exist are left alone. Capture the empty scene from the editor during T04 and store that fixture in tests. Do not hand-invent a scene schema and call it compatible.
+Startup inserts slots 1–9 with title `Workspace N`, epoch 1, the editor's empty scene, editor label `System`, and `name_counter.next_value = 1`. Rows that already exist are left alone.
 
-Until T04, a new head holds the placeholder `{"elements":[]}` (`PLACEHOLDER_SCENE`) with editor label `System`. T04 replaces a stored head only when it still equals that text.
+The empty scene is `src/segl/empty_scene.json`, which the wheel carries. It is the document the pinned editor itself serializes for storage when its canvas is empty, captured from the running editor in T04, not written by hand:
+
+```json
+{
+  "type": "excalidraw",
+  "version": 2,
+  "source": "segl",
+  "elements": [],
+  "appState": {
+    "gridSize": 20,
+    "gridStep": 5,
+    "gridModeEnabled": false,
+    "viewBackgroundColor": "#ffffff"
+  }
+}
+```
+
+That is the shape of every stored scene: an Excalidraw JSON document, with the elements, and the part of the editor's state it keeps for storage. Files are not in it (T07). The repository stores the file's JSON without its whitespace. A browser test, `web/e2e/fixture.spec.ts`, gives the editor a slot with no elements and compares what it would store with the file, so a new editor release that changes the document fails the test. `DEVELOPMENT.md` has the command that captures it again.
+
+Before T04, a new head held the placeholder `{"elements":[]}` (`PLACEHOLDER_SCENE`). Startup gives the empty scene to a head that still holds exactly that text with the label `System`, and leaves its epoch as it is. Every other head is left alone.
 
 Times are text in UTC to the millisecond, such as `2026-11-12T09:00:00.000Z`. `slot.updated_at` changes when the title or the epoch does. `slot_head.saved_at` changes when the head is written, and is the `savedAt` the API returns.
 

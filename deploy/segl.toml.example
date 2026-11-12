@@ -22,6 +22,10 @@ assets_dir = "/opt/segl/var/assets"
 # One name per line for new visitors. Replace the file to change them.
 display_names = "/opt/segl/etc/display-names.txt"
 
+# The built web application: the folder that holds index.html. segl reads it
+# when it starts. Without it, segl serves the API and no page.
+web_dir = "/opt/segl/app/web/dist"
+
 # Size limits in bytes: one uploaded image (10 MiB) and one scene (50 MiB).
 # nginx's client_max_body_size in segl-proxy.conf must stay above both.
 max_asset_bytes = 10485760

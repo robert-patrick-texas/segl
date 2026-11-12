@@ -28,6 +28,13 @@ jobs:
       # Sunstone's and vakr's workflows do.
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
 
+      # Node builds and tests web/. The version is web/.node-version (D2-023).
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: web/.node-version
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
       - name: Install the locked environment (Python from .python-version)
         run: uv sync --locked
 
@@ -40,8 +47,26 @@ jobs:
       - name: Types
         run: uv run ty check
 
-      # The mount tests run nginx with the deploy/nginx/ files. They skip on a
-      # host without nginx; SEGL_REQUIRE_NGINX makes that a failure here.
+      - name: Install the locked web packages
+        run: npm --prefix web ci --ignore-scripts --no-audit --no-fund
+
+      - name: Web types
+        run: npm --prefix web run check
+
+      - name: Web unit tests
+        run: npm --prefix web test
+
+      - name: Web format
+        run: npm --prefix web run format:check
+
+      # Before pytest, which holds its stand-in for the build to the real one,
+      # and before the browser tests, which Python serves it to.
+      - name: Web build
+        run: npm --prefix web run build
+
+      # The mount tests and the browser tests run nginx with the deploy/nginx/
+      # files. The mount tests skip on a host without nginx; SEGL_REQUIRE_NGINX
+      # makes that a failure here.
       - name: Install nginx for the mount tests
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends nginx openssl
 
@@ -49,3 +74,21 @@ jobs:
         run: uv run pytest
         env:
           SEGL_REQUIRE_NGINX: "1"
+
+      # The browser of the pinned @playwright/test, with its system libraries.
+      - name: Install Chromium for the browser tests
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+
+      # Python serves the build, at a host root and behind nginx at /board/.
+      - name: Browser tests
+        run: npm --prefix web run e2e
+
+      - name: Keep the browser traces of a failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-traces
+          path: web/test-results/
+          if-no-files-found: ignore
+          retention-days: 7

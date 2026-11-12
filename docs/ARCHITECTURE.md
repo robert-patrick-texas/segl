@@ -26,9 +26,11 @@ Routes at segl's root:
 - `/s/1` … `/s/9` are the slots. The app sends any other `/s/...` value to slot 1.
 - `/api/v1/...` is HTTP.
 - `/collab` is the WebSocket.
-- `/assets/...`, the editor's fonts, and the favicon are the Vite build output.
+- `/assets/...`, `/fonts/...` (the editor's canvas fonts), and `/favicon.svg` are the Vite build output.
 
-Vite builds with `base: './'`, so the built `index.html` names its files `./assets/...` and code-split chunks find each other relative to themselves. Python serves `index.html` for `/` and for `/s/{n}`. A slot page is one level down, so for it Python rewrites those `./` URLs to `../`. Both pages get:
+Python reads the build from `web_dir` (`DEPLOY.md`) when it starts: `web/dist` in a checkout. Vite builds with `base: './'`, so the built `index.html` names its files `./assets/...` and code-split chunks find each other relative to themselves. Python serves `index.html` for `/` and for `/s/{n}`. A slot page is one level down, so for it Python rewrites those `./` URLs to `../`. Any one segment after `/s/` gets the slot page, and so does `/s/` itself, because sending a wrong slot to slot 1 is the app's job. `/s` gets the root page. Pages are sent with `Cache-Control: no-cache`, since they name the other files by content hash. After the page routes, Python registers only the folders and files the build holds, so a build cannot shadow `/api`, `/s`, or `/collab`. Without a build, segl serves the API alone and says so when it starts.
+
+Both pages get, at the end of `<head>`:
 
 ```html
 <script>window.SEGL_CONFIG = { "root": "../", "editRequired": false };</script>
@@ -39,7 +41,7 @@ Vite builds with `base: './'`, so the built `index.html` names its files `./asse
 - `basePath` is its path: `/board/`, or `/` at a host root. It is the React Router basename.
 - API calls are `new URL("api/v1/...", root)`.
 - The WebSocket is `new URL("collab?slot=N", root)` with `ws:` or `wss:` to match the page, so TLS follows the page.
-- `window.EXCALIDRAW_ASSET_PATH` is the root URL, so the editor loads its fonts from segl.
+- `window.EXCALIDRAW_ASSET_PATH` is the root URL, so the editor loads its fonts from `fonts/` under segl's root and not from a public CDN (D2-026).
 
 `editRequired` is true when `edit_token` is non-empty. The token value is never injected. In the Vite dev server, which serves the page itself at the host root, a missing `SEGL_CONFIG` means `root` is the host root, and `editRequired` comes from `GET api/v1/config`.
 
@@ -69,7 +71,7 @@ segl's own redirects are relative. It sends none today: the framework's trailing
 segl owns the wire protocol. The canvas adapter is the only module that imports Excalidraw.
 
 - Element messages carry the element records the editor produces (`id`, `version`, and the deletion flag the pinned package uses).
-- The server keeps the element with the greater `version`. On a tie, it keeps the greater `versionNonce` unless the pinned package exports a reconcile helper, in which case the server-side unit test and the client both follow that helper.
+- The server keeps the element with the greater `version`. On a tie, it keeps the lower `versionNonce`. That is the rule of `reconcileElements`, the helper the pinned package exports, which the client calls (D2-025). A server-side unit test holds the server to the same rule.
 - Deleted elements stay in the scene as tombstones so an older copy cannot resurrect them.
 - A full-scene replace happens on join (load the head) and when the epoch changes (restore or import).
 - Each head has an integer `epoch`, starting at 1. Ordinary element messages must name the current epoch. A stale epoch gets the current scene back so the client can reconcile, and the stale elements are not applied.

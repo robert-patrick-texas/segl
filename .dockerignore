@@ -7,9 +7,10 @@ var/
 dist/
 build/
 node_modules/
+web/node_modules/
 web/dist/
-test-results/
-playwright-report/
+web/test-results/
+web/playwright-report/
 **/__pycache__/
 .pytest_cache/
 .ruff_cache/

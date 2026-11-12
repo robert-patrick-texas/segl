@@ -39,8 +39,9 @@ ROOT = Path(__file__).resolve().parents[1]
 MD2HTML = ROOT / "tools" / "md2html" / "md2html.py"
 DEFAULT_OUT = ROOT / "_site"
 IMAGES = ROOT / "images"
-# GitHub machinery rather than documentation: the pull request template.
-EXCLUDE = [".github"]
+# Not documentation: GitHub's pull request template, and what a failed
+# browser test leaves behind (Playwright writes an error-context.md).
+EXCLUDE = [".github", "web/test-results", "web/playwright-report"]
 # Directories md2html never renders, plus EXCLUDE, for the raw-HTML image check.
 SKIP_DIRS = {".git", ".venv", "node_modules", "_site", *EXCLUDE}
 IMG_SRC = re.compile(r"<img\b[^>]*?\ssrc\s*=\s*[\"']([^\"']+)[\"']", re.IGNORECASE)
