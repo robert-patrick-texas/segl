@@ -1234,6 +1234,55 @@ def test_the_size_limit_counts_the_scene_that_was_put_in_place() -> None:
     assert room.size == sum(len(encode(each)) for each in room.elements.values())
 
 
+def test_an_import_puts_its_elements_and_its_files_in_place(room: Room) -> None:
+    changes: list[str] = []
+    room.on_change = lambda: changes.append("change")
+    browser, viewer = Browser(room), Browser(room, view_only=True)
+    browser.draw(element("a", 1), seq=4)
+    room.snapshot()
+    changes.clear()
+    browser.take(), viewer.take()
+    picture = element("picture", 1, type="image", fileId=FILE["id"], index="a1")
+    document = {"type": "excalidraw", "elements": [], "appState": {"gridSize": 20}}
+
+    room.put(2, document, [element("z", 3, index="a0"), picture], [FILE])
+
+    scene = {
+        "type": "scene",
+        "epoch": 2,
+        "elements": [element("z", 3, index="a0"), picture],
+        "files": [FILE],
+    }
+    # Everyone is sent the scene with the files its images name, viewers too.
+    assert browser.take() == [scene] and viewer.take() == [scene]
+    assert (room.epoch, list(room.elements), room.document) == (2, ["z", "picture"], document)
+    assert room.files == {FILE["id"]: FILE}
+    assert room.size == sum(len(encode(each)) for each in room.elements.values())
+    # The files were written with the scene, so nothing is left to write, and
+    # what was sent for the scene that went has nothing left to wait for.
+    assert not room.dirty and changes == []
+    assert browser.connection.awaiting is None
+    assert room.snapshot().files == []
+
+
+def test_a_file_named_while_an_import_was_written_gives_way_to_the_imports(room: Room) -> None:
+    browser = Browser(room)
+    # Named on the socket after the import's write began: the slot's stored
+    # list has the import's bytes for this id, and the room follows the list.
+    named = {**FILE, "hash": "c" * 64}
+    browser.name_files(named, OTHER_FILE)
+    browser.take()
+    picture = element("picture", 1, type="image", fileId=FILE["id"])
+
+    room.put(2, {"elements": []}, [picture], [FILE])
+
+    assert room.files[FILE["id"]] == FILE
+    assert browser.take()[0]["files"] == [FILE]
+    # The other file is still to be written, and only that one.
+    assert room.dirty
+    assert room.snapshot().files == [OTHER_FILE]
+
+
 def test_a_replacement_forgets_who_edited_the_scene_that_went(room: Room) -> None:
     browser = Browser(room, "Guest1")
     browser.draw(element("a", 1))

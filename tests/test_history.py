@@ -710,12 +710,12 @@ def test_a_restore_whose_request_is_cancelled_still_reaches_the_room(
     entered, gate = threading.Event(), threading.Event()
     replace_head = written.replace_head
 
-    def held(*arguments: Any) -> Any:
+    def held(*arguments: Any, **options: Any) -> Any:
         entered.set()
         gate.wait(5)
-        return replace_head(*arguments)
+        return replace_head(*arguments, **options)
 
-    written.replace_head = held  # ty: ignore[invalid-assignment]
+    written.replace_head = held
 
     async def scenario() -> None:
         rooms = Rooms(written, make_settings(), AssetStore(tmp_path / "assets"))

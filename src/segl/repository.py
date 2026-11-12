@@ -473,12 +473,7 @@ class Repository:
             if written:
                 self._write_head(db, n, epoch, scene_json, editor_label, now)
                 saved_at, author = now, editor_label
-            for file in files:
-                db.execute(
-                    "INSERT INTO slot_file (slot, file_id, hash, media_type, created_at) "
-                    "VALUES (?, ?, ?, ?, ?) ON CONFLICT (slot, file_id) DO NOTHING",
-                    (n, file.file_id, file.hash, file.media_type, now),
-                )
+            self._insert_files(db, n, files, now)
             newest = db.execute(
                 "SELECT scene_json = ?, created_at FROM revision WHERE slot = ? "
                 "ORDER BY revision DESC LIMIT 1",
@@ -513,11 +508,15 @@ class Repository:
             ).fetchall()
         return [SlotFile(*row) for row in rows]
 
-    def replace_head(self, n: int, scene_json: str, editor_label: str) -> Replacement:
+    def replace_head(
+        self, n: int, scene_json: str, editor_label: str, *, files: Sequence[SlotFile] = ()
+    ) -> Replacement:
         """Start a new epoch with this scene: the write behind restore and import.
 
         The epoch goes up by one, the head becomes this scene, and a revision
-        records it, in one transaction.
+        records it, in one transaction. ``files`` are the ones an import
+        brought with its scene. They are added to the slot's files in the same
+        transaction, and a file id the slot already has keeps the bytes it had.
 
         Raises:
             InvalidSlot: When ``n`` is not 1 to 9.
@@ -530,6 +529,7 @@ class Repository:
                 "UPDATE slot SET epoch = ?, updated_at = ? WHERE number = ?", (epoch, now, n)
             )
             self._write_head(db, n, epoch, scene_json, editor_label, now)
+            self._insert_files(db, n, files, now)
             revision = self._insert_revision(db, n, epoch, scene_json, editor_label, now)
         return Replacement(epoch=epoch, revision=revision, saved_at=now)
 
@@ -631,6 +631,16 @@ class Repository:
             "WHERE slot = ?",
             (epoch, scene_json, editor_label, now, n),
         )
+
+    @staticmethod
+    def _insert_files(db: sqlite3.Connection, n: int, files: Sequence[SlotFile], now: str) -> None:
+        # A row is never changed: a file id keeps the bytes it was first given.
+        for file in files:
+            db.execute(
+                "INSERT INTO slot_file (slot, file_id, hash, media_type, created_at) "
+                "VALUES (?, ?, ?, ?, ?) ON CONFLICT (slot, file_id) DO NOTHING",
+                (n, file.file_id, file.hash, file.media_type, now),
+            )
 
     def _insert_revision(
         self,

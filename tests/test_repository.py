@@ -745,6 +745,38 @@ def test_a_replace_that_fails_changes_nothing(repo: Repository) -> None:
     assert repo.save_head(1, 1, DRAWN, "Alpha1")
 
 
+def test_a_replace_adds_the_files_an_import_brought(repo: Repository) -> None:
+    replaced = repo.replace_head(1, DRAWN, "Bravo2", files=[PNG, JPEG])
+
+    assert replaced.epoch == 2
+    assert repo.list_files(1) == [PNG, JPEG]
+    # A slot's list is its own.
+    assert repo.list_files(2) == []
+
+
+def test_a_replace_leaves_a_file_id_the_slot_has_with_its_bytes(repo: Repository) -> None:
+    repo.flush_head(1, 1, DRAWN, "Alpha1", history_seconds=0, files=[PNG])
+    other = SlotFile(PNG.file_id, "c" * 64, "image/gif")
+
+    repo.replace_head(1, DRAWN, "Bravo2", files=[other, JPEG])
+
+    assert repo.list_files(1) == [PNG, JPEG]
+
+
+def test_a_replace_that_fails_adds_no_file(repo: Repository) -> None:
+    repo.save_head(1, 1, DRAWN, "Alpha1")
+    broken = SlotFile(JPEG.file_id, None, "image/jpeg")  # ty: ignore[invalid-argument-type]
+
+    # The second file fails, after the epoch, the head, and the first file.
+    with pytest.raises(StorageError, match="NOT NULL"):
+        repo.replace_head(1, '{"elements":[]}', "Bravo2", files=[PNG, broken])
+
+    assert repo.list_files(1) == []
+    assert repo.get_slot(1).epoch == 1
+    assert repo.get_head(1).scene_json == DRAWN
+    assert repo.list_revisions(1) == []
+
+
 # Display names.
 
 

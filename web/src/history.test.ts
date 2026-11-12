@@ -64,12 +64,12 @@ test('the rows are in the order given, and plain drawing marks none', () => {
 	const rows = historyRows([revision(3), revision(2), revision(1)]);
 
 	expect(rows.map((row) => row.revision)).toEqual([3, 2, 1]);
-	expect(rows.map((row) => row.restored)).toEqual([false, false, false]);
-	expect(rows[0]).toEqual({ ...revision(3), restored: false });
+	expect(rows.map((row) => row.replacement)).toEqual([false, false, false]);
+	expect(rows[0]).toEqual({ ...revision(3), replacement: false });
 });
 
-test('the first row of a new epoch is a restore', () => {
-	// Drawn, drawn, restored, drawn on, restored again, restored again.
+test('the first row of a new epoch is a replacement: a restore or an import', () => {
+	// Drawn, drawn, restored, drawn on, an import, restored again.
 	const rows = historyRows([
 		revision(6, 4),
 		revision(5, 3),
@@ -79,7 +79,7 @@ test('the first row of a new epoch is a restore', () => {
 		revision(1, 1)
 	]);
 
-	expect(rows.map((row) => [row.revision, row.restored])).toEqual([
+	expect(rows.map((row) => [row.revision, row.replacement])).toEqual([
 		[6, true],
 		[5, true],
 		[4, false],
@@ -90,8 +90,8 @@ test('the first row of a new epoch is a restore', () => {
 });
 
 test('the oldest row is never marked: what came before it is not kept', () => {
-	expect(historyRows([revision(51, 2)]).map((row) => row.restored)).toEqual([false]);
-	expect(historyRows([revision(52, 2), revision(51, 2)]).map((row) => row.restored)).toEqual([
+	expect(historyRows([revision(51, 2)]).map((row) => row.replacement)).toEqual([false]);
+	expect(historyRows([revision(52, 2), revision(51, 2)]).map((row) => row.replacement)).toEqual([
 		false,
 		false
 	]);

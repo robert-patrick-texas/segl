@@ -20,7 +20,7 @@
  * Every test runs in each project, so "two contexts sync over
  * `/board/collab` through nginx" is these tests in the `board` project.
  */
-import { expect, type Page, type WebSocketRoute } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 import {
 	canvasPeers,
 	collabUrl,
@@ -34,6 +34,7 @@ import {
 	openPeople,
 	presenceCount,
 	SLOTS,
+	socketSwitch,
 	switchSlot,
 	test
 } from './pages.ts';
@@ -53,36 +54,6 @@ async function selectEverything(page: Page): Promise<void> {
 	const canvas = (await page.locator('.excalidraw canvas.interactive').boundingBox())!;
 	await page.mouse.click(canvas.x + canvas.width - 40, canvas.y + canvas.height - 120);
 	await page.keyboard.press('Control+a');
-}
-
-/**
- * A switch on a page's collaboration socket. `kill` closes the socket the
- * page has and refuses the ones it tries next, as a network that went away.
- * `restore` lets the next one through to the server. Call before `goto`.
- */
-async function socketSwitch(page: Page): Promise<{ kill(): Promise<void>; restore(): void }> {
-	let down = false;
-	const open: { page: WebSocketRoute; server: WebSocketRoute }[] = [];
-	await page.routeWebSocket(/\/collab\?slot=\d$/, (route) => {
-		if (down) {
-			void route.close({ code: 1001, reason: 'the test took the network away' });
-			return;
-		}
-		// With no handlers, messages pass both ways untouched.
-		open.push({ page: route, server: route.connectToServer() });
-	});
-	return {
-		async kill() {
-			down = true;
-			for (const pair of open.splice(0)) {
-				await pair.server.close();
-				await pair.page.close({ code: 1001, reason: 'the test took the network away' });
-			}
-		},
-		restore() {
-			down = false;
-		}
-	};
 }
 
 test('a rectangle drawn in one browser appears in the other', async ({ page, person, baseURL }) => {

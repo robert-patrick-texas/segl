@@ -14,6 +14,11 @@
  * limitations under the License.
  */
 
+/* Around the editor, to hear a file dropped on it. It takes no room of its own. */
+.segl-canvas {
+	display: contents;
+}
+
 /*
  * The editor draws its own row of avatars once it is told who else is here.
  * Pressing one follows that person's view, which segl does not carry, so the

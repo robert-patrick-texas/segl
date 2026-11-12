@@ -97,7 +97,8 @@
 .segl-bar__title-button:focus-visible,
 .segl-bar__title-input:focus-visible,
 .segl-bar__count:focus-visible,
-.segl-bar__history-button:focus-visible {
+.segl-bar__history-button:focus-visible,
+.segl-bar__import-button:focus-visible {
 	outline: 2px solid #7fd1ae;
 	outline-offset: 2px;
 }
@@ -242,12 +243,14 @@
 	color: #ffb4a8;
 }
 
-.segl-bar__history {
+.segl-bar__history,
+.segl-bar__import {
 	position: relative;
 	flex: 0 0 auto;
 }
 
-.segl-bar__history-button {
+.segl-bar__history-button,
+.segl-bar__import-button {
 	height: 1.75rem;
 	padding: 0 0.5rem;
 	border: 1px solid rgb(244 241 232 / 35%);
@@ -259,11 +262,14 @@
 }
 
 .segl-bar__history-button:hover,
-.segl-bar__history-button[aria-expanded='true'] {
+.segl-bar__history-button[aria-expanded='true'],
+.segl-bar__import-button:hover,
+.segl-bar__import-button[aria-expanded='true'] {
 	background: rgb(244 241 232 / 15%);
 }
 
-.segl-bar__history-panel {
+.segl-bar__history-panel,
+.segl-bar__import-panel {
 	position: absolute;
 	top: calc(100% + 0.375rem);
 	left: 0;
@@ -342,7 +348,8 @@
 	text-align: right;
 }
 
-.segl-bar__revision-button {
+.segl-bar__revision-button,
+.segl-bar__import-answer {
 	flex: 0 0 auto;
 	height: 1.5rem;
 	padding: 0 0.5rem;
@@ -355,40 +362,77 @@
 	cursor: pointer;
 }
 
-.segl-bar__revision-button:hover:enabled {
+.segl-bar__revision-button:hover:enabled,
+.segl-bar__import-answer:hover:enabled {
 	background: #eef2f6;
 }
 
-.segl-bar__revision-button[data-kind='confirm'] {
+.segl-bar__revision-button[data-kind='confirm'],
+.segl-bar__import-answer[data-kind='confirm'] {
 	border-color: #1b3a57;
 	background: #1b3a57;
 	color: #f4f1e8;
 }
 
-.segl-bar__revision-button[data-kind='confirm']:hover:enabled {
+.segl-bar__revision-button[data-kind='confirm']:hover:enabled,
+.segl-bar__import-answer[data-kind='confirm']:hover:enabled {
 	background: #264d70;
 }
 
-.segl-bar__revision-button:disabled {
+.segl-bar__revision-button:disabled,
+.segl-bar__import-answer:disabled {
 	cursor: default;
 	opacity: 0.55;
 }
 
-.segl-bar__revision-button:focus-visible {
+.segl-bar__revision-button:focus-visible,
+.segl-bar__import-answer:focus-visible {
 	outline: 2px solid #1b3a57;
 	outline-offset: 2px;
 }
 
 .segl-bar__history-note,
-.segl-bar__history-problem {
+.segl-bar__history-problem,
+.segl-bar__import-note,
+.segl-bar__import-problem {
 	margin: 0;
 	padding: 0.25rem 0.75rem;
 	color: #5a6b7b;
 	font-size: 0.8125rem;
 }
 
-.segl-bar__history-problem {
+.segl-bar__history-problem,
+.segl-bar__import-problem {
 	color: #a4281b;
+}
+
+/* The file dialog is opened by the button. The field itself is never seen. */
+.segl-bar__import-input {
+	display: none;
+}
+
+.segl-bar__import-file {
+	margin: 0;
+	padding: 0.25rem 0.75rem;
+	overflow: hidden;
+	font-weight: 600;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.segl-bar__import-confirm {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 0.375rem;
+	padding: 0.25rem 0.75rem;
+	font-size: 0.8125rem;
+}
+
+/* The question has lines of its own, and the two answers share the next. */
+.segl-bar__import-question {
+	flex: 1 1 100%;
 }
 
 .segl-bar__you {

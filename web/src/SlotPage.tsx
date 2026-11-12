@@ -21,6 +21,7 @@ import {
 	fetchRevisions,
 	fetchScene,
 	fetchSlots,
+	importScene,
 	renameSlot,
 	restoreRevision,
 	type SlotScene
@@ -30,6 +31,7 @@ import type { FileRef } from './collab/files.ts';
 import { readEditToken } from './collab/identity.ts';
 import { useCollab } from './collab/useCollab.ts';
 import { storageKey, type AppConfig } from './config.ts';
+import { exportName } from './importing.ts';
 import { loadedScene, type Load } from './load.ts';
 import { browserStorage, writeLastSlot } from './slots.ts';
 import type { DisplayName } from './useDisplayName.ts';
@@ -120,6 +122,25 @@ export function SlotPage({ config, slot, displayName }: SlotPageProps) {
 		[config, slot, name]
 	);
 
+	// The exported file that waits for the second press, with the slot it was
+	// offered on: chosen in the bar, or dropped on the canvas.
+	const [offered, setOffered] = useState<{ slot: number; file: File } | null>(null);
+	const importFile = offered !== null && offered.slot === slot ? offered.file : null;
+	const chooseImport = useCallback(
+		(file: File | null) => setOffered(file === null ? null : { slot, file }),
+		[slot]
+	);
+
+	// As a restore: the canvas is not touched here, and the scene arrives
+	// over the socket.
+	const importFrom = useCallback(
+		async (file: File) => {
+			const token = readEditToken(browserStorage(), storageKey(config, 'editToken'));
+			await importScene(config, slot, file, name, token);
+		},
+		[config, slot, name]
+	);
+
 	const title = titles.get(slot);
 	useEffect(() => {
 		document.title = title ? `${title} · segl` : 'segl';
@@ -142,6 +163,9 @@ export function SlotPage({ config, slot, displayName }: SlotPageProps) {
 				epoch={collab.state.epoch}
 				onLoadHistory={loadHistory}
 				onRestore={restore}
+				importFile={importFile}
+				onChooseImport={chooseImport}
+				onImport={importFrom}
 			/>
 			<main className="segl__canvas">
 				{scene !== null && (
@@ -149,7 +173,9 @@ export function SlotPage({ config, slot, displayName }: SlotPageProps) {
 						<Canvas
 							key={slot}
 							document={scene.scene}
+							exportName={exportName(title, slot)}
 							viewOnly={viewOnly}
+							onSceneFile={chooseImport}
 							onEditor={collab.onEditor}
 							onChange={collab.onChange}
 							onCursor={collab.onCursor}

@@ -16,13 +16,15 @@
  * What the specs share: where a project is mounted, a browser that already
  * has a display name, and how to read the canvas.
  */
+import { readFileSync } from 'node:fs';
 import { crc32, deflateSync } from 'node:zlib';
 import {
 	test as base,
 	expect,
 	type BrowserContext,
 	type Locator,
-	type Page
+	type Page,
+	type WebSocketRoute
 } from '@playwright/test';
 
 export interface Mount {
@@ -75,6 +77,11 @@ export const SLOTS = {
 	deleting: 6,
 	reconnect: 7,
 	names: 8,
+	/**
+	 * The tests on the names slot draw nothing, so the import tests have this
+	 * canvas to themselves. An import replaces the whole scene of a slot.
+	 */
+	importing: 8,
 	/** Never drawn on. */
 	empty: 9
 } as const;
@@ -185,6 +192,38 @@ export async function switchSlot(page: Page, slot: number, title: string): Promi
 	await expectLive(page);
 }
 
+/**
+ * A switch on a page's collaboration socket. `kill` closes the socket the
+ * page has and refuses the ones it tries next, as a network that went away.
+ * `restore` lets the next one through to the server. Call before `goto`.
+ */
+export async function socketSwitch(
+	page: Page
+): Promise<{ kill(): Promise<void>; restore(): void }> {
+	let down = false;
+	const open: { page: WebSocketRoute; server: WebSocketRoute }[] = [];
+	await page.routeWebSocket(/\/collab\?slot=\d$/, (route) => {
+		if (down) {
+			void route.close({ code: 1001, reason: 'the test took the network away' });
+			return;
+		}
+		// With no handlers, messages pass both ways untouched.
+		open.push({ page: route, server: route.connectToServer() });
+	});
+	return {
+		async kill() {
+			down = true;
+			for (const pair of open.splice(0)) {
+				await pair.server.close();
+				await pair.page.close({ code: 1001, reason: 'the test took the network away' });
+			}
+		},
+		restore() {
+			down = false;
+		}
+	};
+}
+
 /** The number in the presence control. */
 export function presenceCount(page: Page): Locator {
 	return page.getByTestId('presence-count');
@@ -219,6 +258,76 @@ export async function restoreRow(row: Locator): Promise<void> {
 	await row.getByRole('button', { name: /^Restore the version of / }).click();
 	await expect(row).toContainText('Replace the canvas for everyone?');
 	await row.getByRole('button', { name: 'Restore it' }).click();
+}
+
+/** The Import control in the segl bar. */
+export function importControl(page: Page): Locator {
+	return page.getByTestId('import');
+}
+
+/** A file as a test hands one to the page. */
+export interface TestFile {
+	name: string;
+	text: string;
+	/** The type the browser gives it. A `.excalidraw` file from a folder has none. */
+	type?: string;
+}
+
+/**
+ * Choose a file to import, through the bar's Import button and the browser's
+ * file dialog, and return the control's panel once it asks about that file.
+ */
+export async function chooseImport(page: Page, file: TestFile): Promise<Locator> {
+	const control = importControl(page);
+	const chooser = page.waitForEvent('filechooser');
+	await control.getByRole('button', { name: 'Import', exact: true }).click();
+	await (
+		await chooser
+	).setFiles({
+		name: file.name,
+		mimeType: file.type ?? '',
+		buffer: Buffer.from(file.text)
+	});
+	const panel = control.getByRole('group', { name: 'Import a file into this slot' });
+	await expect(panel).toContainText(file.name);
+	return panel;
+}
+
+/** Import the file the control is asking about: the press that confirms it. */
+export async function confirmImport(panel: Locator): Promise<void> {
+	await expect(panel).toContainText('Replace the canvas for everyone?');
+	await panel.getByRole('button', { name: 'Import it' }).click();
+}
+
+/**
+ * Take the browser's own save and open dialogs away from a page, before it
+ * loads. Chromium has them, and Playwright cannot drive them. Without them
+ * the editor saves a file as a download, as it does in Firefox and Safari,
+ * and opens one through a file field, both of which a test can see.
+ */
+export async function withoutFilePickers(page: Page): Promise<void> {
+	await page.addInitScript(() => {
+		const pickers = window as unknown as Record<string, unknown>;
+		delete pickers['showSaveFilePicker'];
+		delete pickers['showOpenFilePicker'];
+	});
+}
+
+/**
+ * Export the scene with the editor's own menu, "Save to…" and then "Save to
+ * file", and return the file: its name, and its text as it was written to
+ * `saveTo`. The page needs `withoutFilePickers`.
+ */
+export async function exportScene(page: Page, saveTo: string): Promise<TestFile> {
+	await page.locator('[data-testid="main-menu-trigger"]').click();
+	await page.locator('[data-testid="json-export-button"]').click();
+	const download = page.waitForEvent('download');
+	await page.getByRole('button', { name: 'Save to file' }).click();
+	const file = await download;
+	await file.saveAs(saveTo);
+	// The editor closes its dialog once the file is on its way.
+	await expect(page.locator('.excalidraw .Modal')).toHaveCount(0);
+	return { name: file.suggestedFilename(), text: readFileSync(saveTo, 'utf8') };
 }
 
 export interface SceneElement {
@@ -354,17 +463,7 @@ export async function dropImage(
 	y: number
 ): Promise<CanvasImage> {
 	const before = new Set((await canvasImages(page)).map((image) => image.id));
-	const canvas = page.locator('.excalidraw canvas.interactive');
-	const box = (await canvas.boundingBox())!;
-	const dataTransfer = await page.evaluateHandle((base64) => {
-		const binary = atob(base64);
-		const bytes = new Uint8Array(binary.length);
-		for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-		const transfer = new DataTransfer();
-		transfer.items.add(new File([bytes], 'picture.png', { type: 'image/png' }));
-		return transfer;
-	}, file.toString('base64'));
-	await canvas.dispatchEvent('drop', { dataTransfer, clientX: box.x + x, clientY: box.y + y });
+	await dropFile(page, { name: 'picture.png', type: 'image/png', bytes: file }, x, y);
 	let placed: CanvasImage | undefined;
 	await expect
 		.poll(
@@ -376,6 +475,33 @@ export async function dropImage(
 		)
 		.toBe('image/png');
 	return placed!;
+}
+
+/**
+ * Drop a file on the canvas, `x` and `y` from its top left corner, as a
+ * person drags one in from a folder.
+ */
+export async function dropFile(
+	page: Page,
+	file: { name: string; type: string; bytes: Buffer },
+	x: number,
+	y: number
+): Promise<void> {
+	const canvas = page.locator('.excalidraw canvas.interactive');
+	const box = (await canvas.boundingBox())!;
+	const dataTransfer = await page.evaluateHandle(
+		([base64, name, type]) => {
+			const binary = atob(base64);
+			const bytes = new Uint8Array(binary.length);
+			for (let index = 0; index < binary.length; index += 1)
+				bytes[index] = binary.charCodeAt(index);
+			const transfer = new DataTransfer();
+			transfer.items.add(new File([bytes], name, { type }));
+			return transfer;
+		},
+		[file.bytes.toString('base64'), file.name, file.type] as const
+	);
+	await canvas.dispatchEvent('drop', { dataTransfer, clientX: box.x + x, clientY: box.y + y });
 }
 
 /** One image on a page's canvas, or undefined when it is not there. */

@@ -22,7 +22,7 @@
 export interface RevisionInfo {
 	/** Counts up per slot from 1, and is not reused. */
 	revision: number;
-	/** The epoch the scene belongs to. A restore starts a new one. */
+	/** The epoch the scene belongs to. A restore or an import starts a new one. */
 	epoch: number;
 	/** The display name behind the newest change in it, or `System`. */
 	authorLabel: string;
@@ -33,10 +33,11 @@ export interface RevisionInfo {
 /** A revision as a row of the list. */
 export interface HistoryRow extends RevisionInfo {
 	/**
-	 * The scene was put in place whole here, by a restore, and not drawn. The
-	 * row below it is then the scene that was replaced.
+	 * The scene was put in place whole here, by a restore or an import, and
+	 * not drawn. The row below it is then the scene that was replaced. The
+	 * server keeps no record of which of the two it was (D2-030).
 	 */
-	restored: boolean;
+	replacement: boolean;
 }
 
 function isRevisionInfo(value: unknown): value is RevisionInfo {
@@ -68,14 +69,15 @@ export function parseRevisions(value: unknown): RevisionInfo[] | null {
 /**
  * Return the rows of the list, in the order given: newest first.
  *
- * A restore writes the first revision of a new epoch, so a row whose epoch is
- * higher than that of the row below it is a restore. The oldest row has none
- * below it, and is not marked: what came before it is no longer kept.
+ * A restore and an import each write the first revision of a new epoch, so a
+ * row whose epoch is higher than that of the row below it is one of the two.
+ * The oldest row has none below it, and is not marked: what came before it
+ * is no longer kept.
  */
 export function historyRows(revisions: readonly RevisionInfo[]): HistoryRow[] {
 	return revisions.map((row, index) => {
 		const older = revisions[index + 1];
-		return { ...row, restored: older !== undefined && row.epoch > older.epoch };
+		return { ...row, replacement: older !== undefined && row.epoch > older.epoch };
 	});
 }
 

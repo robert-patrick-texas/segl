@@ -231,12 +231,14 @@ Acceptance: T-011. ruff, ty, and the web checks pass.
 
 ## T09 — JSON export and import
 
-- Status: pending
+- Status: done
 - Requires: T08
 - Requirements: S-011
 - Read: `docs/API.md` import route
 
 Use the editor's Excalidraw JSON export. Import posts to the import route, which follows the restore epoch rules. Reject an oversized body with `payload_too_large`.
+
+The export is the editor's own menu entry, and segl names the file after the slot's title. The editor's own ways to open a scene file are off, because each fills one browser's canvas and not the slot: the bar's Import control posts the file to the route instead, after a second press, and so does a scene file dropped on the canvas (D2-031). The route takes the document's elements and the files they name, stores the files as uploads, and leaves `appState`. Who imported comes in the `X-Segl-Display-Name` header. The slot's saver does the import as it does a restore, through `Saver.put`. The History control's mark on the first row of an epoch reads `replacement`, for a restore or an import. T-009 runs in `web/e2e/import.spec.ts` on slot 8 and in `tests/test_import.py`, which also holds the import part of T-008. T10 tests the viewer's Import control in a browser.
 
 Acceptance: T-009. ruff, ty, and the web checks pass.
 

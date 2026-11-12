@@ -21,6 +21,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from http import HTTPStatus
 from typing import Any
+from urllib.parse import unquote
 
 from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
@@ -31,6 +32,7 @@ from starlette.staticfiles import StaticFiles
 from segl.assets import MEDIA_TYPES, AssetStore
 from segl.collab import Rooms, serve
 from segl.config import Settings
+from segl.importing import ImportedFile, InvalidDocument, NotJson, TooLarge, read_document
 from segl.names import AllocationLimit, load_display_names, retry_after
 from segl.origin import OriginCheck
 from segl.repository import (
@@ -41,7 +43,7 @@ from segl.repository import (
     RevisionSummary,
     Slot,
 )
-from segl.room import encode, may_edit, named_files, stored_name
+from segl.room import FileEntry, encode, may_edit, named_files, stored_name
 from segl.versions import app_version
 from segl.web import ROOT_PAGE, SLOT_PAGE, WebBuild, load_web_build, render_page
 
@@ -137,6 +139,28 @@ async def _json_object(request: Request, limit: int) -> dict[str, Any] | JSONRes
     if not isinstance(parsed, dict):
         return _error(400, "bad_request", "The body is a JSON object.")
     return parsed
+
+
+def header_name(value: str | None) -> str | None:
+    """Return the label an ``X-Segl-Display-Name`` header carries, or None.
+
+    A header is ASCII, and a name is not, so the browser percent-encodes the
+    label it stores. It is then taken as ``hello`` takes it.
+    """
+    if value is None:
+        return None
+    try:
+        return stored_name(unquote(value, errors="strict"))
+    except UnicodeDecodeError:
+        return None
+
+
+def _store(assets: AssetStore, files: list[ImportedFile]) -> list[FileEntry]:
+    """Store the bytes of an import's files, and return the files as a slot lists them."""
+    return [
+        {"id": file.file_id, "hash": assets.save(file.data), "mimeType": file.media_type}
+        for file in files
+    ]
 
 
 def _slot_json(slot: Slot) -> dict[str, object]:
@@ -393,6 +417,44 @@ def create_app(settings: Settings, repository: Repository) -> FastAPI:
         label = stored_name(body.get("displayName")) or SYSTEM_LABEL
         # Written, then sent to the slot's room as a `scene` of the new epoch.
         replacement = await rooms.restore(number, chosen, label)
+        return JSONResponse(
+            {
+                "revision": replacement.revision,
+                "epoch": replacement.epoch,
+                "savedAt": replacement.saved_at,
+            }
+        )
+
+    @app.post("/api/v1/slots/{n}/import")
+    async def import_document(n: str, request: Request) -> JSONResponse:
+        number = _slot_number(n)
+        if not may_edit(settings.edit_token, request.headers.get("x-segl-edit-token")):
+            return _error(403, "view_only", "Editing needs the edit token.")
+        # The file as the editor exported it, with the files of its images inside.
+        body = await _body(request, settings.max_scene_bytes)
+        if isinstance(body, JSONResponse):
+            return body
+        try:
+            # A large document takes a while to read, so not on the event loop.
+            document = await run_in_threadpool(
+                read_document,
+                body,
+                max_scene_bytes=settings.max_scene_bytes,
+                max_asset_bytes=settings.max_asset_bytes,
+            )
+        except NotJson:
+            return _error(400, "bad_request", "The body is a JSON object.")
+        except TooLarge as exc:
+            return _error(413, "payload_too_large", str(exc))
+        except InvalidDocument as exc:
+            return _error(422, "invalid_document", f"That is not an Excalidraw scene: {exc}.")
+        # Who imported, for the history row. The body is the document, so the
+        # label the browser stores comes in a header.
+        label = header_name(request.headers.get("x-segl-display-name")) or SYSTEM_LABEL
+        # The bytes first, as an upload comes before the message that names it.
+        files = await run_in_threadpool(_store, assets, document.files)
+        # Written, then sent to the slot's room as a `scene` of the new epoch.
+        replacement = await rooms.import_scene(number, document.elements, files, label)
         return JSONResponse(
             {
                 "revision": replacement.revision,

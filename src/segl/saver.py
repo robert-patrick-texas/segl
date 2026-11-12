@@ -21,9 +21,10 @@ time when segl stops. The repository decides, in the same transaction, whether
 the flush also adds a history row. After the write, the connections whose
 edits it held are sent ``saved``.
 
-The saver also puts another scene in the room's place, for a restore
-(``replace``). That is a write of the same slot, and it starts a new epoch, so
-it takes its turn with the flushes: one lock, and one of them at a time.
+The saver also puts another scene in the room's place: a revision's, for a
+restore (``replace``), or a document's, for an import (``put``). That is a
+write of the same slot, and it starts a new epoch, so it takes its turn with
+the flushes: one lock, and one of them at a time.
 
 Everything here runs on the event loop but the write itself, which a worker
 thread does, turning the scene into JSON on the way.
@@ -32,11 +33,13 @@ thread does, turning the scene into JSON on the way.
 import asyncio
 import contextlib
 import logging
+from collections.abc import Callable, Sequence
 
 from starlette.concurrency import run_in_threadpool
 
+from segl.reconcile import Element
 from segl.repository import SYSTEM_LABEL, Flush, Replacement, Repository, SlotFile
-from segl.room import Room, Snapshot
+from segl.room import FileEntry, Room, Snapshot, encode
 
 logger = logging.getLogger("segl.saver")
 
@@ -96,27 +99,68 @@ class Saver:
         was and the error is raised.
         """
         async with self._lock:
+            return await self._swap_in(
+                lambda: scene_json,
+                editor_label,
+                [],
+                lambda epoch: self._room.replace(epoch, scene_json),
+            )
+
+    async def put(
+        self, elements: list[Element], files: Sequence[FileEntry], editor_label: str
+    ) -> Replacement:
+        """Put these elements in the room's place, at a new epoch: an import.
+
+        The steps are a restore's, and so is what happens to an edit that
+        arrives meanwhile and to a write that fails. The scene is the slot's
+        own document with these elements, in the order given. ``files`` are
+        the ones the elements name whose bytes are stored. Those the slot does
+        not have yet join its list in the write that starts the epoch.
+        """
+        async with self._lock:
             room = self._room
-            waiting = room.take_waiting()
-            # Always, and not only when the room is dirty: after a crash the
-            # head may hold a scene that no history row does.
-            snapshot = room.snapshot()
-            try:
-                replacement = await run_in_threadpool(
-                    self._swap, snapshot, scene_json, editor_label
-                )
-            except BaseException:
-                room.take_back(snapshot)
-                room.keep_waiting(waiting)
-                # The flush that would have told them is the next one.
-                self._wake()
-                raise
-            self._saved_at = replacement.saved_at
-            self._unrecorded = False
-            # Nobody is told `saved`: the new epoch tells every browser that
-            # what it sent for the old scene has nothing left to wait for.
-            room.replace(replacement.epoch, scene_json)
-            return replacement
+            # The room gets a new document with a new scene and never changes
+            # one, so the worker thread may read this one.
+            document = room.document
+            new = [entry for entry in files if entry["id"] not in room.files]
+            return await self._swap_in(
+                lambda: encode({**document, "elements": elements}),
+                editor_label,
+                new,
+                lambda epoch: room.put(epoch, document, elements, new),
+            )
+
+    async def _swap_in(
+        self,
+        scene: Callable[[], str],
+        editor_label: str,
+        files: Sequence[FileEntry],
+        arrive: Callable[[int], None],
+    ) -> Replacement:
+        """Write the room's scene and then the one in its place. The caller holds the lock.
+
+        ``scene`` returns the new scene as it is stored, and is called in the
+        worker thread. ``arrive`` takes the new epoch and gives the room the scene.
+        """
+        room = self._room
+        waiting = room.take_waiting()
+        # Always, and not only when the room is dirty: after a crash the
+        # head may hold a scene that no history row does.
+        snapshot = room.snapshot()
+        try:
+            replacement = await run_in_threadpool(self._swap, snapshot, scene, editor_label, files)
+        except BaseException:
+            room.take_back(snapshot)
+            room.keep_waiting(waiting)
+            # The flush that would have told them is the next one.
+            self._wake()
+            raise
+        self._saved_at = replacement.saved_at
+        self._unrecorded = False
+        # Nobody is told `saved`: the new epoch tells every browser that
+        # what it sent for the old scene has nothing left to wait for.
+        arrive(replacement.epoch)
+        return replacement
 
     def _on_empty(self) -> None:
         self._emptied = True
@@ -190,21 +234,31 @@ class Saver:
             raise
         room.saved(waiting, self._saved_at)
 
-    def _swap(self, snapshot: Snapshot, scene_json: str, editor_label: str) -> Replacement:
+    def _swap(
+        self,
+        snapshot: Snapshot,
+        scene: Callable[[], str],
+        editor_label: str,
+        files: Sequence[FileEntry],
+    ) -> Replacement:
         """Write the scene that is going, and then the one in its place. A worker thread."""
         self._write(snapshot, record=True)
-        return self._repository.replace_head(self._room.slot, scene_json, editor_label)
+        return self._repository.replace_head(
+            self._room.slot, scene(), editor_label, files=_slot_files(files)
+        )
 
     def _write(self, snapshot: Snapshot, record: bool) -> Flush:
         """Write one snapshot. This runs in a worker thread."""
-        files = [
-            SlotFile(entry["id"], entry["hash"], entry["mimeType"]) for entry in snapshot.files
-        ]
         return self._repository.flush_head(
             self._room.slot,
             snapshot.epoch,
             snapshot.scene_json(),
             snapshot.editor_label or SYSTEM_LABEL,
             history_seconds=0 if record else self._history_seconds,
-            files=files,
+            files=_slot_files(snapshot.files),
         )
+
+
+def _slot_files(files: Sequence[FileEntry]) -> list[SlotFile]:
+    """Return a room's file entries as the repository stores them."""
+    return [SlotFile(entry["id"], entry["hash"], entry["mimeType"]) for entry in files]

@@ -136,7 +136,7 @@ test('an older version is restored in every browser, and the one it replaced com
 	// whoever restored, and the row under it is the scene that was replaced.
 	await expect(rows.first()).toHaveAttribute('data-epoch', String(epoch + 1));
 	await expect(rows.first()).toContainText('Tester');
-	await expect(rows.first()).toContainText('restore');
+	await expect(rows.first()).toContainText('replacement');
 	const replaced = Number(await rows.nth(1).getAttribute('data-revision'));
 	expect(replaced).toBeGreaterThanOrEqual(second.revision);
 	expect(await revisionElements(request, slot, replaced)).toContainEqual(

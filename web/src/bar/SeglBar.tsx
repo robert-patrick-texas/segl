@@ -15,8 +15,9 @@
 /**
  * The segl bar. It sits above the canvas, outside it, and holds the slot
  * buttons, the shared title (S-003), who is on the slot (S-010), the state of
- * the connection (S-013), the slot's history (S-005), this browser's display
- * name (S-009), and the notice that the workspace is shared (S-016).
+ * the connection (S-013), the slot's history (S-005), JSON import (S-011),
+ * this browser's display name (S-009), and the notice that the workspace is
+ * shared (S-016).
  */
 import { NavLink } from 'react-router';
 import type { Participant } from '../collab/protocol.ts';
@@ -25,6 +26,7 @@ import type { RevisionInfo } from '../history.ts';
 import { SLOT_NUMBERS } from '../slots.ts';
 import './bar.css';
 import { HistoryControl } from './HistoryControl.tsx';
+import { ImportControl } from './ImportControl.tsx';
 import { NameControl } from './NameControl.tsx';
 import { sharedNotice } from './notice.ts';
 import { PresenceControl } from './PresenceControl.tsx';
@@ -57,6 +59,12 @@ export interface SeglBarProps {
 	onLoadHistory: (signal: AbortSignal) => Promise<RevisionInfo[]>;
 	/** Put one of this slot's revisions in place of its scene, for everyone. */
 	onRestore: (revision: number) => Promise<void>;
+	/** The exported file that waits to be imported, or null. */
+	importFile: File | null;
+	/** Take a file to import, or let go of the one that waits. */
+	onChooseImport: (file: File | null) => void;
+	/** Put the scene of an exported file in place of this slot's, for everyone. */
+	onImport: (file: File) => Promise<void>;
 }
 
 export function SeglBar({
@@ -73,9 +81,12 @@ export function SeglBar({
 	onRetitle,
 	epoch,
 	onLoadHistory,
-	onRestore
+	onRestore,
+	importFile,
+	onChooseImport,
+	onImport
 }: SeglBarProps) {
-	// In the slot's room: a restore reaches this canvas over the socket.
+	// In the slot's room: a restore or an import reaches this canvas over the socket.
 	const connected = status === 'live' || status === 'saving' || status === 'saved';
 	return (
 		<header className="segl-bar">
@@ -115,6 +126,14 @@ export function SeglBar({
 				connected={connected}
 				onLoad={onLoadHistory}
 				onRestore={onRestore}
+			/>
+			<ImportControl
+				key={`import-${slot}`}
+				file={importFile}
+				onChoose={onChooseImport}
+				canImport={canEdit}
+				connected={connected}
+				onImport={onImport}
 			/>
 			<div className="segl-bar__you">
 				{/* The button's own label says the same to a screen reader. */}

@@ -17,6 +17,7 @@
 import { isHash, parseFileRefs, type FileRef } from './collab/files.ts';
 import { apiUrl, type AppConfig } from './config.ts';
 import { parseRevisions, type RevisionInfo } from './history.ts';
+import { nameHeader } from './importing.ts';
 
 export interface SlotInfo {
 	number: number;
@@ -193,10 +194,51 @@ export async function restoreRevision(
 		body: JSON.stringify({ revision, displayName }),
 		signal
 	})) as { revision?: unknown; epoch?: unknown } | null;
+	return replacement(url, body);
+}
+
+/** What a restore and an import answer: the revision they wrote, and the slot's new epoch. */
+function replacement(
+	url: URL,
+	body: { revision?: unknown; epoch?: unknown } | null
+): { revision: number; epoch: number } {
 	if (!Number.isInteger(body?.revision) || !Number.isInteger(body?.epoch)) {
 		throw new ApiError(200, 'unexpected', `${url.pathname} did not return the new revision`);
 	}
 	return { revision: body!.revision as number, epoch: body!.epoch as number };
+}
+
+/** The header that says who imported. The body of an import is the file. */
+export const DISPLAY_NAME_HEADER = 'X-Segl-Display-Name';
+
+/**
+ * Put the scene of an exported file in place of a slot's scene (S-011). The
+ * file goes as it is, with the files of its images inside it. The server
+ * keeps the scene that is replaced as a revision first, and then sends the
+ * imported one to every browser on the slot, this one included, over the
+ * socket. `displayName` is who imported, for the history. `editToken` is this
+ * browser's stored token, or `''`. It goes in a header, never in the URL.
+ */
+export async function importScene(
+	config: AppConfig,
+	slot: number,
+	file: Blob,
+	displayName: string | null,
+	editToken: string,
+	signal?: AbortSignal
+): Promise<{ revision: number; epoch: number }> {
+	const url = apiUrl(config, `slots/${slot}/import`);
+	const body = (await requestJson(url, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			...(displayName === null ? {} : { [DISPLAY_NAME_HEADER]: nameHeader(displayName) }),
+			...(editToken === '' ? {} : { [EDIT_TOKEN_HEADER]: editToken })
+		},
+		body: file,
+		signal
+	})) as { revision?: unknown; epoch?: unknown } | null;
+	return replacement(url, body);
 }
 
 /**

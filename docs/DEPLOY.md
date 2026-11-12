@@ -29,7 +29,7 @@ There is no base-path setting. segl serves at its root, and nginx strips the pat
 
 segl checks the file when it starts. A key it does not know, such as a misspelled `edit_token` or the removed `base_path`, or a value it cannot use, stops it with exit status 2 and a message that names the key. The message never repeats the token. The sizes and `history_limit` are whole numbers, 1 or more. The two intervals are seconds above 0.
 
-`max_scene_bytes` is the most the elements of one slot may come to, as JSON, and also the largest message the collaboration WebSocket takes. A longer message closes that connection, and an edit that would take a slot over is refused (`API.md`, WebSocket). The database can hold up to `history_limit` + 1 copies of each slot's scene.
+`max_scene_bytes` is the most the elements of one slot may come to, as JSON, and also the largest message the collaboration WebSocket takes. A longer message closes that connection, and an edit that would take a slot over is refused (`API.md`, WebSocket). It is the largest file an import takes too. An exported file holds its images as base64 text, a third larger than their bytes, and each image in it may be up to `max_asset_bytes`. The database can hold up to `history_limit` + 1 copies of each slot's scene.
 
 `head_flush_seconds` is how long after an edit segl writes the slot's head, and so how much a crash can lose. `history_interval_seconds` is the least time between two history rows of one slot while people draw (`DATA-MODEL.md`, flush rules). segl also writes when the last browser leaves a slot and when it is stopped with SIGTERM, which is how systemd stops it.
 

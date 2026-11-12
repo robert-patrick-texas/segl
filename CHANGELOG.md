@@ -4,7 +4,7 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
-The project is specified, licensed, and public on GitHub. A Python service reads its settings, keeps nine slots in SQLite, and serves them, and a browser application shows each slot as an Excalidraw canvas under the segl bar, where each browser has a display name. People on the same slot draw together live, and what they draw, images included, is saved and survives a restart. A slot's earlier versions are listed in the bar and can be restored. CI and a dev container check both, including through nginx at `/board/`.
+The project is specified, licensed, and public on GitHub. A Python service reads its settings, keeps nine slots in SQLite, and serves them, and a browser application shows each slot as an Excalidraw canvas under the segl bar, where each browser has a display name. People on the same slot draw together live, and what they draw, images included, is saved and survives a restart. A slot's earlier versions are listed in the bar and can be restored, and a slot can be exported to an Excalidraw file and imported from one. CI and a dev container check both, including through nginx at `/board/`.
 
 ### New
 
@@ -57,6 +57,10 @@ The project is specified, licensed, and public on GitHub. A Python service reads
 - Restore. `POST /api/v1/slots/{n}/restore` with `{ "revision", "displayName" }` puts a revision's scene in place of the slot's, at the next epoch, and every browser on the slot is sent it. The scene that was replaced is kept as a revision first, so a restore can be undone by restoring that one. It needs the edit token when one is set. New error codes: `revision_not_found` (404) and `invalid_revision` (422).
 - The History control in the bar lists the revisions with the time and the display name of each, marks the ones a restore wrote, and restores one in two presses. A browser without the edit token sees the list without the restore buttons. The list stays inside the page on a narrow screen.
 - Tests for it: `tests/test_history.py`, more of `tests/test_saver.py` and `tests/test_room.py`, and `web/e2e/history.spec.ts` (T-011, and the history part of T-008).
+- JSON import (S-011, D2-031). `POST /api/v1/slots/{n}/import` takes the file the editor's export writes, of at most `max_scene_bytes`, and puts its elements in place of the slot's scene at the next epoch, for every browser on the slot. The files of its images come out of the document and are stored as uploads are. The scene that was replaced is kept as a revision first, as with a restore, so an import can be undone. Who imported comes in the `X-Segl-Display-Name` header. It needs the edit token when one is set. New error code: `invalid_document` (422).
+- The Import control in the bar takes a file from the browser's file dialog, or one dropped on the canvas, and imports it after a second press. A browser without the edit token is told that importing needs it.
+- JSON export is the editor's own, in its menu under "Save to…". The file is named after the slot's title.
+- Tests for it: `tests/test_import.py`, more of `tests/test_saver.py`, `tests/test_room.py`, and `tests/test_repository.py`, `web/src/importing.test.ts`, and `web/e2e/import.spec.ts` (T-009, and the import part of T-008).
 
 ### Changed
 
@@ -79,4 +83,7 @@ The project is specified, licensed, and public on GitHub. A Python service reads
 - The test harness (`tests/harness.py`) quotes the servers' logs when it gives up on one. A WebSocket handshake that is not answered fails with the end of segl's log, and through nginx of nginx's two logs as well. A server that had to be killed after SIGTERM is named in a warning with its log. `tests/test_harness.py` covers both.
 - `Room.restore`, which took back a snapshot that was not written, is `Room.take_back`. A restore is now something else.
 - The bar's connection state has five values: connecting, live, saving, saved, and disconnected. The browser tests wait for "in the room", which is any of the middle three, where they used to wait for `Live`.
+- The editor's own way to open a scene file is off: its menu's Open, Ctrl+O, and a scene file dropped on the canvas. Each put the file in one browser's canvas and not in the slot. A dropped scene file is now offered for import.
+- The History control marks the first row of an epoch `replacement`, where it said `restore`: a restore or an import wrote it, and nothing stored says which.
+- `Repository.replace_head` takes `files=`, for the files an import brings. `Room.put` puts elements and files in place of a room's scene, and `Room.replace` reads a stored scene and calls it. `Saver.put` is the import beside `Saver.replace`.
 - The license header moved from the agent rules to `CONTRIBUTING.md`. The rule to comment out superseded code was removed.

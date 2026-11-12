@@ -19,9 +19,10 @@
 import { Excalidraw } from '@excalidraw/excalidraw';
 import '@excalidraw/excalidraw/index.css';
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import type { Cursor } from '../collab/protocol.ts';
 import type { SceneEditor } from '../collab/session.ts';
+import { goesToImport } from '../importing.ts';
 import './canvas.css';
 import { makeEditor } from './editor.ts';
 import { clearHandle, publishHandle } from './handle.ts';
@@ -30,6 +31,13 @@ import { initialDataFrom } from './scene.ts';
 export interface CanvasProps {
 	/** The slot's stored scene document. Read once, when the canvas mounts. */
 	document: unknown;
+	/** What the editor calls a file it exports, without the extension. */
+	exportName?: string;
+	/**
+	 * Called with a scene file that was dropped on the canvas. The editor is
+	 * not given it: the page imports it, for everyone on the slot.
+	 */
+	onSceneFile?: (file: File) => void;
 	/** True when this browser may look and not edit. */
 	viewOnly?: boolean;
 	/** Called with the editor once it is mounted, and with null when it goes. */
@@ -42,8 +50,17 @@ export interface CanvasProps {
 
 type PointerUpdate = { pointer: { x: number; y: number } };
 
+/**
+ * The editor's own ways to open a scene file are off: its menu entry, and
+ * Ctrl+O with it. Each would put the file in this browser's canvas alone. The
+ * editor's export stays, as its menu has it (S-011, D2-031).
+ */
+const UI_OPTIONS = { canvasActions: { loadScene: false } };
+
 export default function Canvas({
 	document,
+	exportName,
+	onSceneFile,
 	viewOnly = false,
 	onEditor,
 	onChange,
@@ -86,13 +103,30 @@ export default function Canvas({
 		[onCursor]
 	);
 
+	// On the way down to the editor, which would open a dropped scene file
+	// itself. An image, or a library of shapes, goes on to it.
+	const dropped = useCallback(
+		(event: DragEvent<HTMLDivElement>) => {
+			const file = event.dataTransfer.files.item(0);
+			if (file === null || !goesToImport(file)) return;
+			event.preventDefault();
+			event.stopPropagation();
+			onSceneFile?.(file);
+		},
+		[onSceneFile]
+	);
+
 	return (
-		<Excalidraw
-			initialData={initialData}
-			excalidrawAPI={keepApi}
-			viewModeEnabled={viewOnly}
-			onChange={changed}
-			onPointerUpdate={pointerMoved}
-		/>
+		<div className="segl-canvas" onDropCapture={dropped}>
+			<Excalidraw
+				initialData={initialData}
+				excalidrawAPI={keepApi}
+				name={exportName}
+				UIOptions={UI_OPTIONS}
+				viewModeEnabled={viewOnly}
+				onChange={changed}
+				onPointerUpdate={pointerMoved}
+			/>
+		</div>
 	);
 }

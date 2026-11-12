@@ -170,12 +170,12 @@ export function HistoryControl({
 												{when}
 											</time>
 											<span className="segl-bar__revision-who">{row.authorLabel}</span>
-											{row.restored && (
+											{row.replacement && (
 												<span
 													className="segl-bar__revision-tag"
-													title="An earlier version was put back here"
+													title="A restore or an import put the whole canvas in place here"
 												>
-													restore
+													replacement
 												</span>
 											)}
 										</span>

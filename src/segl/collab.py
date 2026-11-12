@@ -39,8 +39,9 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from segl.assets import AssetStore
 from segl.config import Settings
 from segl.origin import refuse_websocket
+from segl.reconcile import Element
 from segl.repository import SLOT_NUMBERS, Replacement, Repository, Slot
-from segl.room import Connection, Room, encode, may_edit, parse_files, parse_hello
+from segl.room import Connection, FileEntry, Room, encode, may_edit, parse_files, parse_hello
 from segl.saver import Saver
 
 # How long a new connection has to say hello.
@@ -130,6 +131,21 @@ class Rooms:
         work = asyncio.ensure_future(self._savers[slot].replace(found.scene_json, editor_label))
         # Shielded: a request that is cancelled while the database is being
         # written must not leave the room on the old epoch.
+        return await asyncio.shield(work)
+
+    async def import_scene(
+        self, slot: int, elements: list[Element], files: list[FileEntry], editor_label: str
+    ) -> Replacement:
+        """Put a document's elements in place of a slot's scene, at a new epoch.
+
+        The steps are a restore's (D2-031): the scene that is replaced is
+        written first, with a history row, and every connection on the slot is
+        then sent the imported one. ``files`` are the files the elements name,
+        with their bytes already stored.
+        """
+        await self.room(slot)
+        work = asyncio.ensure_future(self._savers[slot].put(elements, files, editor_label))
+        # Shielded, as a restore is.
         return await asyncio.shield(work)
 
     def _load(self, slot: int) -> tuple[Room, str]:

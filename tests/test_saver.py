@@ -34,7 +34,7 @@ import pytest
 
 from segl import saver as saver_module
 from segl.repository import Flush, Replacement, Repository, SlotFile, StorageError
-from segl.room import Connection, Hello, Room
+from segl.room import Connection, Hello, Room, encode
 from segl.saver import Saver
 
 SLOT = 2
@@ -775,10 +775,10 @@ def test_a_replacement_that_cannot_be_written_leaves_the_room_on_its_scene(
         browser = Browser(setup.room, "Alpha1")
         browser.draw(element("a", 1), seq=1)
 
-        def failing(*arguments: Any) -> Replacement:
+        def failing(*arguments: Any, **options: Any) -> Replacement:
             raise StorageError("the disk is full")
 
-        setup.repository.replace_head = failing  # ty: ignore[invalid-assignment]
+        setup.repository.replace_head = failing
 
         with pytest.raises(StorageError):
             await setup.saver.replace(scene_text(element("z", 1)), "Bravo2")
@@ -887,3 +887,210 @@ def test_a_replacement_leaves_nothing_owed_to_the_history(tmp_path: Path) -> Non
     # Neither the leave nor the stop wrote again: the replacement kept both scenes.
     assert len(setup.writes) == 3
     assert setup.revisions() == [3, 2, 1]
+
+
+# An import: the same steps, with a document's elements and files (D2-031).
+
+PICTURE = element("picture", 1, type="image", fileId=FILE["id"], index="a1")
+STORED_FILE = SlotFile(FILE["id"], FILE["hash"], FILE["mimeType"])
+
+
+def test_an_import_writes_its_scene_and_its_files_and_sends_them_to_the_room(
+    tmp_path: Path,
+) -> None:
+    async def scenario(setup: Setup) -> None:
+        one, two = Browser(setup.room, "Alpha1"), Browser(setup.room, "Bravo2")
+        one.draw(element("a", 1, index="a0"), seq=1)
+        await setup.settled()
+        before = setup.repository.get_head(SLOT).scene_json
+        setup.clock.advance(5)
+        imported = [element("z", 3, index="a0"), PICTURE]
+
+        replacement = await setup.saver.put(imported, [FILE], "Bravo2")
+
+        assert replacement == Replacement(epoch=2, revision=2, saved_at="2026-11-12T09:00:05.000Z")
+        head = setup.repository.get_head(SLOT)
+        assert (head.epoch, head.editor_label, head.saved_at) == (2, "Bravo2", replacement.saved_at)
+        # The slot's own document, with the imported elements in its list.
+        assert json.loads(head.scene_json) == {**json.loads(before), "elements": imported}
+        assert setup.repository.get_revision(SLOT, 2).scene_json == head.scene_json
+        assert setup.repository.list_files(SLOT) == [STORED_FILE]
+        expected = {"type": "scene", "epoch": 2, "elements": imported, "files": [FILE]}
+        assert one.scenes() == [expected] and two.scenes() == [expected]
+        assert (setup.room.epoch, list(setup.room.elements)) == (2, ["z", "picture"])
+        assert not setup.room.unsettled
+        # What the room would write next is the text the head holds.
+        assert setup.room.snapshot().scene_json() == head.scene_json
+
+        two.draw(element("y", 1, index="a2"), seq=1, epoch=2)
+        await setup.settled()
+        assert two.saved()[-1]["epoch"] == 2
+        assert [each["id"] for each in setup.stored()] == ["z", "picture", "y"]
+
+    setup = run(tmp_path, scenario)
+    # The first drawing, the room before it was replaced, the drawing after,
+    # and at the stop the history row that drawing was owed.
+    assert len(setup.writes) == 4
+    assert setup.revisions() == [3, 2, 1]
+
+
+def test_an_import_first_records_what_the_room_holds(tmp_path: Path) -> None:
+    async def scenario(setup: Setup) -> None:
+        browser = Browser(setup.room, "Alpha1")
+        browser.draw(element("a", 1), seq=1)
+        await setup.settled()
+        other = Browser(setup.room, "Bravo2")
+        other.draw(element("b", 1), seq=4)
+
+        await setup.saver.put([], [], "Charlie3")
+
+        listed = setup.repository.list_revisions(SLOT)
+        assert [(row.revision, row.epoch, row.author_label) for row in listed] == [
+            (3, 2, "Charlie3"),
+            (2, 1, "Bravo2"),
+            (1, 1, "Alpha1"),
+        ]
+        going = json.loads(setup.repository.get_revision(SLOT, 2).scene_json)
+        assert going["elements"] == [element("a", 1), element("b", 1)]
+        assert setup.stored() == []
+        assert other.saved() == [] and other.connection.awaiting is None
+        assert other.scenes()[-1]["elements"] == []
+
+    run(tmp_path, scenario)
+
+
+def test_an_import_that_cannot_be_written_leaves_the_room_and_its_files(tmp_path: Path) -> None:
+    async def scenario(setup: Setup) -> None:
+        browser = Browser(setup.room, "Alpha1")
+        browser.draw(element("a", 1), seq=1)
+
+        def failing(*arguments: Any, **options: Any) -> Replacement:
+            raise StorageError("the disk is full")
+
+        setup.repository.replace_head = failing
+
+        with pytest.raises(StorageError):
+            await setup.saver.put([PICTURE], [FILE], "Bravo2")
+
+        assert (setup.room.epoch, list(setup.room.elements)) == (1, ["a"])
+        # The room does not name a file the slot's list was not given.
+        assert setup.room.files == {}
+        assert setup.repository.list_files(SLOT) == []
+        assert browser.scenes() == []
+        await until(lambda: browser.saved() != [])
+        assert not setup.room.unsettled
+
+    run(tmp_path, scenario, flush=0.01)
+
+
+def test_an_import_leaves_a_file_id_the_slot_has_with_its_bytes(tmp_path: Path) -> None:
+    async def scenario(setup: Setup) -> None:
+        browser = Browser(setup.room)
+        message = {"type": "files", "epoch": 1, "files": [FILE], "seq": 1}
+        setup.room.receive(browser.connection, message, (FILE["hash"],))
+        await setup.settled()
+        other = {**FILE, "hash": "c" * 64}
+
+        await setup.saver.put([PICTURE], [other], "Bravo2")
+
+        assert setup.repository.list_files(SLOT) == [STORED_FILE]
+        assert browser.scenes()[-1]["files"] == [FILE]
+
+    run(tmp_path, scenario)
+
+
+def test_a_file_named_during_an_import_gives_way_to_the_imports(tmp_path: Path) -> None:
+    async def scenario(setup: Setup) -> None:
+        browser = Browser(setup.room)
+        browser.draw(element("a", 1), seq=1)
+        await setup.settled()
+        setup.gate = threading.Event()
+        importing = asyncio.create_task(setup.saver.put([PICTURE], [FILE], "Bravo2"))
+        await until(lambda: len(setup.writes) == 2)
+        # The import is in the worker thread, and the same file id is named
+        # on the socket with other bytes.
+        other = {**FILE, "hash": "c" * 64}
+        setup.room.receive(
+            browser.connection, {"type": "files", "epoch": 1, "files": [other]}, [other["hash"]]
+        )
+
+        setup.gate.set()
+        await asyncio.wait_for(importing, 5)
+        await setup.settled()
+
+        # The list was given the import's bytes first, and the room says the same.
+        assert setup.repository.list_files(SLOT) == [STORED_FILE]
+        assert setup.room.files == {FILE["id"]: FILE}
+        assert browser.scenes()[-1]["files"] == [FILE]
+        assert not setup.room.dirty
+
+    run(tmp_path, scenario)
+
+
+def test_an_import_and_a_restore_at_once_are_two_epochs_in_one_order(tmp_path: Path) -> None:
+    async def scenario(setup: Setup) -> None:
+        browser = Browser(setup.room)
+        first = asyncio.create_task(setup.saver.put([element("y", 1)], [], "Alpha1"))
+        second = asyncio.create_task(setup.saver.replace(scene_text(element("z", 1)), "Bravo2"))
+
+        one, two = await asyncio.wait_for(asyncio.gather(first, second), 5)
+
+        assert (one.epoch, two.epoch) == (2, 3)
+        assert [scene["epoch"] for scene in browser.scenes()] == [2, 3]
+        assert setup.stored() == [element("z", 1)]
+        assert setup.room.epoch == setup.repository.get_slot(SLOT).epoch == 3
+
+    run(tmp_path, scenario)
+
+
+def test_an_import_waits_for_the_write_that_is_under_way(tmp_path: Path) -> None:
+    async def scenario(setup: Setup) -> None:
+        browser = Browser(setup.room)
+        # Only the first write is held, in its worker thread: an import that
+        # did not wait for it would write straight past it.
+        entered, held = threading.Event(), threading.Event()
+        flush_head = setup.repository.flush_head
+
+        def first_held(*arguments: Any, **options: Any) -> Flush:
+            if not entered.is_set():
+                entered.set()
+                held.wait(5)
+            return flush_head(*arguments, **options)
+
+        setup.repository.flush_head = first_held
+        browser.draw(element("a", 1), seq=1)
+        await until(entered.is_set)
+        importing = asyncio.create_task(setup.saver.put([element("z", 1)], [], "Bravo2"))
+        await asyncio.sleep(0.05)
+        assert not importing.done()
+        assert setup.repository.get_slot(SLOT).epoch == 1
+        assert setup.revisions() == []
+
+        held.set()
+        await asyncio.wait_for(importing, 5)
+
+        assert setup.revisions() == [2, 1]
+        assert setup.stored() == [element("z", 1)]
+
+    run(tmp_path, scenario)
+
+
+def test_an_imported_scene_is_stored_as_the_room_would_write_it(tmp_path: Path) -> None:
+    async def scenario(setup: Setup) -> None:
+        browser = Browser(setup.room)
+        text = "caf\u00e9 \ud83d\ude00"
+        await setup.saver.put([element("z", 1, text=text, index="a0")], [], "Bravo2")
+        head = setup.repository.get_head(SLOT)
+        # ASCII, as every stored scene is.
+        assert head.scene_json.isascii()
+        assert encode({"text": text})[9:-1] in head.scene_json
+
+        # A leave owes the history nothing: the import's row holds this scene.
+        browser.leave()
+        await asyncio.sleep(0.05)
+        await setup.settled()
+
+    setup = run(tmp_path, scenario)
+    assert setup.revisions() == [1]
+    # Nothing was written for the leave or the stop.
+    assert len(setup.writes) == 1

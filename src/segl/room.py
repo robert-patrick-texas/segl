@@ -42,7 +42,7 @@ _CLIENT_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 # The editor's id for an image's file: 40 hex digits, or 40 characters of its
 # own alphabet when the browser could not hash the file.
-_FILE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+FILE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 # The most files one `files` message may name.
 MAX_FILES_IN_MESSAGE = 256
@@ -98,7 +98,7 @@ def parse_files(value: object) -> list[FileEntry] | None:
         if not isinstance(entry, dict):
             return None
         identifier, name, media_type = entry.get("id"), entry.get("hash"), entry.get("mimeType")
-        if not isinstance(identifier, str) or _FILE_ID.fullmatch(identifier) is None:
+        if not isinstance(identifier, str) or FILE_ID.fullmatch(identifier) is None:
             return None
         # A list is not text, and cannot be looked up in a set at all.
         if not is_hash(name) or not isinstance(media_type, str) or media_type not in MEDIA_TYPES:
@@ -386,14 +386,31 @@ class Room:
             self.on_empty()
 
     def replace(self, epoch: int, scene_json: str) -> None:
-        """Put a stored scene in place of the room's, at a new epoch, and tell everyone.
+        """Put a stored scene in place of the room's, at a new epoch: a restore."""
+        document, elements = parse_scene(scene_json)
+        self.put(epoch, document, elements)
+
+    def put(
+        self,
+        epoch: int,
+        document: dict[str, Any],
+        elements: list[Element],
+        files: Iterable[FileEntry] = (),
+    ) -> None:
+        """Put a scene in place of the room's, at a new epoch, and tell everyone.
 
         This is a restore or an import, and the scene is already the slot's
-        head. Every connection is sent it, and puts it in place of its own.
-        What a connection sent for the scene that went has nothing left to
-        wait for: the new epoch says so, and no ``saved`` follows.
+        head. ``files`` are the ones an import brought, which the slot's
+        stored list has had since the same write. Every connection is sent the
+        scene, and puts it in place of its own. What a connection sent for the
+        scene that went has nothing left to wait for: the new epoch says so,
+        and no ``saved`` follows.
         """
-        document, elements = parse_scene(scene_json)
+        stored = {entry["id"]: entry for entry in files}
+        # The stored list is the one that counts: a browser that named one of
+        # these ids while the import was being written named it second.
+        self.files.update(stored)
+        self._new_files = [entry for entry in self._new_files if entry["id"] not in stored]
         self.epoch = epoch
         self.document = document
         self.elements = {element["id"]: element for element in elements}

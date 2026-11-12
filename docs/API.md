@@ -19,8 +19,8 @@ A mutation, or a WebSocket upgrade, whose `Origin` header is present and does no
 | GET | `/api/v1/slots/{n}/revisions` | `{ "revisions": [ ... ] }`, the slot's history, newest first, at most `history_limit` entries (50): revision, epoch, authorLabel, createdAt. Scene bodies stay on the single-revision route. No token. |
 | GET | `/api/v1/slots/{n}/revisions/{revision}` | One revision: the same four fields, its stored scene, and the scene's file list. No token. |
 | POST | `/api/v1/slots/{n}/restore` | Body `{ "revision", "displayName" }`, a JSON object of at most 4096 bytes. Records the scene being replaced, puts the revision's scene in the head at the next epoch, appends a revision for it, and sends `scene` to the slot's room. Returns `{ "revision", "epoch", "savedAt" }`. Edit token when set. |
+| POST | `/api/v1/slots/{n}/import` | The body is an Excalidraw scene document, the file the editor's export writes, of at most `max_scene_bytes`. Records the scene being replaced, puts the document's elements in the head at the next epoch, with the files of its images, appends a revision for it, and sends `scene` to the slot's room. Returns `{ "revision", "epoch", "savedAt" }`. Edit token when set. |
 | POST | `/api/v1/display-name` | Allocates the next `WordN` and returns `{ "displayName" }`. No body and no edit token. At most 30 names per minute per client address (`SECURITY.md`). The next call gets `429` with `rate_limited` and a `Retry-After` header. |
-| POST | `/api/v1/slots/{n}/import` | Body is an Excalidraw JSON document. Same epoch rules as restore. Edit token when set. Reject above `max_scene_bytes` with `413` and `payload_too_large`. |
 
 Paths are exact. A trailing slash, as in `/api/v1/health/`, is a `404` and is not redirected.
 
@@ -36,10 +36,11 @@ Errors that no route names:
 | 404 | `not_found` | No route has this path. |
 | 404 | `revision_not_found` | The slot has no revision with that number. It was never made, or it was the oldest and has been dropped. |
 | 405 | `method_not_allowed` | The path exists and does not take this method. The `Allow` header lists the ones it takes. Slots have no create or delete route. |
-| 413 | `payload_too_large` | The body is larger than the route takes. |
+| 413 | `payload_too_large` | The body is larger than the route takes. For an import, also elements that come to more than `max_scene_bytes` as segl stores them, or a file inside the document over `max_asset_bytes`. |
 | 415 | `unsupported_media_type` | An upload whose `Content-Type` is not one of the image types. |
 | 422 | `invalid_title` | A slot title that is not text, is empty once trimmed, is longer than 80 characters, or has a control character, such as a line break. |
 | 422 | `invalid_revision` | A restore whose `revision` is not a whole number, 1 or more. |
+| 422 | `invalid_document` | An import whose body is a JSON object and is not a scene document as the editor writes one. The message says what is wrong, and repeats nothing from the body. |
 | 429 | `rate_limited` | This client address has been given 30 display names in the last minute. `Retry-After` is the whole seconds until it may have another. The refused call takes no name. |
 | 500 | `internal_error` | segl failed, for example because it could not read the database. The cause is in the server log, not in the response. |
 
@@ -81,7 +82,7 @@ A slot's history, from `/api/v1/slots/4/revisions`:
 }
 ```
 
-A revision is the slot's scene as it was at one moment (`DATA-MODEL.md`, flush and revision rules). `revision` counts up per slot from 1 and is not reused. `authorLabel` is the display name behind the newest change in that scene, or `System`. `epoch` is the epoch the scene belonged to. A restore starts a new epoch, so a revision whose epoch is higher than that of the one before it was written by a restore: revision 3 above. A slot nobody has changed has an empty list.
+A revision is the slot's scene as it was at one moment (`DATA-MODEL.md`, flush and revision rules). `revision` counts up per slot from 1 and is not reused. `authorLabel` is the display name behind the newest change in that scene, or `System`. `epoch` is the epoch the scene belonged to. A restore and an import each start a new epoch, so a revision whose epoch is higher than that of the one before it was written by one of them: revision 3 above. Nothing stored says which of the two. A slot nobody has changed has an empty list.
 
 One revision, from `/api/v1/slots/4/revisions/2`, is the same object with `scene` and `files` as the scene route gives them. A `{revision}` is a whole number from 1, written without a sign or a leading zero. Anything else in its place, or a number the slot does not have, is a `404` with `revision_not_found`.
 
@@ -98,6 +99,34 @@ A restore, `POST /api/v1/slots/4/restore` with `{ "revision": 1, "displayName": 
 3. Every connection on the slot, viewers included, is sent `scene` with the new epoch, and puts it in place of its canvas.
 
 `displayName` is who restored, for `authorLabel`: the label the browser stores, taken as written, as `hello` takes it. Left out, or not 1 to 40 characters of text, it is `System`. The token is checked before the body is read. A restore the server cannot write leaves the slot on its scene and its epoch, and is a `500`. An edit that reaches the server while it is writing a restore was made on the scene that is going, and is dropped with it.
+
+An import, `POST /api/v1/slots/4/import`, takes as its body the file the editor's export writes (S-011, D2-031):
+
+```json
+{
+  "type": "excalidraw",
+  "version": 2,
+  "source": "segl",
+  "elements": [
+    { "id": "Hq3…", "type": "image", "fileId": "5925e980…", "index": "a0", "version": 3, "versionNonce": 81 }
+  ],
+  "appState": { "viewBackgroundColor": "#ffffff" },
+  "files": {
+    "5925e980…": { "mimeType": "image/png", "id": "5925e980…", "dataURL": "data:image/png;base64,iVBORw0…" }
+  }
+}
+```
+
+It answers as a restore does, with `{ "revision", "epoch", "savedAt" }`, after the same three steps: the scene the slot's room holds is kept as a revision, the imported scene becomes the head at the next epoch with a revision of its own, and every connection on the slot is sent `scene`. So an import is undone by restoring the revision under its own. What segl takes from the document:
+
+- `type`, which is `excalidraw`. A library file, or any other JSON object, is `invalid_document`.
+- `elements`, or none when the key is absent or `null`. Each is an object with a text `id`, and no two share one. A missing `version` or `versionNonce` becomes 1 or 0, which is what the editor does with an element from an older file. They are stored in drawing order: by `index`, and then those without one, as they came. An empty list empties the slot.
+- Of `files`, the entries the elements name in `fileId`, deleted elements included. An entry is `mimeType`, one of the image types an upload may have, and `dataURL`, a `data:` URL that holds the bytes, at most `max_asset_bytes` of them. segl stores the bytes as it stores an upload, under their SHA-256, and adds the file id to the slot's file list in the write that starts the epoch. A file id the slot already has keeps the bytes it had. An image whose file the document lacks is taken as it is: the slot may hold the file already, and if not, the editor draws a placeholder. An entry no element names is not read.
+- Nothing else. `appState` holds the canvas's background and grid, which a slot does not share (`ARCHITECTURE.md`, collaboration), and `version` and `source` are the exporting editor's. The stored scene is the slot's own document with the imported elements.
+
+Who imported, for `authorLabel`, comes in the `X-Segl-Display-Name` header, because the body is the document: the label the browser stores, percent-encoded as UTF-8, since a header is ASCII. Left out, or not 1 to 40 characters once decoded, it is `System`.
+
+A refused import changes nothing and stores no file. The token is checked before the body is read. A body over `max_scene_bytes` is a `413` with `payload_too_large`, refused from its `Content-Length` before it is read. So is a document whose elements come to more than `max_scene_bytes` as segl stores them, which is ASCII, with an escape for every other character, and one with a named file over `max_asset_bytes`. A body that is not a JSON object is a `400` with `bad_request`. A JSON object that is not a scene document is a `422` with `invalid_document`: an element without an id, two elements with one id, a named file that is not an image in a `data:` URL, or a number JSON cannot write, such as `1e999`.
 
 A display name, from `POST /api/v1/display-name`:
 
@@ -144,7 +173,7 @@ Client → server:
 Server → client:
 
 - `welcome` — `{ "type": "welcome", "slot", "title", "epoch", "viewOnly", "connectionId", "participants": [ { "connectionId", "displayName" } ] }`. `connectionId` is this connection's own. `participants` is every connection on the slot, this one included, in the order they joined. A `displayName` is `null` for a connection without a label.
-- `scene` — `{ "type": "scene", "epoch", "elements": [ ... ], "files": [ ... ] }`: every element the room holds, deleted ones included, in drawing order, and the files those elements name. Sent after `welcome`, to a connection whose `elements` or `files` named another epoch, and to every connection on the slot after a restore. A `scene` of the epoch the browser is on is merged into its canvas. One of another epoch replaces the canvas. T09 sends it after an import too.
+- `scene` — `{ "type": "scene", "epoch", "elements": [ ... ], "files": [ ... ] }`: every element the room holds, deleted ones included, in drawing order, and the files those elements name. Sent after `welcome`, to a connection whose `elements` or `files` named another epoch, and to every connection on the slot after a restore or an import. A `scene` of the epoch the browser is on is merged into its canvas. One of another epoch replaces the canvas.
 - `elements` — `{ "type": "elements", "epoch", "elements": [ ... ] }`: the elements of another connection's batch that the server kept. Not sent to the connection they came from.
 - `slot` — `{ "type": "slot", "slot", "title" }` after a title change.
 - `presence` — `{ "type": "presence", "connectionId", "displayName", "cursor" }`: a connection that joined (`cursor` is `null`), moved its cursor, or was renamed. A cursor goes to the other connections. A rename goes to every connection, the renamed one included.
@@ -168,7 +197,7 @@ The server applies `elements` only when the sender is an editor and `epoch` matc
 
 A message that was refused, for any of the reasons above, is not answered with `saved`. The numbers are the browser's own and need only grow. A connection that sent no `seq` is never sent `saved`.
 
-A restore ends the wait for `saved`. What a connection sent for the scene that was replaced is answered by the `scene` of the new epoch, and no `saved` follows for it. The next `saved` names the new epoch.
+A restore or an import ends the wait for `saved`. What a connection sent for the scene that was replaced is answered by the `scene` of the new epoch, and no `saved` follows for it. The next `saved` names the new epoch.
 
 `rename` is allowed for viewers. The server title-cases the name, sends `presence`, and does not write SQLite.
 
