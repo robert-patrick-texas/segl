@@ -1,6 +1,6 @@
 # HTTP and WebSocket (MVP)
 
-Paths below are relative to segl's root. A proxy that mounts segl under a path, such as `/board/`, strips that path first (`ARCHITECTURE.md`, mount and navigation). The service binds `127.0.0.1`. Errors are JSON: `{ "error": "<code>", "message": "<human text>" }`.
+Paths below are relative to segl's root. A proxy that mounts segl under a path, such as `/board/`, strips that path first (`ARCHITECTURE.md`, mount and navigation). The service binds `127.0.0.1`. Errors are JSON: `{ "error": "<code>", "message": "<human text>" }`. Clients branch on `error`. The message is for a person and may change.
 
 Mutation routes require the edit token when `edit_token` is non-empty. The header is `X-Segl-Edit-Token`. A view-only call gets `403` and `error: view_only`. An empty configured token ignores the header and allows the write.
 
@@ -12,10 +12,10 @@ A mutation, or a WebSocket upgrade, whose `Origin` header is present and does no
 |---|---|---|
 | GET | `/api/v1/health` | `{ "status": "ok" }` |
 | GET | `/api/v1/config` | `{ "editRequired" }`, true when `edit_token` is set. Same fact as the injected script. No token, and the token is never in the response. |
-| GET | `/api/v1/slots` | Nine entries: number, title, epoch, savedAt. |
-| GET | `/api/v1/slots/{n}` | One slot's metadata. |
+| GET | `/api/v1/slots` | `{ "slots": [ ... ] }` with nine entries in number order: number, title, epoch, savedAt. |
+| GET | `/api/v1/slots/{n}` | One slot's metadata, the same object as its entry in the list. |
 | PATCH | `/api/v1/slots/{n}` | Body `{ "title" }`. Trimmed, 1–80 characters. Edit token when set. Broadcasts a `slot` message to the room. |
-| GET | `/api/v1/slots/{n}/scene` | Head scene, epoch, savedAt, editorLabel, and the head's file list (`id`, `hash`, `mimeType`). |
+| GET | `/api/v1/slots/{n}/scene` | Head scene, epoch, savedAt, editorLabel, and the head's file list (`id`, `hash`, `mimeType`). The list is empty until T07 stores files. |
 | GET | `/api/v1/slots/{n}/revisions` | Newest first, at most 50: revision, epoch, authorLabel, createdAt. Scene bodies stay on the single-revision route. |
 | GET | `/api/v1/slots/{n}/revisions/{revision}` | One stored scene. |
 | POST | `/api/v1/slots/{n}/restore` | Body `{ "revision" }`. Replaces the head, increments epoch, appends a revision, broadcasts to the room. Edit token when set. |
@@ -24,7 +24,35 @@ A mutation, or a WebSocket upgrade, whose `Origin` header is present and does no
 
 Paths are exact. A trailing slash, as in `/api/v1/health/`, is a `404` and is not redirected.
 
-`{n}` outside 1–9 returns `404` with `invalid_slot`. The app sends those URLs to slot 1 before calling the API.
+`{n}` is one digit, `1` to `9`. Anything else in its place, such as `0`, `10`, `01`, or `abc`, returns `404` with `invalid_slot`. The app sends those URLs to slot 1 before calling the API.
+
+Errors that no route names:
+
+| Status | `error` | When |
+|---|---|---|
+| 404 | `not_found` | No route has this path. |
+| 405 | `method_not_allowed` | The path exists and does not take this method. The `Allow` header lists the ones it takes. Slots have no create or delete route. |
+| 500 | `internal_error` | segl failed, for example because it could not read the database. The cause is in the server log, not in the response. |
+
+A slot's metadata, from `/api/v1/slots/4`:
+
+```json
+{ "number": 4, "title": "Workspace 4", "epoch": 1, "savedAt": "2026-11-12T09:00:00.000Z" }
+```
+
+A slot's scene, from `/api/v1/slots/4/scene`:
+
+```json
+{
+  "scene": { "elements": [] },
+  "epoch": 1,
+  "savedAt": "2026-11-12T09:00:00.000Z",
+  "editorLabel": "System",
+  "files": []
+}
+```
+
+`scene` is the stored document, returned as it was saved. `savedAt` is when the head was last written, in UTC to the millisecond. `editorLabel` is `System` until a connection has saved the slot.
 
 Uploaded files, for the editor's file model (T07):
 

@@ -46,7 +46,7 @@ uv run ruff format --check .
 uv run ty check
 ```
 
-`uv run pytest` covers `tests/` and `tools/md2html`. Some tests start a real `segl` process on a free loopback port. The mount tests (`tests/test_mount.py`) also start nginx in front of it, from a temporary copy of the `deploy/nginx/` files (`tests/harness.py`). On a host without nginx or openssl they skip, and the summary line says why. With `SEGL_REQUIRE_NGINX=1` they fail instead. The dev container and CI set it. The release script's tests use fakes for the network, `gh`, and `git push`, and real `git` in a temporary repository. One test builds the wheel with `uv build` to confirm it carries `versions.toml`, so it needs the network the first time. ruff's settings are in `pyproject.toml`: 100-character lines, Markdown left alone, and `scripts/` kept to Python 3.11 syntax because the host's `python3` runs them.
+`uv run pytest` covers `tests/` and `tools/md2html`. Some tests start a real `segl` process on a free loopback port. The mount tests (`tests/test_mount.py`) also start nginx in front of it, from a temporary copy of the `deploy/nginx/` files (`tests/harness.py`). On a host without nginx or openssl they skip, and the summary line says why. With `SEGL_REQUIRE_NGINX=1` they fail instead. The dev container and CI set it. The release script's tests use fakes for the network, `gh`, and `git push`, and real `git` in a temporary repository. One test builds the wheel with `uv build` to confirm it carries `versions.toml` and the SQL migrations, so it needs the network the first time. The repository and slot tests each use a SQLite file in pytest's temporary folder. ruff's settings are in `pyproject.toml`: 100-character lines, Markdown left alone, and `scripts/` kept to Python 3.11 syntax because the host's `python3` runs them.
 
 The dev container runs the same suite while it builds, from the repository root:
 
@@ -67,7 +67,7 @@ CI runs the same commands (`.github/workflows/ci.yml`, from T01). It installs ng
 
 ## Dev loop
 
-From T04: run Python on `127.0.0.1:8000` with `uv run segl`, which uses the development defaults in `DEPLOY.md`, and the Vite dev server on `127.0.0.1:5173`. Vite proxies `/api` and `/collab` (the WebSocket) to Python with `changeOrigin: false`, so the Origin check still matches. Open `http://127.0.0.1:5173/s/1`.
+From T04: run Python on `127.0.0.1:8000` with `uv run segl`, which uses the development defaults in `DEPLOY.md` and keeps its database in `var/segl.sqlite`, and the Vite dev server on `127.0.0.1:5173`. Vite proxies `/api` and `/collab` (the WebSocket) to Python with `changeOrigin: false`, so the Origin check still matches. Open `http://127.0.0.1:5173/s/1`.
 
 The dev server serves the page at the host root. Mounting under a path such as `/board/` is tested through nginx and the production build, not the dev server (`TEST-PLAN.md` T-013).
 

@@ -23,6 +23,7 @@ import uvicorn
 
 from segl.app import create_app
 from segl.config import ConfigError, load_settings
+from segl.repository import Repository, StorageError
 from segl.versions import app_version
 
 
@@ -47,13 +48,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ConfigError as exc:
         print(f"segl: {exc}", file=sys.stderr)
         return 2
-    uvicorn.run(
-        create_app(settings),
-        host=settings.host,
-        port=settings.port,
-        # X-Forwarded-For and X-Forwarded-Proto count only when the connection
-        # comes from one of these addresses, which is nginx (docs/SECURITY.md).
-        proxy_headers=True,
-        forwarded_allow_ips=list(settings.trusted_proxies),
-    )
+    # The database is opened, migrated, and given its nine slots before the
+    # port is, so a database segl cannot use stops it here with one line. The
+    # application closes it at shutdown. The `with` covers a stop before that.
+    try:
+        with Repository(settings.database, history_limit=settings.history_limit) as repository:
+            repository.bootstrap()
+            uvicorn.run(
+                create_app(settings, repository),
+                host=settings.host,
+                port=settings.port,
+                # X-Forwarded-For and X-Forwarded-Proto count only when the connection
+                # comes from one of these addresses, which is nginx (docs/SECURITY.md).
+                proxy_headers=True,
+                forwarded_allow_ips=list(settings.trusted_proxies),
+            )
+    except StorageError as exc:
+        print(f"segl: {exc}", file=sys.stderr)
+        return 1
     return 0

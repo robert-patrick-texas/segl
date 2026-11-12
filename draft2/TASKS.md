@@ -135,6 +135,8 @@ Acceptance:
 
 Add migrations and the repository methods. Startup bootstraps nine slots. Use a temporary empty scene document `{ "elements": [] }` until T04 replaces it with a fixture captured from the editor. Expose `GET /api/v1/slots`, `GET /api/v1/slots/{n}`, and `GET /api/v1/slots/{n}/scene`.
 
+The repository is `src/segl/repository.py`, opened by the `segl` command before it serves and passed to `create_app`. Every error segl sends has the `{ "error", "message" }` shape, including an unknown path.
+
 Acceptance: a test boots a temp database, reads nine titles `Workspace 1`–`Workspace 9`, checks isolated scenes, and checks that slot 0 and slot 10 return `invalid_slot`. ruff and ty pass.
 
 ## T04 — Excalidraw shell

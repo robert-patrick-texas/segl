@@ -18,6 +18,7 @@ import re
 import tomllib
 from dataclasses import replace
 from pathlib import Path
+from typing import ClassVar, Self
 
 import pytest
 
@@ -233,6 +234,24 @@ def test_invalid_toml_is_a_config_error(tmp_path: Path) -> None:
         load_settings(write(tmp_path, "bind = \n"))
 
 
+class OpenedDatabase:
+    """Stands in for the repository, and records what the command opened."""
+
+    opened: ClassVar[list[tuple[Path, int]]] = []
+
+    def __init__(self, path: Path, *, history_limit: int) -> None:
+        self.opened.append((path, history_limit))
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        pass
+
+    def bootstrap(self) -> None:
+        pass
+
+
 def test_the_command_serves_with_a_missing_config_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -242,6 +261,9 @@ def test_the_command_serves_with_a_missing_config_file(
         served.update(options)
 
     monkeypatch.setattr(cli.uvicorn, "run", fake_run)
+    # The production database path is not this test's to create.
+    monkeypatch.setattr(OpenedDatabase, "opened", [])
+    monkeypatch.setattr(cli, "Repository", OpenedDatabase)
 
     assert cli.main(["--config", str(tmp_path / "absent.toml")]) == 0
     assert served == {
@@ -250,6 +272,7 @@ def test_the_command_serves_with_a_missing_config_file(
         "proxy_headers": True,
         "forwarded_allow_ips": ["127.0.0.1", "::1"],
     }
+    assert OpenedDatabase.opened == [(Path("/opt/segl/var/segl.sqlite"), 50)]
 
 
 def test_the_command_passes_the_trusted_proxies_to_uvicorn(
@@ -257,6 +280,7 @@ def test_the_command_passes_the_trusted_proxies_to_uvicorn(
 ) -> None:
     served: dict[str, object] = {}
     monkeypatch.setattr(cli.uvicorn, "run", lambda app, **options: served.update(options))
+    monkeypatch.setattr(cli, "Repository", OpenedDatabase)
 
     assert cli.main(["--config", str(write(tmp_path, "trusted_proxies = []\n"))]) == 0
     # An empty list, not None: None would make uvicorn fall back to its own default.

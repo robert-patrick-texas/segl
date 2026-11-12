@@ -20,18 +20,19 @@ from fastapi.testclient import TestClient
 from harness import make_settings, running_segl
 
 from segl.app import create_app
+from segl.repository import Repository
 
 
-def test_health_answers_ok() -> None:
-    response = TestClient(create_app(make_settings())).get("/api/v1/health")
+def test_health_answers_ok(repository: Repository) -> None:
+    response = TestClient(create_app(make_settings(), repository)).get("/api/v1/health")
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
     assert "set-cookie" not in response.headers
 
 
-def test_generated_documentation_pages_are_off() -> None:
-    client = TestClient(create_app(make_settings()))
+def test_generated_documentation_pages_are_off(repository: Repository) -> None:
+    client = TestClient(create_app(make_settings(), repository))
 
     for path in ("/docs", "/redoc", "/openapi.json"):
         assert client.get(path).status_code == 404

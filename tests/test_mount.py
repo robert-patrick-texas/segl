@@ -150,6 +150,26 @@ def test_health_and_config_reach_segl(mount: Mount, site: str, prefix: str) -> N
 @pytest.mark.parametrize(
     ("site", "prefix"), [(BOARD_SITE, "/board"), (ROOT_SITE, "")], ids=["board", "host-root"]
 )
+def test_the_slot_routes_reach_segl(mount: Mount, site: str, prefix: str) -> None:
+    slots = mount.get(site, f"{prefix}/api/v1/slots")
+    scene = mount.get(site, f"{prefix}/api/v1/slots/9/scene")
+    invalid = mount.get(site, f"{prefix}/api/v1/slots/10")
+
+    assert slots.status == 200
+    assert [slot["title"] for slot in slots.json()["slots"]] == [
+        f"Workspace {n}" for n in range(1, 10)
+    ]
+    assert (scene.status, scene.json()["scene"]) == (200, {"elements": []})
+    # segl's own 404, passed through, not an nginx error page.
+    assert (invalid.status, invalid.json()["error"]) == (404, "invalid_slot")
+    for reply in (slots, scene, invalid):
+        assert reply.headers["Set-Cookie"] is None
+        assert reply.headers["Content-Type"] == "application/json"
+
+
+@pytest.mark.parametrize(
+    ("site", "prefix"), [(BOARD_SITE, "/board"), (ROOT_SITE, "")], ids=["board", "host-root"]
+)
 def test_segl_sees_its_own_path_and_nginx_as_the_client(
     mount: Mount, site: str, prefix: str
 ) -> None:

@@ -25,6 +25,7 @@ SOURCE_DIRS = ("src", "tests", "scripts", "web/src")
 # Suffix → the line-comment marker that carries the header.
 LINE_COMMENT = {
     ".py": "#",
+    ".sql": "--",
     ".ts": "//",
     ".tsx": "//",
     ".js": "//",
@@ -92,7 +93,7 @@ def test_every_source_file_starts_with_the_header() -> None:
     assert not missing, "no license header (CONTRIBUTING.md): " + ", ".join(missing)
 
 
-@pytest.mark.parametrize("suffix", [".py", ".ts"])
+@pytest.mark.parametrize("suffix", [".py", ".sql", ".ts"])
 def test_a_file_without_the_header_is_caught(tmp_path: Path, suffix: str) -> None:
     header = "\n".join(expected_header(suffix))
     good = tmp_path / f"good{suffix}"

@@ -84,7 +84,7 @@ def test_console_module_prints_the_application_version() -> None:
     assert completed.stdout == f"segl {ROOT_VERSION}\n"
 
 
-def test_the_built_wheel_carries_a_copy_of_versions_toml(tmp_path: Path) -> None:
+def test_the_built_wheel_carries_versions_toml_and_the_migrations(tmp_path: Path) -> None:
     uv = shutil.which("uv")
     if uv is None:
         pytest.skip("uv is not on PATH, so the wheel cannot be built")
@@ -99,3 +99,7 @@ def test_the_built_wheel_carries_a_copy_of_versions_toml(tmp_path: Path) -> None
     with zipfile.ZipFile(wheel) as archive:
         assert archive.read("segl/versions.toml") == ROOT_FILE.read_bytes()
         assert "segl/versions.py" in archive.namelist()
+        # The SQL files the repository applies at startup (docs/DATA-MODEL.md).
+        for migration in sorted((ROOT / "src" / "segl" / "migrations").glob("*.sql")):
+            assert archive.read(f"segl/migrations/{migration.name}") == migration.read_bytes()
+        assert "segl/migrations/0001_slots.sql" in archive.namelist()

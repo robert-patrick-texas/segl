@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Fixtures for the release-script tests: fakes, and a throwaway git repository.
+"""Fixtures: a bootstrapped database, and what the release-script tests need.
+
+``repository`` is a SQLite file in the test's temporary folder, with the nine
+slots. For the release script there are fakes and a throwaway git repository.
 
 The fake runner stands in for ``uv``, ``gh``, ``cloc``, and ``git push``, and
 runs other git commands for real against a work repository with a local bare
@@ -22,13 +25,15 @@ for PyPI, npm, nodejs.org, and GitHub. No test uses the network.
 
 import json
 import subprocess
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
 import pytest
 from release_components import Component, LookupFailed, Sources
 from release_proc import Result, Runner
+
+from segl.repository import Repository
 
 SHA_OLD = "a" * 40
 SHA_NEW = "b" * 40
@@ -130,6 +135,14 @@ LATEST = {
 }
 
 Reply = str | Exception | Result | Callable[[Sequence[str]], Result]
+
+
+@pytest.fixture
+def repository(tmp_path: Path) -> Iterator[Repository]:
+    """A database in the test's folder, bootstrapped as segl does at startup."""
+    with Repository(tmp_path / "segl.sqlite") as repository:
+        repository.bootstrap()
+        yield repository
 
 
 class FakeRunner(Runner):

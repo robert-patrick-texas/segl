@@ -1,6 +1,18 @@
 # Data model (MVP)
 
-SQLite, WAL mode, foreign keys on. Migrations are numbered SQL files in `src/segl/migrations/`, applied in order at startup. The repository module is the only code that runs SQL. A later PostgreSQL implementation must satisfy the same method list.
+SQLite, WAL mode, foreign keys on. Migrations are numbered SQL files in `src/segl/migrations/`, applied in order at startup. The repository module, `src/segl/repository.py`, is the only code that runs SQL. A later PostgreSQL implementation must satisfy the same method list.
+
+## Database file and migrations
+
+segl opens the `database` file when it starts, before it listens, and creates the file and its folder when they are missing. The connection uses WAL mode, foreign keys, and `synchronous = FULL`, so a head the UI calls saved is on the disk.
+
+A migration is a file named `NNNN_name.sql`, such as `0001_slots.sql`. The numbers start at `0001` and have no gap. The database keeps the number of the newest file applied to it in `PRAGMA user_version`. Startup applies the files above that number, all in one transaction, so a migration that fails leaves the database as it was. A migration file has no `BEGIN` or `COMMIT` of its own. A released migration is never edited. A schema change is a new file.
+
+When segl stops, on SIGTERM or an interrupt, it closes the database, which folds the write-ahead log back into the one file. After a kill that skips this, the `-wal` and `-shm` files stay beside the database and the next start reads them.
+
+A database whose number is higher than the newest file was written by a newer segl. segl refuses it and changes nothing. Run the newer release, or restore a copy made before it.
+
+The wheel carries the SQL files inside the package, and a test checks that.
 
 ## Tables
 
@@ -36,7 +48,11 @@ CREATE TABLE name_counter (
 );
 ```
 
-Startup inserts slots 1–9 with title `Workspace N`, epoch 1, an empty scene the pinned editor accepts as `initialData`, and `name_counter.next_value = 1`. Capture the empty scene from the editor during T04 and store that fixture in tests. Do not hand-invent a scene schema and call it compatible.
+Startup inserts slots 1–9 with title `Workspace N`, epoch 1, an empty scene the pinned editor accepts as `initialData`, and `name_counter.next_value = 1`. Rows that already exist are left alone. Capture the empty scene from the editor during T04 and store that fixture in tests. Do not hand-invent a scene schema and call it compatible.
+
+Until T04, a new head holds the placeholder `{"elements":[]}` (`PLACEHOLDER_SCENE`) with editor label `System`. T04 replaces a stored head only when it still equals that text.
+
+Times are text in UTC to the millisecond, such as `2026-11-12T09:00:00.000Z`. `slot.updated_at` changes when the title or the epoch does. `slot_head.saved_at` changes when the head is written, and is the `savedAt` the API returns.
 
 If the pinned editor stores images as binary outside the scene document, add a migration for hashed files under `assets_dir` rather than stretching `scene_json` past `max_scene_bytes`. Record that choice in `DECISIONS.md`. The head records each file's editor id and SHA-256 hash, so a new load can fetch the bytes from `/api/v1/assets/{hash}`.
 
@@ -46,10 +62,15 @@ If the pinned editor stores images as binary outside the scene document, add a m
 - `get_slot(n)` / `list_slots()` / `rename_slot(n, title)`.
 - `get_head(n)` / `save_head(n, epoch, scene_json, editor_label)`.
 - `append_revision(n, epoch, scene_json, author_label)` — returns the new revision number, then deletes oldest rows past the history limit.
-- `list_revisions(n)` / `get_revision(n, revision)`.
+- `replace_head(n, scene_json, editor_label)` — the write behind restore and import. Returns the new epoch, the new revision number, and the save time.
+- `list_revisions(n)` / `get_revision(n, revision)`. The list is newest first and leaves the scenes out.
 - `allocate_display_name(words: Sequence[str]) -> str` — the transaction in `ARCHITECTURE.md`.
 
-`save_head` refuses a write whose epoch does not match the stored epoch. Restore and import go through a method that increments the epoch and writes the head and a revision in one transaction.
+`save_head` and `append_revision` refuse a write whose epoch does not match the slot's epoch (`EpochMismatch`), and write nothing. Restore and import go through `replace_head`, which increments the epoch and writes the head and a revision in one transaction.
+
+Revision numbers count up per slot from 1 and are not reused after the oldest rows are deleted. A slot number outside 1–9 raises `InvalidSlot`, and a revision the slot does not have raises `RevisionNotFound`. A database failure raises `StorageError`. `rename_slot` stores the title it is given. The route that calls it trims and checks the title (`API.md`).
+
+The repository holds one connection behind a lock, and every method blocks. HTTP handlers call it from worker threads. Code on the event loop, such as the WebSocket room, calls it through a worker thread.
 
 ## Flush and revision rules
 
