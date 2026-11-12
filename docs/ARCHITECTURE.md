@@ -71,7 +71,7 @@ segl's own redirects are relative. It sends none today: the framework's trailing
 
 segl owns the wire protocol (`API.md`, WebSocket). The canvas adapter, `web/src/canvas/`, is the only module that imports Excalidraw.
 
-The server side is five modules. `src/segl/reconcile.py` is the rule for which copy of an element is kept. `src/segl/room.py` is one slot's room: its connections and its scene, with no I/O. `src/segl/collab.py` is the socket around a room. `src/segl/saver.py` writes a room's scene to its head (`DATA-MODEL.md`, flush rules). `src/segl/assets.py` is the store of uploaded files. A room is made from the slot's head and file list the first time someone opens the slot, and stays for the life of the process. Everything a room does runs on the event loop. The repository and the file store block, and are called from worker threads: a flush turns the scene into JSON there too, from a list of elements that nothing changes afterwards.
+The server side is five modules. `src/segl/reconcile.py` is the rule for which copy of an element is kept. `src/segl/room.py` is one slot's room: its connections and its scene, with no I/O. `src/segl/collab.py` is the socket around a room. `src/segl/saver.py` writes a room's scene to its head (`DATA-MODEL.md`, flush rules), and puts a restored scene in the room's place. `src/segl/assets.py` is the store of uploaded files. A room is made from the slot's head and file list the first time someone opens the slot, and stays for the life of the process. Everything a room does runs on the event loop. The repository and the file store block, and are called from worker threads: a flush turns the scene into JSON there too, from a list of elements that nothing changes afterwards.
 
 - Element messages carry the element records the editor produces (`id`, `version`, `versionNonce`, and `isDeleted`, the deletion flag the pinned package uses). The server reads those fields and `index`, and stores and sends the rest as it arrived.
 - The server keeps the element with the greater `version`. On a tie, it keeps the lower `versionNonce`. That is the rule of `reconcileElements`, the helper the pinned package exports, which the client calls (D2-025). One table of cases, `tests/reconcile_cases.json`, holds the server's rule (pytest), the editor's helper (a browser test), and the client's own rule for what to send (Vitest) to the same answers.
@@ -80,7 +80,8 @@ The server side is five modules. `src/segl/reconcile.py` is the rule for which c
 - The scene is ordered by each element's fractional `index`, as text, and then by `id`, which is the editor's order.
 - A full-scene replace happens when the epoch changes (restore or import). On join the client is sent the room's scene and merges it into the canvas, which holds the head it loaded over HTTP.
 - Each head has an integer `epoch`, starting at 1. Ordinary element messages must name the current epoch. A stale epoch gets the current scene back, which the client puts in place of its own, and the stale elements are not applied.
-- Restore and JSON import increment the epoch, replace the scene, append a revision, and broadcast the new scene to the room.
+- A restore (`POST api/v1/slots/{n}/restore`) puts one of the slot's revisions in place of its scene (D2-030). The slot's saver does it, under the lock its head flushes take, so a flush and a restore never cross: the slot is written by one of them at a time, and no flush names an epoch the slot has left. In order: the room's scene is written to the head and kept as a revision, so that the restore can be undone. The revision's scene becomes the head at the next epoch, with a revision of its own. The room takes that scene and that epoch, and every connection is sent `scene`. The revision is read before anything is written, because keeping the scene that is going may drop the oldest revision, which may be the one being restored. JSON import (T09) follows the same steps.
+- A browser puts a `scene` of another epoch in place of its canvas, empties its undo history, and stops waiting for `saved`. What it drew for the old scene and had not sent goes with it. An `elements` message that names the old epoch is answered with the scene and is not applied. A browser that was away over a restore learns the new epoch when it reconnects, and replaces its canvas the same way. An edit that reaches the server during the few milliseconds a restore is being written is dropped with the scene it was made on.
 - A title change (`PATCH` on the slot) is broadcast to the room as a `slot` message, so every open bar shows the new title. Two changes at once are stored and sent in one order.
 - Images are files, not elements (D2-028). The editor keeps an image's bytes under a file id of its own, which the image element names. The element goes to the room as soon as it is placed, like any element. The browser that placed it uploads the bytes (`POST api/v1/slots/{n}/assets`), then says which hash that file id means in a `files` message. The server checks that it has those bytes, keeps the pair in the slot's file list, writes it with the next head flush, and tells the other connections. Each of them fetches `api/v1/assets/{hash}` and hands the file to its editor, which until then draws a placeholder. A new load gets the file list with the scene, over HTTP and again in `scene`. The browser side is `web/src/collab/files.ts`: whatever the canvas holds that the list lacks is uploaded, and whatever the list names that the canvas lacks is fetched, each once, and again after five seconds when a transfer fails. A file uploaded while the socket was down is named when the scene is back.
 - Cursors and the participant list are presence. They are not written to SQLite and they are not part of the scene. The editor draws each cursor, with its label, in a color it derives from the connection id, so the protocol carries no color. The editor's own row of avatars is hidden, because pressing one follows that person's view, which segl does not carry.
@@ -95,6 +96,16 @@ The acknowledged-save boundary is the head flush. A crash can lose edits that we
 
 The appearance of the canvas that the editor keeps outside the elements, such as the background color and the grid, is not shared live. Upstream's own collaboration does not share it either.
 
+## History
+
+The server keeps the latest `history_limit` revisions of each slot (`DATA-MODEL.md`, flush and revision rules). The bar's History control lists them, newest first: when each was made, the display name behind it, and a `restore` mark on a row that a restore wrote. The mark is worked out in the browser: a restore writes the first revision of a new epoch, so a row whose epoch is higher than that of the row under it is one.
+
+The control reads `api/v1/slots/{n}/revisions` each time it is opened, after a restore of its own, and when the epoch of the canvas moves, which is how a list open in another browser follows a restore. It is not live otherwise: a row made while the list is open shows at the next opening.
+
+Restore takes two presses, because it replaces the canvas of everyone on the slot. The page sends the revision's number and this browser's display name, and changes nothing itself: the restored scene arrives on the socket, as it does in every other browser. The buttons wait while the page is not in the slot's room, where it would not see the result. A view-only browser sees the list without them.
+
+`web/src/history.ts` is the rows and their words. `web/src/bar/HistoryControl.tsx` is the control. `web/src/bar/inView.ts` keeps the list inside the page: it hangs from its button, and moves left where the button is too far right for that, on a narrow screen or after a long title.
+
 ## Edit gate
 
 Viewing, cursors, and receiving elements require no token.
@@ -104,11 +115,11 @@ When `edit_token` is empty, every connection may mutate the scene, the title, th
 When `edit_token` is set:
 
 - Mutations include the token from `localStorage`: the HTTP header `X-Segl-Edit-Token`, and the same value in the WebSocket `hello`, which settles the connection as an editor or a viewer until it closes.
-- A missing or wrong token joins as view-only. The server drops scene, title, restore, and file mutations: `elements` gets an `error` with `view_only`, and a `PATCH` gets `403` with `view_only`. Presence and rename still work.
+- A missing or wrong token joins as view-only. The server drops scene, title, restore, and file mutations: `elements` gets an `error` with `view_only`, and a `PATCH`, a restore, or an upload gets `403` with `view_only`. Presence and rename still work, and so does reading the history.
 - The comparison is constant-time. Logs record the slot and the byte size, not the token and not the scene body.
 - A shared link may carry the token in the URL fragment `#e=...`. The page writes it to `localStorage` and removes the fragment with `history.replaceState`. The fragment is not sent on the HTTP request.
 
-The editor runs in its view mode when this client is view-only, and the title in the bar is text, not a button. The server says which in `welcome`. Until it has, a browser may edit unless a token is configured. The segl bar always states that the slot is a shared unauthenticated workspace. A view-only client also states that editing is locked. T10 adds the `#e=` link and the browser test of this flow.
+The editor runs in its view mode when this client is view-only, the title in the bar is text, not a button, and the history list has no restore buttons. The server says which in `welcome`. Until it has, a browser may edit unless a token is configured. The segl bar always states that the slot is a shared unauthenticated workspace. A view-only client also states that editing is locked. T10 adds the `#e=` link and the browser test of this flow.
 
 ## Display names
 

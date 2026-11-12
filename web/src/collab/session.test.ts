@@ -287,6 +287,8 @@ describe('joining', () => {
 			connectionId: 'me',
 			viewOnly: false,
 			title: 'Workspace 3',
+			// Not until the scene has come: the canvas is still the page's own load.
+			epoch: null,
 			participants: [OTHER, ME]
 		});
 	});
@@ -489,6 +491,66 @@ describe('a new epoch', () => {
 
 		expect(harness.editor.held).toEqual([element('restored', 1)]);
 		expect(socket.take()).toEqual([]);
+		expect(harness.state().epoch).toBe(2);
+	});
+
+	test('the page is told the epoch of the scene on its canvas', () => {
+		const harness = start();
+		const socket = harness.socket();
+		socket.open();
+		welcome(socket, { epoch: 4 });
+		// The room is at epoch 4. The canvas is not, until the scene is here.
+		expect(harness.state().epoch).toBeNull();
+
+		socket.receive({ type: 'scene', epoch: 4, elements: [], files: [] });
+
+		expect(harness.state().epoch).toBe(4);
+	});
+
+	test('a restore moves the epoch on, and the page hears of it once', () => {
+		const harness = start();
+		const socket = goLive(harness);
+		const told = harness.states.length;
+
+		socket.receive({ type: 'scene', epoch: 2, elements: [element('restored', 1)], files: [] });
+
+		expect(harness.state().epoch).toBe(2);
+		expect(harness.states).toHaveLength(told + 1);
+		// The same scene again, as a stale edit is answered, is no news.
+		socket.receive({ type: 'scene', epoch: 2, elements: [element('restored', 1)], files: [] });
+		expect(harness.states).toHaveLength(told + 1);
+		expect(harness.editor.calls).toEqual(['reconcile', 'replace', 'reconcile']);
+	});
+
+	test('the epoch stays while the socket is down: the canvas still holds that scene', () => {
+		const harness = start();
+		const socket = goLive(harness);
+		socket.receive({ type: 'scene', epoch: 2, elements: [], files: [] });
+
+		socket.drop();
+
+		expect(harness.state()).toMatchObject({ status: 'disconnected', epoch: 2 });
+	});
+
+	test('a browser that was away over a restore drops what it drew for the old scene', () => {
+		const harness = start();
+		const socket = goLive(harness, [element('a', 1)]);
+		socket.drop();
+		// Drawn while the socket was down, on the scene of epoch 1.
+		harness.editor.draw(element('offline', 1));
+		harness.session.localChange();
+		vi.advanceTimersByTime(RETRY_DELAYS_MS[0]!);
+		const next = harness.socket();
+		next.open();
+		welcome(next, { epoch: 2 });
+
+		next.receive({ type: 'scene', epoch: 2, elements: [element('restored', 1)], files: [] });
+		vi.advanceTimersByTime(1000);
+
+		expect(harness.editor.held).toEqual([element('restored', 1)]);
+		// Nothing of the old scene is sent to the new one.
+		expect(next.take()).toEqual([]);
+		expect(harness.state()).toMatchObject({ status: 'live', epoch: 2 });
 	});
 });
 
@@ -952,8 +1014,12 @@ describe('saving', () => {
 	test('the page is told of a status once, however often it is worked out', () => {
 		const harness = start();
 		const socket = goLive(harness);
-		// Welcome made the page live. The scene after it changed nothing the bar shows.
-		expect(harness.states.map((state) => state.status)).toEqual(['live']);
+		// Welcome made the page live. The scene after it said which epoch the
+		// canvas is on, and nothing else the bar shows.
+		expect(harness.states.map((state) => [state.status, state.epoch])).toEqual([
+			['live', null],
+			['live', 1]
+		]);
 		harness.editor.draw(element('a', 1));
 		harness.session.localChange();
 		vi.advanceTimersByTime(SEND_INTERVAL_MS);
@@ -961,7 +1027,12 @@ describe('saving', () => {
 		saved(socket, 1);
 		saved(socket, 1);
 
-		expect(harness.states.map((state) => state.status)).toEqual(['live', 'saving', 'saved']);
+		expect(harness.states.map((state) => state.status)).toEqual([
+			'live',
+			'live',
+			'saving',
+			'saved'
+		]);
 	});
 
 	test('one answer may cover several messages', () => {

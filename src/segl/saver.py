@@ -21,6 +21,10 @@ time when segl stops. The repository decides, in the same transaction, whether
 the flush also adds a history row. After the write, the connections whose
 edits it held are sent ``saved``.
 
+The saver also puts another scene in the room's place, for a restore
+(``replace``). That is a write of the same slot, and it starts a new epoch, so
+it takes its turn with the flushes: one lock, and one of them at a time.
+
 Everything here runs on the event loop but the write itself, which a worker
 thread does, turning the scene into JSON on the way.
 """
@@ -31,7 +35,7 @@ import logging
 
 from starlette.concurrency import run_in_threadpool
 
-from segl.repository import SYSTEM_LABEL, Flush, Repository, SlotFile
+from segl.repository import SYSTEM_LABEL, Flush, Replacement, Repository, SlotFile
 from segl.room import Room, Snapshot
 
 logger = logging.getLogger("segl.saver")
@@ -66,6 +70,8 @@ class Saver:
         # The head holds a scene that the newest history row does not.
         self._unrecorded = False
         self._task: asyncio.Task[None] | None = None
+        # Held by whatever is writing the slot: a flush, or a replacement.
+        self._lock = asyncio.Lock()
         room.on_change = self._wake
         room.on_empty = self._on_empty
 
@@ -76,6 +82,41 @@ class Saver:
         self._wake()
         if self._task is not None:
             await self._task
+
+    async def replace(self, scene_json: str, editor_label: str) -> Replacement:
+        """Put a stored scene in the room's place, at a new epoch: a restore.
+
+        First what the room holds is written, with a history row whatever the
+        age of the newest one, so that the scene being replaced can be
+        restored in its turn. Then the new head, the new epoch, and the row
+        for it. Then the room, and every connection is sent the scene.
+
+        An edit that arrives while this is being written was made on the scene
+        that is going, and goes with it. When a write fails, the room is as it
+        was and the error is raised.
+        """
+        async with self._lock:
+            room = self._room
+            waiting = room.take_waiting()
+            # Always, and not only when the room is dirty: after a crash the
+            # head may hold a scene that no history row does.
+            snapshot = room.snapshot()
+            try:
+                replacement = await run_in_threadpool(
+                    self._swap, snapshot, scene_json, editor_label
+                )
+            except BaseException:
+                room.take_back(snapshot)
+                room.keep_waiting(waiting)
+                # The flush that would have told them is the next one.
+                self._wake()
+                raise
+            self._saved_at = replacement.saved_at
+            self._unrecorded = False
+            # Nobody is told `saved`: the new epoch tells every browser that
+            # what it sent for the old scene has nothing left to wait for.
+            room.replace(replacement.epoch, scene_json)
+            return replacement
 
     def _on_empty(self) -> None:
         self._emptied = True
@@ -121,6 +162,11 @@ class Saver:
         self._now.clear()
 
     async def _flush(self) -> None:
+        # After a replacement that is under way, and before the next one.
+        async with self._lock:
+            await self._flush_now()
+
+    async def _flush_now(self) -> None:
         room = self._room
         # The slot may empty again while this flush is being written.
         emptied, self._emptied = self._emptied, False
@@ -138,11 +184,16 @@ class Saver:
         except BaseException:
             # Also when this task is cancelled before the worker thread ran.
             if snapshot is not None:
-                room.restore(snapshot)
+                room.take_back(snapshot)
             room.keep_waiting(waiting)
             self._emptied = self._emptied or emptied
             raise
         room.saved(waiting, self._saved_at)
+
+    def _swap(self, snapshot: Snapshot, scene_json: str, editor_label: str) -> Replacement:
+        """Write the scene that is going, and then the one in its place. A worker thread."""
+        self._write(snapshot, record=True)
+        return self._repository.replace_head(self._room.slot, scene_json, editor_label)
 
     def _write(self, snapshot: Snapshot, record: bool) -> Flush:
         """Write one snapshot. This runs in a worker thread."""

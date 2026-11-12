@@ -16,6 +16,7 @@
 
 import { isHash, parseFileRefs, type FileRef } from './collab/files.ts';
 import { apiUrl, type AppConfig } from './config.ts';
+import { parseRevisions, type RevisionInfo } from './history.ts';
 
 export interface SlotInfo {
 	number: number;
@@ -150,6 +151,52 @@ export async function fetchScene(
 		// and the rest of the scene still loads.
 		files: parseFileRefs(body.files) ?? []
 	};
+}
+
+/** A slot's history, newest first, without the scenes (S-005). */
+export async function fetchRevisions(
+	config: AppConfig,
+	slot: number,
+	signal?: AbortSignal
+): Promise<RevisionInfo[]> {
+	const url = apiUrl(config, `slots/${slot}/revisions`);
+	const body = (await getJson(url, signal)) as { revisions?: unknown } | null;
+	const revisions = parseRevisions(body?.revisions);
+	if (revisions === null) {
+		throw new ApiError(200, 'unexpected', `${url.pathname} did not return the history`);
+	}
+	return revisions;
+}
+
+/**
+ * Put one of a slot's revisions in place of its scene. The server keeps the
+ * scene that is replaced as a revision first, and then sends the restored one
+ * to every browser on the slot, this one included, over the socket.
+ * `displayName` is who restored, for the history. `editToken` is this
+ * browser's stored token, or `''`. It goes in a header, never in the URL.
+ */
+export async function restoreRevision(
+	config: AppConfig,
+	slot: number,
+	revision: number,
+	displayName: string | null,
+	editToken: string,
+	signal?: AbortSignal
+): Promise<{ revision: number; epoch: number }> {
+	const url = apiUrl(config, `slots/${slot}/restore`);
+	const body = (await requestJson(url, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			...(editToken === '' ? {} : { [EDIT_TOKEN_HEADER]: editToken })
+		},
+		body: JSON.stringify({ revision, displayName }),
+		signal
+	})) as { revision?: unknown; epoch?: unknown } | null;
+	if (!Number.isInteger(body?.revision) || !Number.isInteger(body?.epoch)) {
+		throw new ApiError(200, 'unexpected', `${url.pathname} did not return the new revision`);
+	}
+	return { revision: body!.revision as number, epoch: body!.epoch as number };
 }
 
 /**

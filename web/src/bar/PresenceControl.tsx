@@ -17,9 +17,10 @@
  * server counts on the slot, this one included, so two tabs of one browser
  * count twice. Pressing it lists their labels.
  */
-import { useEffect, useId, useRef, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import type { Participant } from '../collab/protocol.ts';
 import { presenceLabel, UNNAMED } from './presence.ts';
+import { useDismiss } from './useDismiss.ts';
 
 export interface PresenceControlProps {
 	/** Every connection on the slot, in the order they joined. Empty when not live. */
@@ -34,21 +35,7 @@ export function PresenceControl({ participants, self }: PresenceControlProps) {
 	const list = useId();
 	const count = participants.length;
 
-	useEffect(() => {
-		if (!open) return;
-		const onPointerDown = (event: PointerEvent) => {
-			if (!wrapper.current?.contains(event.target as Node)) setOpen(false);
-		};
-		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.key === 'Escape') setOpen(false);
-		};
-		document.addEventListener('pointerdown', onPointerDown);
-		document.addEventListener('keydown', onKeyDown);
-		return () => {
-			document.removeEventListener('pointerdown', onPointerDown);
-			document.removeEventListener('keydown', onKeyDown);
-		};
-	}, [open]);
+	useDismiss(open, wrapper, () => setOpen(false));
 
 	return (
 		<div ref={wrapper} className="segl-bar__presence" data-testid="presence">

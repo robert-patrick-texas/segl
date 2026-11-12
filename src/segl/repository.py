@@ -452,7 +452,9 @@ class Repository:
         hold this scene and is at least ``history_seconds`` old. With 0 its
         age does not matter, which is the flush after the last connection
         left. A slot with no history gets its first row from the first flush
-        that changes the head.
+        that changes the head. A row for a head this flush did not write
+        carries the head's own label, not ``editor_label``: the scene is by
+        whoever saved it.
 
         Raises:
             InvalidSlot: When ``n`` is not 1 to 9.
@@ -463,13 +465,14 @@ class Repository:
         now = _stamp(moment)
         with self._transaction() as db:
             self._require_epoch(db, n, epoch)
-            same, saved_at = db.execute(
-                "SELECT scene_json = ?, saved_at FROM slot_head WHERE slot = ?", (scene_json, n)
+            same, saved_at, author = db.execute(
+                "SELECT scene_json = ?, saved_at, editor_label FROM slot_head WHERE slot = ?",
+                (scene_json, n),
             ).fetchone()
             written = not same
             if written:
                 self._write_head(db, n, epoch, scene_json, editor_label, now)
-                saved_at = now
+                saved_at, author = now, editor_label
             for file in files:
                 db.execute(
                     "INSERT INTO slot_file (slot, file_id, hash, media_type, created_at) "
@@ -491,7 +494,7 @@ class Repository:
                 # A clock that went backwards does not stop the history.
                 due = not newest[0] and (age >= history_seconds or age < 0)
             if due:
-                revision = self._insert_revision(db, n, epoch, scene_json, editor_label, now)
+                revision = self._insert_revision(db, n, epoch, scene_json, author, now)
             # Nothing is owed to a slot whose first change is still to come.
             recorded = due or newest is None or bool(newest[0])
         return Flush(saved_at=saved_at, written=written, revision=revision, recorded=recorded)

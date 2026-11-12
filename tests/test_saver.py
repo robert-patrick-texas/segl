@@ -33,7 +33,7 @@ from typing import Any
 import pytest
 
 from segl import saver as saver_module
-from segl.repository import Flush, Repository, SlotFile, StorageError
+from segl.repository import Flush, Replacement, Repository, SlotFile, StorageError
 from segl.room import Connection, Hello, Room
 from segl.saver import Saver
 
@@ -72,8 +72,8 @@ class Browser:
         )
         room.join(self.connection)
 
-    def draw(self, *elements: dict[str, Any], seq: int | None = None) -> None:
-        message: dict[str, Any] = {"type": "elements", "epoch": 1, "elements": list(elements)}
+    def draw(self, *elements: dict[str, Any], seq: int | None = None, epoch: int = 1) -> None:
+        message: dict[str, Any] = {"type": "elements", "epoch": epoch, "elements": list(elements)}
         if seq is not None:
             message["seq"] = seq
         self.room.receive(self.connection, message)
@@ -83,6 +83,10 @@ class Browser:
 
     def saved(self) -> list[dict[str, Any]]:
         return [message for message in self.received if message["type"] == "saved"]
+
+    def scenes(self) -> list[dict[str, Any]]:
+        """Return the scenes sent since the one that came with the welcome."""
+        return [message for message in self.received if message["type"] == "scene"][1:]
 
 
 class Setup:
@@ -500,3 +504,386 @@ def test_the_saver_is_how_the_room_reports(tmp_path: Path) -> None:
         assert setup.room.on_empty == setup.saver._on_empty
 
     run(tmp_path, scenario)
+
+
+# A restore: another scene in the room's place, at a new epoch.
+
+
+def scene_text(*elements: dict[str, Any]) -> str:
+    """Return a stored scene with these elements, as a history row holds one."""
+    return json.dumps({"type": "excalidraw", "elements": list(elements)}, separators=(",", ":"))
+
+
+def test_a_replacement_writes_the_new_scene_and_sends_it_to_the_room(tmp_path: Path) -> None:
+    async def scenario(setup: Setup) -> None:
+        one, two = Browser(setup.room, "Alpha1"), Browser(setup.room, "Bravo2")
+        one.draw(element("a", 1, index="a0"), seq=1)
+        await setup.settled()
+        setup.clock.advance(5)
+
+        replacement = await setup.saver.replace(scene_text(element("z", 3, index="a0")), "Bravo2")
+
+        assert replacement == Replacement(epoch=2, revision=2, saved_at="2026-11-12T09:00:05.000Z")
+        head = setup.repository.get_head(SLOT)
+        assert (head.epoch, head.editor_label, head.saved_at) == (2, "Bravo2", replacement.saved_at)
+        assert json.loads(head.scene_json) == {
+            "type": "excalidraw",
+            "elements": [element("z", 3, index="a0")],
+        }
+        # The room is that scene now, and both connections were sent it.
+        assert (setup.room.epoch, list(setup.room.elements)) == (2, ["z"])
+        expected = {
+            "type": "scene",
+            "epoch": 2,
+            "elements": [element("z", 3, index="a0")],
+            "files": [],
+        }
+        assert one.scenes() == [expected] and two.scenes() == [expected]
+        assert not setup.room.dirty
+        # Row 1 is the first drawing, which the newest row already held, and
+        # row 2 is the replacement.
+        assert [(row.revision, row.epoch) for row in setup.repository.list_revisions(SLOT)] == [
+            (2, 2),
+            (1, 1),
+        ]
+
+        # Drawing goes on, and is written at the new epoch.
+        two.draw(element("y", 1, index="a1"), seq=1, epoch=2)
+        await setup.settled()
+        assert two.saved()[-1] == {
+            "type": "saved",
+            "epoch": 2,
+            "savedAt": "2026-11-12T09:00:05.000Z",
+            "seq": 1,
+        }
+        assert [each["id"] for each in setup.stored()] == ["z", "y"]
+
+    run(tmp_path, scenario)
+
+
+def test_a_replacement_first_records_what_the_room_holds(tmp_path: Path) -> None:
+    async def scenario(setup: Setup) -> None:
+        browser = Browser(setup.room, "Alpha1")
+        browser.draw(element("a", 1), seq=1)
+        await setup.settled()
+        # In the room and nowhere else: its flush has not had its turn.
+        other = Browser(setup.room, "Bravo2")
+        other.draw(element("b", 1), seq=4)
+        assert setup.stored() == [element("a", 1)]
+
+        await setup.saver.replace(scene_text(element("z", 1)), "Charlie3")
+
+        # The room's scene was written with a history row, whatever the age
+        # of the newest one, and then the replacement.
+        assert setup.writes[-1] == ([element("a", 1), element("b", 1)], "Bravo2", 0)
+        listed = setup.repository.list_revisions(SLOT)
+        assert [(row.revision, row.epoch, row.author_label) for row in listed] == [
+            (3, 2, "Charlie3"),
+            (2, 1, "Bravo2"),
+            (1, 1, "Alpha1"),
+        ]
+        going = json.loads(setup.repository.get_revision(SLOT, 2).scene_json)
+        assert going["elements"] == [element("a", 1), element("b", 1)]
+        # Nobody is told `saved` for the scene that went: the new epoch says it.
+        assert other.saved() == []
+        assert other.connection.awaiting is None
+        assert other.received[-1]["type"] == "scene"
+
+    setup = run(tmp_path, scenario)
+    # Nothing was left to write: the flush that was due found a clean room.
+    assert len(setup.writes) == 2
+    assert setup.stored() == [element("z", 1)]
+    assert len(setup.repository.list_revisions(SLOT)) == 3
+
+
+def test_a_replacement_records_a_head_the_history_does_not_have(tmp_path: Path) -> None:
+    async def scenario(setup: Setup) -> None:
+        browser = Browser(setup.room, "Alpha1")
+        browser.draw(element("a", 1), seq=1)
+        await setup.settled()
+        browser.draw(element("a", 2), seq=2)
+        await setup.settled()
+        # The head has the second copy, and the history only the first.
+        assert setup.revisions() == [1]
+        # As after a restart: a room and a saver that know nothing of that.
+        head = setup.repository.get_head(SLOT)
+        room = Room.from_head(SLOT, "Workspace 2", head.epoch, head.scene_json)
+        saver = Saver(
+            room,
+            setup.repository,
+            head_flush_seconds=NEVER,
+            history_interval_seconds=NEVER,
+            saved_at=head.saved_at,
+        )
+
+        await saver.replace(scene_text(element("z", 1)), "Bravo2")
+
+        listed = setup.repository.list_revisions(SLOT)
+        # By whoever saved that head, not by `System`.
+        assert [(row.revision, row.author_label) for row in listed] == [
+            (3, "Bravo2"),
+            (2, "Alpha1"),
+            (1, "Alpha1"),
+        ]
+        going = json.loads(setup.repository.get_revision(SLOT, 2).scene_json)
+        assert going["elements"] == [element("a", 2)]
+        await asyncio.wait_for(saver.close(), 10)
+        # The first room is stale now. A test's own, and nothing writes it.
+        setup.room.dirty = False
+
+    run(tmp_path, scenario)
+
+
+def test_a_replacement_waits_for_the_write_that_is_under_way(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def scenario(setup: Setup) -> None:
+        browser = Browser(setup.room)
+        # The first write is held in its worker thread, and no other: a
+        # replacement that did not wait for it would write straight past it.
+        entered, held = threading.Event(), threading.Event()
+        flush_head = setup.repository.flush_head
+
+        def first_held(*arguments: Any, **options: Any) -> Flush:
+            if not entered.is_set():
+                entered.set()
+                held.wait(5)
+            return flush_head(*arguments, **options)
+
+        setup.repository.flush_head = first_held
+        browser.draw(element("a", 1), seq=1)
+        await until(entered.is_set)
+        # The flush is in the worker thread, at epoch 1.
+        replacing = asyncio.create_task(setup.saver.replace(scene_text(element("z", 1)), "Bravo2"))
+        await asyncio.sleep(0.05)
+        assert not replacing.done()
+        # Nothing has reached the database: the flush is held, and the
+        # replacement has not asked for a write of its own.
+        assert setup.writes == []
+        assert (setup.room.epoch, setup.repository.get_slot(SLOT).epoch) == (1, 1)
+
+        held.set()
+        await asyncio.wait_for(replacing, 5)
+        await setup.settled()
+
+        # First the flush, with its answer, and then the scene.
+        assert [message["type"] for message in browser.received[2:]] == ["saved", "scene"]
+        assert browser.saved() == [
+            {"type": "saved", "epoch": 1, "savedAt": browser.saved()[0]["savedAt"], "seq": 1}
+        ]
+        assert setup.stored() == [element("z", 1)]
+        assert setup.repository.get_head(SLOT).epoch == 2
+
+    with caplog.at_level(logging.ERROR, logger="segl.saver"):
+        run(tmp_path, scenario)
+    # No write named an epoch the slot had left.
+    assert caplog.records == []
+
+
+def test_a_flush_waits_for_the_replacement_that_is_under_way(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def scenario(setup: Setup) -> None:
+        browser = Browser(setup.room)
+        browser.draw(element("a", 1), seq=1)
+        await setup.settled()
+        setup.gate = threading.Event()
+        replacing = asyncio.create_task(setup.saver.replace(scene_text(element("z", 1)), "Bravo2"))
+        await until(lambda: len(setup.writes) == 2)
+        # The replacement is in the worker thread. An edit for the scene that
+        # is going arrives, and its flush comes due.
+        browser.draw(element("b", 1), seq=2)
+        await asyncio.sleep(0.05)
+        assert len(setup.writes) == 2
+
+        setup.gate.set()
+        await asyncio.wait_for(replacing, 5)
+        await setup.settled()
+
+        # The edit went with the scene it was made on. No flush wrote it, and
+        # the browser hears of the new scene and not of a save.
+        assert setup.stored() == [element("z", 1)]
+        assert [message["type"] for message in browser.received[2:]] == ["saved", "scene"]
+        assert browser.connection.awaiting is None
+        assert not setup.room.unsettled
+
+    with caplog.at_level(logging.ERROR, logger="segl.saver"):
+        setup = run(tmp_path, scenario)
+    assert caplog.records == []
+    # Two writes in all: the first drawing, and the room before it was replaced.
+    assert len(setup.writes) == 2
+
+
+def test_a_replacement_takes_over_from_a_write_that_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(saver_module, "RETRY_SECONDS", 0.1)
+
+    async def scenario(setup: Setup) -> None:
+        browser = Browser(setup.room, "Alpha1")
+        setup.failures = 1
+        browser.draw(element("a", 1), seq=1)
+        await until(lambda: len(setup.writes) == 1)
+        await until(lambda: setup.room.dirty)
+        # The flush failed, and the next try is a tenth of a second away.
+
+        await setup.saver.replace(scene_text(element("z", 1)), "Bravo2")
+
+        # The replacement wrote what the failed flush could not, with its row.
+        going = json.loads(setup.repository.get_revision(SLOT, 1).scene_json)
+        assert going["elements"] == [element("a", 1)]
+        await setup.settled()
+        await asyncio.sleep(0.2)
+        # The try that was waiting found nothing to write.
+        assert len(setup.writes) == 2
+        assert setup.stored() == [element("z", 1)]
+
+    with caplog.at_level(logging.ERROR, logger="segl.saver"):
+        run(tmp_path, scenario)
+    # One failure was logged: the first flush, and nothing about an epoch.
+    assert len(caplog.records) == 1
+    assert "the disk is full" in caplog.text
+
+
+def test_a_replacement_that_cannot_record_the_room_changes_nothing(tmp_path: Path) -> None:
+    async def scenario(setup: Setup) -> None:
+        browser = Browser(setup.room, "Alpha1")
+        browser.draw(element("a", 1), seq=1)
+        setup.failures = 1
+
+        with pytest.raises(StorageError):
+            await setup.saver.replace(scene_text(element("z", 1)), "Bravo2")
+
+        # The room is as it was, still to be written, and nobody was sent a scene.
+        assert (setup.room.epoch, list(setup.room.elements)) == (1, ["a"])
+        assert setup.room.dirty
+        assert browser.connection.awaiting == 1
+        assert browser.scenes() == []
+        assert setup.repository.get_slot(SLOT).epoch == 1
+        assert setup.revisions() == []
+
+    setup = run(tmp_path, scenario, flush=NEVER)
+    # The stop wrote the drawing, and told the browser.
+    assert setup.stored() == [element("a", 1)]
+    assert setup.repository.get_head(SLOT).epoch == 1
+
+
+def test_a_replacement_that_cannot_be_written_leaves_the_room_on_its_scene(
+    tmp_path: Path,
+) -> None:
+    async def scenario(setup: Setup) -> None:
+        browser = Browser(setup.room, "Alpha1")
+        browser.draw(element("a", 1), seq=1)
+
+        def failing(*arguments: Any) -> Replacement:
+            raise StorageError("the disk is full")
+
+        setup.repository.replace_head = failing  # ty: ignore[invalid-assignment]
+
+        with pytest.raises(StorageError):
+            await setup.saver.replace(scene_text(element("z", 1)), "Bravo2")
+
+        # What the room held was written on the way, and that stays.
+        assert setup.stored() == [element("a", 1)]
+        assert (setup.room.epoch, list(setup.room.elements)) == (1, ["a"])
+        assert setup.repository.get_slot(SLOT).epoch == 1
+        assert browser.scenes() == []
+        # The browser is still owed its answer, and the saver knows.
+        assert browser.connection.awaiting == 1
+        await until(lambda: browser.saved() != [])
+        assert browser.saved()[0]["seq"] == 1
+        assert not setup.room.unsettled
+
+    run(tmp_path, scenario, flush=0.01)
+
+
+def test_a_file_named_during_a_replacement_is_still_written(tmp_path: Path) -> None:
+    async def scenario(setup: Setup) -> None:
+        browser = Browser(setup.room)
+        browser.draw(element("a", 1), seq=1)
+        await setup.settled()
+        setup.gate = threading.Event()
+        replacing = asyncio.create_task(setup.saver.replace(scene_text(element("z", 1)), "Bravo2"))
+        await until(lambda: len(setup.writes) == 2)
+        setup.room.receive(
+            browser.connection, {"type": "files", "epoch": 1, "files": [FILE]}, [FILE["hash"]]
+        )
+
+        setup.gate.set()
+        await asyncio.wait_for(replacing, 5)
+        await setup.settled()
+
+        # A file id keeps its bytes whatever the scene, so the list has it.
+        assert setup.repository.list_files(SLOT) == [
+            SlotFile(FILE["id"], FILE["hash"], FILE["mimeType"])
+        ]
+        assert setup.stored() == [element("z", 1)]
+        assert not setup.room.dirty
+
+    run(tmp_path, scenario)
+
+
+def test_two_replacements_at_once_are_two_epochs_in_one_order(tmp_path: Path) -> None:
+    async def scenario(setup: Setup) -> None:
+        browser = Browser(setup.room)
+        first = asyncio.create_task(setup.saver.replace(scene_text(element("y", 1)), "Alpha1"))
+        second = asyncio.create_task(setup.saver.replace(scene_text(element("z", 1)), "Bravo2"))
+
+        one, two = await asyncio.wait_for(asyncio.gather(first, second), 5)
+
+        assert (one.epoch, two.epoch) == (2, 3)
+        assert [scene["epoch"] for scene in browser.scenes()] == [2, 3]
+        # The last one written is the one every browser was sent last.
+        assert setup.stored() == [element("z", 1)]
+        assert browser.scenes()[-1]["elements"] == [element("z", 1)]
+        assert setup.room.epoch == setup.repository.get_slot(SLOT).epoch == 3
+
+    run(tmp_path, scenario)
+
+
+def test_after_a_replacement_a_question_is_answered_with_its_time(tmp_path: Path) -> None:
+    async def scenario(setup: Setup) -> None:
+        browser = Browser(setup.room)
+        browser.draw(element("a", 1), seq=1)
+        await setup.settled()
+        setup.clock.advance(5)
+        await setup.saver.replace(scene_text(element("z", 1)), "Bravo2")
+        setup.clock.advance(5)
+
+        # An empty numbered batch asks whether everything is saved. It is, and
+        # nothing is written for the answer.
+        browser.draw(seq=2, epoch=2)
+        await setup.settled()
+
+        assert browser.saved()[-1] == {
+            "type": "saved",
+            "epoch": 2,
+            "savedAt": "2026-11-12T09:00:05.000Z",
+            "seq": 2,
+        }
+        assert len(setup.writes) == 2
+
+    run(tmp_path, scenario)
+
+
+def test_a_replacement_leaves_nothing_owed_to_the_history(tmp_path: Path) -> None:
+    async def scenario(setup: Setup) -> None:
+        browser = Browser(setup.room)
+        browser.draw(element("a", 1), seq=1)
+        await setup.settled()
+        browser.draw(element("a", 2), seq=2)
+        await setup.settled()
+        # The head is ahead of the history: a leave, or a stop, would owe it a row.
+        assert setup.revisions() == [1]
+
+        await setup.saver.replace(scene_text(element("z", 1)), "Bravo2")
+
+        assert setup.revisions() == [3, 2, 1]
+        browser.leave()
+        await asyncio.sleep(0.05)
+        await setup.settled()
+
+    setup = run(tmp_path, scenario)
+    # Neither the leave nor the stop wrote again: the replacement kept both scenes.
+    assert len(setup.writes) == 3
+    assert setup.revisions() == [3, 2, 1]

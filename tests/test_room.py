@@ -33,6 +33,7 @@ from segl.room import (
     named_files,
     parse_files,
     parse_hello,
+    parse_scene,
     stored_name,
 )
 
@@ -639,7 +640,7 @@ def test_a_snapshot_that_was_not_written_is_taken_back(room: Room) -> None:
     taken = room.snapshot()
     browser.name_files(OTHER_FILE)
 
-    room.restore(taken)
+    room.take_back(taken)
 
     assert room.dirty
     # Both files are still to be written, the older first.
@@ -1080,3 +1081,192 @@ def test_without_a_limit_a_scene_may_grow(room: Room) -> None:
     Browser(room).draw(element("a", 1, text="x" * 100_000))
 
     assert room.size > 100_000
+
+
+# Another scene in the room's place: a restore.
+
+
+def stored_scene(*elements: dict[str, Any], **more: object) -> str:
+    """Return a scene document as a history row holds one."""
+    return json.dumps({"type": "excalidraw", "elements": list(elements), **more})
+
+
+def test_a_replaced_room_holds_the_new_scene_at_the_new_epoch(room: Room) -> None:
+    browser = Browser(room)
+    browser.draw(element("a", 3, index="a0"), element("b", 1, index="a1"))
+    room.snapshot()
+    kept = element("a", 1, index="a0")
+    gone = element("c", 2, index="a2", isDeleted=True)
+
+    room.replace(2, stored_scene(kept, gone, appState={"gridSize": 20}))
+
+    assert room.epoch == 2
+    # The older copy of a, although the room held a newer one: the scene is
+    # put in place, not reconciled.
+    assert room.elements == {"a": kept, "c": gone}
+    assert room.document == {"type": "excalidraw", "elements": [], "appState": {"gridSize": 20}}
+    assert not room.dirty
+    assert scene_of(room) == [kept, gone]
+    # A flush of it would write the very text it came from.
+    assert room.snapshot().scene_json() == encode(
+        {"type": "excalidraw", "elements": [kept, gone], "appState": {"gridSize": 20}}
+    )
+
+
+def test_a_replacement_is_sent_to_every_connection_viewers_too(room: Room) -> None:
+    editor, viewer = Browser(room, "Guest1"), Browser(room, "Staff2", view_only=True)
+    editor.draw(element("a", 1))
+    editor.take(), viewer.take()
+
+    room.replace(2, stored_scene(element("z", 1, index="a0")))
+
+    expected = {
+        "type": "scene",
+        "epoch": 2,
+        "elements": [element("z", 1, index="a0")],
+        "files": [],
+    }
+    assert editor.take() == [expected]
+    assert viewer.take() == [expected]
+
+
+def test_a_replacement_ends_the_wait_for_saved(room: Room) -> None:
+    browser = Browser(room)
+    browser.draw(element("a", 1), seq=5)
+    room.snapshot()
+    assert browser.connection.awaiting == 5
+
+    room.replace(2, stored_scene())
+
+    # The new epoch is the answer. Nothing is left for a flush to tell.
+    assert browser.connection.awaiting is None
+    assert not room.unsettled
+    assert room.take_waiting() == []
+
+
+def test_an_edit_for_the_scene_that_went_is_answered_with_the_new_one(room: Room) -> None:
+    browser, other = Browser(room), Browser(room)
+    room.replace(2, stored_scene(element("z", 1)))
+    browser.take(), other.take()
+
+    browser.draw(element("a", 1), epoch=1, seq=6)
+
+    assert browser.take() == [
+        {"type": "scene", "epoch": 2, "elements": [element("z", 1)], "files": []}
+    ]
+    assert other.take() == []
+    assert list(room.elements) == ["z"]
+    assert (room.dirty, browser.connection.awaiting) == (False, None)
+
+    # One for the new scene is applied, and goes to the others.
+    browser.draw(element("a", 1), epoch=2, seq=7)
+
+    assert other.take() == [{"type": "elements", "epoch": 2, "elements": [element("a", 1)]}]
+    assert (room.dirty, browser.connection.awaiting) == (True, 7)
+    assert room.snapshot().epoch == 2
+
+
+def test_a_replaced_room_names_the_files_of_its_new_scene(room: Room) -> None:
+    browser = Browser(room)
+    browser.name_files(FILE, OTHER_FILE)
+    browser.draw(element("picture", 1, type="image", fileId=FILE["id"]))
+    room.snapshot()
+    browser.take()
+    other = element("other", 1, type="image", fileId=OTHER_FILE["id"])
+
+    room.replace(2, stored_scene(other))
+
+    # The slot's list keeps both. A scene names the ones its elements do.
+    assert browser.take()[0]["files"] == [OTHER_FILE]
+    assert list(room.files) == [FILE["id"], OTHER_FILE["id"]]
+    room.replace(3, stored_scene())
+    assert browser.take()[0]["files"] == []
+
+
+def test_a_file_named_and_not_yet_written_outlasts_a_replacement(room: Room) -> None:
+    changes: list[str] = []
+    room.on_change = lambda: changes.append("change")
+    browser = Browser(room)
+    browser.name_files(FILE)
+    changes.clear()
+
+    room.replace(2, stored_scene())
+
+    # Still to be written, and the saver is told so.
+    assert room.dirty
+    assert changes == ["change"]
+    taken = room.snapshot()
+    assert (taken.epoch, taken.files) == (2, [FILE])
+    assert not room.dirty
+
+
+def test_a_replacement_of_a_clean_room_asks_for_no_write(room: Room) -> None:
+    changes: list[str] = []
+    room.on_change = lambda: changes.append("change")
+
+    room.replace(2, stored_scene(element("z", 1)))
+
+    assert changes == []
+    assert not room.unsettled
+
+
+def test_the_size_limit_counts_the_scene_that_was_put_in_place() -> None:
+    small = element("a", 1)
+    limit = len(encode(small)) + 10
+    room = Room(3, "Workspace 3", 1, [], max_scene_bytes=limit)
+    browser = Browser(room)
+    browser.draw(small)
+    assert room.size == len(encode(small))
+
+    # A restored scene may be larger than the limit, which may have been
+    # lowered since. It is taken, and the count is of what the room holds now.
+    large = [element(f"z{number}", 1, text="x" * 20) for number in range(4)]
+    room.replace(2, stored_scene(*large))
+
+    assert room.size == sum(len(encode(each)) for each in large) > limit
+    browser.take()
+    browser.draw(element("more", 1), epoch=2)
+    assert browser.take()[0]["error"] == "scene_too_large"
+    # Making it smaller is always allowed.
+    browser.draw(element("z0", 2), epoch=2)
+    assert browser.take() == []
+    assert room.elements["z0"] == element("z0", 2)
+    assert room.size == sum(len(encode(each)) for each in room.elements.values())
+
+
+def test_a_replacement_forgets_who_edited_the_scene_that_went(room: Room) -> None:
+    browser = Browser(room, "Guest1")
+    browser.draw(element("a", 1))
+    assert room.snapshot().editor_label == "Guest1"
+
+    room.replace(2, stored_scene())
+
+    # The row of the restore has its own label. The next flush is by whoever
+    # edits next.
+    assert room.editor_label is None
+
+
+@pytest.mark.parametrize(
+    ("text", "document", "identifiers"),
+    [
+        (
+            '{"type":"excalidraw","elements":[{"id":"a","version":2,"versionNonce":5}]}',
+            {"type": "excalidraw", "elements": []},
+            ["a"],
+        ),
+        # What is not an element is left out, and a missing version is the editor's default.
+        ('{"elements":[1,null,{"id":""},{"id":"b"},"x"]}', {"elements": []}, ["b"]),
+        ('{"appState":{}}', {"appState": {}}, []),
+        ('{"elements":{"id":"a"}}', {"elements": []}, []),
+        ("[]", {}, []),
+        ("null", {}, []),
+    ],
+)
+def test_a_stored_scene_is_read_as_a_document_and_its_elements(
+    text: str, document: dict[str, Any], identifiers: list[str]
+) -> None:
+    parsed, elements = parse_scene(text)
+
+    assert parsed == document
+    assert [each["id"] for each in elements] == identifiers
+    assert all(isinstance(each["version"], int) for each in elements)

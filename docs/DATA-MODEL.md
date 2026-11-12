@@ -97,11 +97,11 @@ Nothing removes a file from `assets_dir`. A backup of segl is the database file 
 - `bootstrap()` — migrations and the nine slots.
 - `get_slot(n)` / `list_slots()` / `rename_slot(n, title)`.
 - `get_head(n)` / `save_head(n, epoch, scene_json, editor_label)`.
-- `flush_head(n, epoch, scene_json, editor_label, history_seconds=, files=)` — the write behind a head flush, in one transaction. It writes the head unless the head already holds that scene, adds `files` to the slot's file list, and appends a revision under the rules below. It returns the head's `saved_at`, whether it wrote the head, the new revision number or none, and whether the newest revision now holds the head's scene.
+- `flush_head(n, epoch, scene_json, editor_label, history_seconds=, files=)` — the write behind a head flush, in one transaction. It writes the head unless the head already holds that scene, adds `files` to the slot's file list, and appends a revision under the rules below. It returns the head's `saved_at`, whether it wrote the head, the new revision number or none, and whether the newest revision now holds the head's scene. A revision for a head that this flush did not write carries the head's own label.
 - `list_files(n)` — every file the slot's scenes have named, oldest first.
 - `append_revision(n, epoch, scene_json, author_label)` — returns the new revision number, then deletes oldest rows past the history limit.
-- `replace_head(n, scene_json, editor_label)` — the write behind restore and import. Returns the new epoch, the new revision number, and the save time.
-- `list_revisions(n)` / `get_revision(n, revision)`. The list is newest first and leaves the scenes out.
+- `replace_head(n, scene_json, editor_label)` — the write behind restore and import. Returns the new epoch, the new revision number, and the save time. The caller first flushes what the slot's room holds (restore rules below).
+- `list_revisions(n)` / `get_revision(n, revision)`. The list is newest first and leaves the scenes out. `GET /api/v1/slots/{n}/revisions` and `.../revisions/{revision}` are these two.
 - `allocate_display_name(words: Sequence[str]) -> str` — the transaction in `ARCHITECTURE.md`.
 
 `save_head`, `append_revision`, and `flush_head` refuse a write whose epoch does not match the slot's epoch (`EpochMismatch`), and write nothing. Restore and import go through `replace_head`, which increments the epoch and writes the head and a revision in one transaction.
@@ -119,9 +119,10 @@ A slot's live scene is in its room, in memory, from the first connection to the 
 - When the last connection for the slot closes, the room is flushed at once. When segl stops, on SIGTERM or an interrupt, every room is flushed before the database is closed.
 - The head is not written when it already holds that scene: the JSON is compared in the transaction, and `saved_at` and `editor_label` stay as they were.
 - A flush appends a revision when the newest revision for that slot does not hold this scene and is at least `history_interval_seconds` old (default 1). The flush after the last connection left, and the one when segl stops, append it whatever its age. So the history has at most one row a second while people draw, and always the scene the slot was left with. Restore and import write their own revision (`replace_head`).
+- A restore is two writes by the slot's saver, under the lock its flushes take (`ARCHITECTURE.md`, collaboration). First a flush of the room, which appends a revision whatever the age of the newest one, unless the newest already holds that scene. Then `replace_head` with the scene of the chosen revision, which was read before the flush: the flush may be the row that drops it. So after a restore the two newest revisions are the scene that was replaced and the scene put in its place, and restoring the first of them undoes the restore.
 - A slot's first revision is the first flush that changes the head. The scene a slot starts with is not history, and a slot someone only looked at gets no row.
 - At most `history_limit` revisions per slot are kept (default 50). The 51st drops the oldest.
-- `editor_label`, on the head and on the revision, is the display name the connection had when it sent the newest change in that flush, and `System` for a connection without a label.
+- `editor_label`, on the head and on the revision, is the display name the connection had when it sent the newest change in that flush, and `System` for a connection without a label. A revision added for a head that an earlier flush wrote, as after a restart, carries that head's label. The revision a restore writes, and the head with it, carry the display name the request gave, or `System`.
 - A write that fails is logged with the slot's number and tried again after five seconds. The room stays dirty, and nobody is told `saved` meanwhile. A write that fails while segl is stopping is not tried again.
 - After a flush, each connection whose numbered message it held is sent `saved` (`API.md`, WebSocket).
 

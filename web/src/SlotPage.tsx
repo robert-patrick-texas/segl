@@ -17,7 +17,14 @@
  * shared live with everyone else on the slot.
  */
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
-import { fetchScene, fetchSlots, renameSlot, type SlotScene } from './api.ts';
+import {
+	fetchRevisions,
+	fetchScene,
+	fetchSlots,
+	renameSlot,
+	restoreRevision,
+	type SlotScene
+} from './api.ts';
 import { SeglBar } from './bar/SeglBar.tsx';
 import type { FileRef } from './collab/files.ts';
 import { readEditToken } from './collab/identity.ts';
@@ -97,6 +104,22 @@ export function SlotPage({ config, slot, displayName }: SlotPageProps) {
 		[config, slot, setTitle]
 	);
 
+	const loadHistory = useCallback(
+		(signal: AbortSignal) => fetchRevisions(config, slot, signal),
+		[config, slot]
+	);
+
+	// The canvas is not touched here. The server sends the restored scene to
+	// every browser on the slot, this one among them, over the socket.
+	const name = displayName.name;
+	const restore = useCallback(
+		async (revision: number) => {
+			const token = readEditToken(browserStorage(), storageKey(config, 'editToken'));
+			await restoreRevision(config, slot, revision, name, token);
+		},
+		[config, slot, name]
+	);
+
 	const title = titles.get(slot);
 	useEffect(() => {
 		document.title = title ? `${title} · segl` : 'segl';
@@ -116,6 +139,9 @@ export function SlotPage({ config, slot, displayName }: SlotPageProps) {
 				self={collab.state.connectionId}
 				canEdit={!viewOnly}
 				onRetitle={retitle}
+				epoch={collab.state.epoch}
+				onLoadHistory={loadHistory}
+				onRestore={restore}
 			/>
 			<main className="segl__canvas">
 				{scene !== null && (

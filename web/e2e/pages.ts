@@ -63,6 +63,11 @@ export const SLOTS = {
 	/** The canvas tools, and the mount test's text. */
 	tools: 2,
 	presence: 3,
+	/**
+	 * The presence tests draw nothing, so the history tests have this canvas
+	 * to themselves. A restore replaces the whole scene of a slot.
+	 */
+	history: 3,
 	/** The title test draws nothing, so the images have the canvas to themselves. */
 	title: 4,
 	images: 4,
@@ -190,6 +195,30 @@ export async function openPeople(page: Page): Promise<Locator> {
 	const control = page.getByTestId('presence');
 	if ((await control.getByRole('list').count()) === 0) await control.getByRole('button').click();
 	return control.getByRole('listitem');
+}
+
+/** The History control in the segl bar. */
+export function historyControl(page: Page): Locator {
+	return page.getByTestId('history');
+}
+
+/**
+ * Open the slot's history, wait for the server's list, and return its rows,
+ * newest first. Each has the revision's number in `data-revision`.
+ */
+export async function openHistory(page: Page): Promise<Locator> {
+	const control = historyControl(page);
+	const panel = control.getByRole('group', { name: 'History of this slot' });
+	if ((await panel.count()) === 0) await control.getByRole('button', { name: 'History' }).click();
+	await expect(panel).toHaveAttribute('data-state', 'ready');
+	return panel.getByRole('listitem');
+}
+
+/** Restore one row of the open history: the press, and the press that confirms it. */
+export async function restoreRow(row: Locator): Promise<void> {
+	await row.getByRole('button', { name: /^Restore the version of / }).click();
+	await expect(row).toContainText('Replace the canvas for everyone?');
+	await row.getByRole('button', { name: 'Restore it' }).click();
 }
 
 export interface SceneElement {

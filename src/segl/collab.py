@@ -15,7 +15,8 @@
 """The collaboration WebSocket, ``/collab?slot=N`` (docs/API.md, "WebSocket").
 
 ``Rooms`` holds the nine rooms and loads each from its head the first time it
-is asked for, with the ``Saver`` that writes it back. ``serve`` runs one
+is asked for, with the ``Saver`` that writes it back. It is also where the
+HTTP routes reach a room: a title change, and a restore. ``serve`` runs one
 connection: it waits for ``hello``, joins the room, and then passes each
 message to ``Room.receive`` until the browser goes.
 
@@ -38,7 +39,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from segl.assets import AssetStore
 from segl.config import Settings
 from segl.origin import refuse_websocket
-from segl.repository import SLOT_NUMBERS, Repository, Slot
+from segl.repository import SLOT_NUMBERS, Replacement, Repository, Slot
 from segl.room import Connection, Room, encode, may_edit, parse_files, parse_hello
 from segl.saver import Saver
 
@@ -72,7 +73,7 @@ class Rooms:
         self._repository = repository
         self._settings = settings
         self._rooms: dict[int, Room] = {}
-        self._savers: list[Saver] = []
+        self._savers: dict[int, Saver] = {}
         self._locks = {number: asyncio.Lock() for number in SLOT_NUMBERS}
 
     async def room(self, slot: int) -> Room:
@@ -83,20 +84,18 @@ class Rooms:
                 # The repository blocks, so it is called from a worker thread.
                 room, saved_at = await run_in_threadpool(self._load, slot)
                 self._rooms[slot] = room
-                self._savers.append(
-                    Saver(
-                        room,
-                        self._repository,
-                        head_flush_seconds=self._settings.head_flush_seconds,
-                        history_interval_seconds=self._settings.history_interval_seconds,
-                        saved_at=saved_at,
-                    )
+                self._savers[slot] = Saver(
+                    room,
+                    self._repository,
+                    head_flush_seconds=self._settings.head_flush_seconds,
+                    history_interval_seconds=self._settings.history_interval_seconds,
+                    saved_at=saved_at,
                 )
             return room
 
     async def close(self) -> None:
         """Write every room's unwritten scene. segl is stopping."""
-        for saver in self._savers:
+        for saver in self._savers.values():
             await saver.close()
 
     async def retitle(self, slot: int, title: str) -> Slot:
@@ -111,6 +110,27 @@ class Rooms:
             if room is not None:
                 room.retitle(renamed.title)
             return renamed
+
+    async def restore(self, slot: int, revision: int, editor_label: str) -> Replacement:
+        """Put one of a slot's revisions in place of its scene, at a new epoch.
+
+        The scene that is replaced is written first, with a history row, so it
+        can be restored in its turn. Every connection on the slot is then sent
+        the restored scene (docs/ARCHITECTURE.md, collaboration).
+
+        Raises:
+            RevisionNotFound: When the slot has no such revision.
+        """
+        # A slot nobody has opened since segl started has a room made for it:
+        # one path, whoever is or is not connected.
+        await self.room(slot)
+        # Read before anything is written. Recording the scene that is going
+        # may be the row that drops the oldest one, which may be this one.
+        found = await run_in_threadpool(self._repository.get_revision, slot, revision)
+        work = asyncio.ensure_future(self._savers[slot].replace(found.scene_json, editor_label))
+        # Shielded: a request that is cancelled while the database is being
+        # written must not leave the room on the old epoch.
+        return await asyncio.shield(work)
 
     def _load(self, slot: int) -> tuple[Room, str]:
         """Return the room of a slot as it is stored, and when its head was written."""

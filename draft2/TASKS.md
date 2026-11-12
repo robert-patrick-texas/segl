@@ -218,12 +218,14 @@ Acceptance: T-005, T-006, T-007, and a unit test that the 51st revision drops th
 
 ## T08 — History panel and restore
 
-- Status: pending
+- Status: done
 - Requires: T07
 - Requirements: S-005
 - Read: `docs/API.md` restore routes, epoch rules in `docs/ARCHITECTURE.md`
 
 Add the revision list and restore control in the bar. Restore is view-only blocked when a token is set. Connected clients follow the new epoch.
+
+The three routes are the revision list, one revision, and restore. A restore first keeps the scene it replaces as a revision, so it can be undone, and takes `displayName` for the name on its own revision (D2-030). The slot's saver does both writes under the lock its flushes take. The History control marks a row a restore wrote from its epoch, reads the list when it is opened and when the epoch moves, and restores in two presses. T-011 runs in `web/e2e/history.spec.ts` on slot 3 and in `tests/test_history.py`, which also holds the history part of T-008 and the 51st revision. T09's import replaces a scene through the same saver method, `Saver.replace`. T10 tests the viewer's list in a browser.
 
 Acceptance: T-011. ruff, ty, and the web checks pass.
 

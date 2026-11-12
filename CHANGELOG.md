@@ -4,7 +4,7 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
-The project is specified, licensed, and public on GitHub. A Python service reads its settings, keeps nine slots in SQLite, and serves them, and a browser application shows each slot as an Excalidraw canvas under the segl bar, where each browser has a display name. People on the same slot draw together live, and what they draw, images included, is saved and survives a restart. CI and a dev container check both, including through nginx at `/board/`.
+The project is specified, licensed, and public on GitHub. A Python service reads its settings, keeps nine slots in SQLite, and serves them, and a browser application shows each slot as an Excalidraw canvas under the segl bar, where each browser has a display name. People on the same slot draw together live, and what they draw, images included, is saved and survives a restart. A slot's earlier versions are listed in the bar and can be restored. CI and a dev container check both, including through nginx at `/board/`.
 
 ### New
 
@@ -53,6 +53,10 @@ The project is specified, licensed, and public on GitHub. A Python service reads
 - The elements of one slot are limited to `max_scene_bytes` together. An edit that would go over is refused with `scene_too_large`.
 - segl makes `assets_dir` when it starts, and stops with exit status 1 when it cannot write there. A backup is the database file and that folder together.
 - Browser tests for all of it: `saving.spec.ts`, `images.spec.ts`, and `durability.spec.ts`, which kills a segl of its own with SIGKILL and starts it again (T-005, T-006, T-007).
+- History (S-005, D2-030). `GET /api/v1/slots/{n}/revisions` lists a slot's revisions, newest first, and `GET /api/v1/slots/{n}/revisions/{revision}` returns one with its scene and its files. Neither needs the edit token.
+- Restore. `POST /api/v1/slots/{n}/restore` with `{ "revision", "displayName" }` puts a revision's scene in place of the slot's, at the next epoch, and every browser on the slot is sent it. The scene that was replaced is kept as a revision first, so a restore can be undone by restoring that one. It needs the edit token when one is set. New error codes: `revision_not_found` (404) and `invalid_revision` (422).
+- The History control in the bar lists the revisions with the time and the display name of each, marks the ones a restore wrote, and restores one in two presses. A browser without the edit token sees the list without the restore buttons. The list stays inside the page on a narrow screen.
+- Tests for it: `tests/test_history.py`, more of `tests/test_saver.py` and `tests/test_room.py`, and `web/e2e/history.spec.ts` (T-011, and the history part of T-008).
 
 ### Changed
 
@@ -71,5 +75,7 @@ The project is specified, licensed, and public on GitHub. A Python service reads
 - `GET` and `PATCH` of `/api/v1/slots/{n}` are one route, so a `405` there names both in `Allow`.
 - `GET /api/v1/slots/{n}/scene` returns the head as of the last flush, with the deleted elements and the files its images name. Before, the head never changed after startup.
 - The `elements` message takes an optional `seq`, and may be an empty list. `scene` carries the slot's files.
+- A history row for a head that an earlier flush wrote, as after a restart, carries that head's label and not `System`.
+- `Room.restore`, which took back a snapshot that was not written, is `Room.take_back`. A restore is now something else.
 - The bar's connection state has five values: connecting, live, saving, saved, and disconnected. The browser tests wait for "in the room", which is any of the middle three, where they used to wait for `Live`.
 - The license header moved from the agent rules to `CONTRIBUTING.md`. The rule to comment out superseded code was removed.

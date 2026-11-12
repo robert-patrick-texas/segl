@@ -15,14 +15,16 @@
 /**
  * The segl bar. It sits above the canvas, outside it, and holds the slot
  * buttons, the shared title (S-003), who is on the slot (S-010), the state of
- * the connection (S-013), this browser's display name (S-009), and the notice
- * that the workspace is shared (S-016).
+ * the connection (S-013), the slot's history (S-005), this browser's display
+ * name (S-009), and the notice that the workspace is shared (S-016).
  */
 import { NavLink } from 'react-router';
 import type { Participant } from '../collab/protocol.ts';
 import type { ConnectionStatus } from '../collab/session.ts';
+import type { RevisionInfo } from '../history.ts';
 import { SLOT_NUMBERS } from '../slots.ts';
 import './bar.css';
+import { HistoryControl } from './HistoryControl.tsx';
 import { NameControl } from './NameControl.tsx';
 import { sharedNotice } from './notice.ts';
 import { PresenceControl } from './PresenceControl.tsx';
@@ -49,6 +51,12 @@ export interface SeglBarProps {
 	canEdit: boolean;
 	/** Store a new title for this slot on the server. */
 	onRetitle: (title: string) => Promise<void>;
+	/** The epoch of the scene on the canvas, or null until the server has sent it. */
+	epoch: number | null;
+	/** Read this slot's revisions from the server, newest first. */
+	onLoadHistory: (signal: AbortSignal) => Promise<RevisionInfo[]>;
+	/** Put one of this slot's revisions in place of its scene, for everyone. */
+	onRestore: (revision: number) => Promise<void>;
 }
 
 export function SeglBar({
@@ -62,8 +70,13 @@ export function SeglBar({
 	participants,
 	self,
 	canEdit,
-	onRetitle
+	onRetitle,
+	epoch,
+	onLoadHistory,
+	onRestore
 }: SeglBarProps) {
+	// In the slot's room: a restore reaches this canvas over the socket.
+	const connected = status === 'live' || status === 'saving' || status === 'saved';
 	return (
 		<header className="segl-bar">
 			<span className="segl-bar__brand">segl</span>
@@ -94,6 +107,15 @@ export function SeglBar({
 			<span className="segl-bar__status" data-state={status} role="status">
 				{statusLabel(status)}
 			</span>
+			{/* Keyed by the slot too: an open list is of the slot it was opened on. */}
+			<HistoryControl
+				key={`history-${slot}`}
+				epoch={epoch}
+				canRestore={canEdit}
+				connected={connected}
+				onLoad={onLoadHistory}
+				onRestore={onRestore}
+			/>
 			<div className="segl-bar__you">
 				{/* The button's own label says the same to a screen reader. */}
 				<span aria-hidden="true">You:</span>

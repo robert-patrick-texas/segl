@@ -15,6 +15,7 @@
 """The segl ASGI application. Routes follow docs/API.md."""
 
 import json
+import re
 import unicodedata
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -32,8 +33,15 @@ from segl.collab import Rooms, serve
 from segl.config import Settings
 from segl.names import AllocationLimit, load_display_names, retry_after
 from segl.origin import OriginCheck
-from segl.repository import InvalidSlot, Repository, Slot
-from segl.room import encode, may_edit, named_files
+from segl.repository import (
+    SYSTEM_LABEL,
+    InvalidSlot,
+    Repository,
+    RevisionNotFound,
+    RevisionSummary,
+    Slot,
+)
+from segl.room import encode, may_edit, named_files, stored_name
 from segl.versions import app_version
 from segl.web import ROOT_PAGE, SLOT_PAGE, WebBuild, load_web_build, render_page
 
@@ -45,6 +53,15 @@ _SLOT_TEXTS = {str(number): number for number in range(1, 10)}
 MAX_TITLE_LENGTH = 80
 # The largest body of a title change. A title is at most 80 characters.
 _TITLE_BODY_BYTES = 4096
+
+# The largest body of a restore: a revision number and a display name.
+_RESTORE_BODY_BYTES = 4096
+
+# The texts that can name a revision: a whole number from 1, as the server
+# writes it. Sixteen digits is more than a slot will ever count, and fits the
+# database's integer.
+_REVISION_TEXT = re.compile(r"[1-9][0-9]{0,15}")
+MAX_REVISION = 10**16 - 1
 
 # An uploaded file is whatever a browser sent. It is served as bytes and
 # nothing else: never as a page, an image, or a script of this site, whatever
@@ -129,6 +146,40 @@ def _slot_json(slot: Slot) -> dict[str, object]:
         "epoch": slot.epoch,
         "savedAt": slot.saved_at,
     }
+
+
+def _revision_json(row: RevisionSummary) -> dict[str, object]:
+    return {
+        "revision": row.revision,
+        "epoch": row.epoch,
+        "authorLabel": row.author_label,
+        "createdAt": row.created_at,
+    }
+
+
+def _scene_json(repository: Repository, slot: int, scene_json: str) -> dict[str, object]:
+    """Return a stored scene as a response carries it, with the files its images name."""
+    document = json.loads(scene_json)
+    elements = document.get("elements") if isinstance(document, dict) else None
+    files = [
+        {"id": file.file_id, "hash": file.hash, "mimeType": file.media_type}
+        for file in repository.list_files(slot)
+    ]
+    return {
+        "scene": document,
+        # For the page to fetch. A deleted image still names its file.
+        "files": named_files(files, elements if isinstance(elements, list) else []),
+    }
+
+
+def _ascii_json(body: dict[str, object]) -> Response:
+    """Return a response that holds a scene.
+
+    Written as the socket writes a scene: ASCII, so half of a surrogate pair
+    in an element's text stays an escape. The framework's JSON response would
+    fail on it, and the slot could not be loaded.
+    """
+    return Response(encode(body), media_type="application/json")
 
 
 def _add_web_routes(app: FastAPI, build: WebBuild, edit_required: bool) -> None:
@@ -230,6 +281,14 @@ def create_app(settings: Settings, repository: Repository) -> FastAPI:
     async def invalid_slot(request: Request, exc: InvalidSlot) -> JSONResponse:
         return _error(404, "invalid_slot", "Slots are numbered 1 to 9.")
 
+    @app.exception_handler(RevisionNotFound)
+    async def revision_not_found(request: Request, exc: RevisionNotFound) -> JSONResponse:
+        return _error(
+            404,
+            "revision_not_found",
+            "The slot has no such revision. The oldest ones are dropped as new ones are kept.",
+        )
+
     @app.exception_handler(HTTPException)
     async def http_error(request: Request, exc: HTTPException) -> JSONResponse:
         # The framework's own answers, such as an unknown path (not_found) or a
@@ -284,24 +343,63 @@ def create_app(settings: Settings, repository: Repository) -> FastAPI:
     def scene(n: str) -> Response:
         number = _slot_number(n)
         head = repository.get_head(number)
-        document = json.loads(head.scene_json)
-        elements = document.get("elements") if isinstance(document, dict) else None
-        files = [
-            {"id": file.file_id, "hash": file.hash, "mimeType": file.media_type}
-            for file in repository.list_files(number)
-        ]
-        body = {
-            "scene": document,
-            "epoch": head.epoch,
-            "savedAt": head.saved_at,
-            "editorLabel": head.editor_label,
-            # The files the head's images name, for the page to fetch.
-            "files": named_files(files, elements if isinstance(elements, list) else []),
-        }
-        # Written as the socket writes a scene: ASCII, so half of a surrogate
-        # pair in an element's text stays an escape. The framework's JSON
-        # response would fail on it, and the slot could not be loaded.
-        return Response(encode(body), media_type="application/json")
+        stored = _scene_json(repository, number, head.scene_json)
+        return _ascii_json(
+            {
+                "scene": stored["scene"],
+                "epoch": head.epoch,
+                "savedAt": head.saved_at,
+                "editorLabel": head.editor_label,
+                "files": stored["files"],
+            }
+        )
+
+    @app.get("/api/v1/slots/{n}/revisions")
+    def revisions(n: str) -> dict[str, list[dict[str, object]]]:
+        # Newest first, and without the scenes: a list is read far more often
+        # than any one of its scenes.
+        rows = repository.list_revisions(_slot_number(n))
+        return {"revisions": [_revision_json(row) for row in rows]}
+
+    @app.get("/api/v1/slots/{n}/revisions/{revision}")
+    def revision(n: str, revision: str) -> Response:
+        number = _slot_number(n)
+        if _REVISION_TEXT.fullmatch(revision) is None:
+            # No revision has such a name, as no slot is named `01`.
+            raise RevisionNotFound(number, 0)
+        row = repository.get_revision(number, int(revision))
+        return _ascii_json(
+            {**_revision_json(row), **_scene_json(repository, number, row.scene_json)}
+        )
+
+    @app.post("/api/v1/slots/{n}/restore")
+    async def restore(n: str, request: Request) -> JSONResponse:
+        number = _slot_number(n)
+        if not may_edit(settings.edit_token, request.headers.get("x-segl-edit-token")):
+            return _error(403, "view_only", "Editing needs the edit token.")
+        body = await _json_object(request, _RESTORE_BODY_BYTES)
+        if isinstance(body, JSONResponse):
+            return body
+        chosen = body.get("revision")
+        # `true` is an int in Python, and is not a revision.
+        if (
+            isinstance(chosen, bool)
+            or not isinstance(chosen, int)
+            or not 1 <= chosen <= MAX_REVISION
+        ):
+            return _error(422, "invalid_revision", "A revision is a whole number, 1 or more.")
+        # Who restored, for the history row: the label the browser stores, as
+        # `hello` carries it. A request has no other name.
+        label = stored_name(body.get("displayName")) or SYSTEM_LABEL
+        # Written, then sent to the slot's room as a `scene` of the new epoch.
+        replacement = await rooms.restore(number, chosen, label)
+        return JSONResponse(
+            {
+                "revision": replacement.revision,
+                "epoch": replacement.epoch,
+                "savedAt": replacement.saved_at,
+            }
+        )
 
     @app.post("/api/v1/slots/{n}/assets")
     async def upload(n: str, request: Request) -> JSONResponse:

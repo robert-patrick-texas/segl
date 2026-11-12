@@ -75,6 +75,11 @@ export interface SessionState {
 	viewOnly: boolean | null;
 	/** The slot's title as the server last sent it. */
 	title: string | null;
+	/**
+	 * The epoch of the scene on the canvas, once the server has sent its scene.
+	 * A restore, by anyone, moves it on.
+	 */
+	epoch: number | null;
 	/** Every connection on the slot, this one included, in the order they joined. */
 	participants: readonly Participant[];
 }
@@ -84,6 +89,7 @@ export const INITIAL_STATE: SessionState = {
 	connectionId: null,
 	viewOnly: null,
 	title: null,
+	epoch: null,
 	participants: []
 };
 
@@ -458,7 +464,8 @@ export class CollabSession {
 		// list lacks is named again, and what the canvas lacks is fetched.
 		this.files.reset(files);
 		this.announce();
-		this.setState();
+		// Said only when it moved: an open history list reads it again then.
+		this.setState(this.state.epoch === this.epoch ? {} : { epoch: this.epoch });
 	}
 
 	private participants(): Participant[] {

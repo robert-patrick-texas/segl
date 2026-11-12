@@ -577,6 +577,22 @@ def test_a_clock_that_went_backwards_does_not_stop_the_history(
     assert repo.flush_head(1, 1, SECOND, "Alpha1", history_seconds=1).revision == 2
 
 
+def test_a_history_row_for_a_head_already_written_carries_the_heads_label(
+    repo: Repository, clock: Clock
+) -> None:
+    repo.flush_head(2, 1, '{"elements":[1]}', "Alpha1", history_seconds=60)
+    clock.advance(1)
+    repo.flush_head(2, 1, '{"elements":[2]}', "Bravo2", history_seconds=60)
+
+    # A flush that only records, by a caller that did not change the scene:
+    # the row is by whoever saved it.
+    flush = repo.flush_head(2, 1, '{"elements":[2]}', "System", history_seconds=0)
+
+    assert (flush.written, flush.revision) == (False, 2)
+    assert repo.get_revision(2, 2).author_label == "Bravo2"
+    assert repo.get_head(2).editor_label == "Bravo2"
+
+
 @pytest.mark.parametrize("epoch", [0, 2])
 def test_a_flush_for_another_epoch_is_refused_and_writes_nothing(
     repo: Repository, epoch: int

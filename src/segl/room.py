@@ -221,6 +221,24 @@ def _nothing() -> None:
     return None
 
 
+def parse_scene(scene_json: str) -> tuple[dict[str, Any], list[Element]]:
+    """Return a stored scene document with its element list emptied, and its elements.
+
+    The document is a head's or a revision's. What in its list is not an
+    element is left out.
+    """
+    document = json.loads(scene_json)
+    if not isinstance(document, dict):
+        document = {}
+    stored = document.get("elements")
+    if "elements" in document:
+        # Its place among the keys is kept, so that a room nobody changed
+        # is stored as the very text it came from.
+        document["elements"] = []
+    adopted = [adopt_element(value) for value in stored] if isinstance(stored, list) else []
+    return document, [element for element in adopted if element is not None]
+
+
 class Room:
     """The connections on one slot, and the scene as the server holds it.
 
@@ -282,20 +300,12 @@ class Room:
         max_scene_bytes: int | None = None,
     ) -> Room:
         """Build the room from the stored scene document of the slot's head."""
-        document = json.loads(scene_json)
-        if not isinstance(document, dict):
-            document = {}
-        stored = document.get("elements")
-        if "elements" in document:
-            # Its place among the keys is kept, so that a room nobody changed
-            # is stored as the very text it came from.
-            document["elements"] = []
-        adopted = [adopt_element(value) for value in stored] if isinstance(stored, list) else []
+        document, elements = parse_scene(scene_json)
         return cls(
             slot,
             title,
             epoch,
-            [element for element in adopted if element is not None],
+            elements,
             document=document,
             files=files,
             max_scene_bytes=max_scene_bytes,
@@ -309,7 +319,7 @@ class Room:
     def snapshot(self) -> Snapshot:
         """Return what a head flush writes now, and count the room as written.
 
-        A flush that then fails gives the snapshot to ``restore``.
+        A flush that then fails gives the snapshot to ``take_back``.
         """
         taken = Snapshot(
             epoch=self.epoch,
@@ -322,7 +332,7 @@ class Room:
         self._new_files = []
         return taken
 
-    def restore(self, snapshot: Snapshot) -> None:
+    def take_back(self, snapshot: Snapshot) -> None:
         """Take back a snapshot that was not written: the room is dirty again."""
         self.dirty = True
         self._new_files = snapshot.files + self._new_files
@@ -374,6 +384,30 @@ class Room:
         self._broadcast({"type": "presence-end", "connectionId": connection.id})
         if not self.connections:
             self.on_empty()
+
+    def replace(self, epoch: int, scene_json: str) -> None:
+        """Put a stored scene in place of the room's, at a new epoch, and tell everyone.
+
+        This is a restore or an import, and the scene is already the slot's
+        head. Every connection is sent it, and puts it in place of its own.
+        What a connection sent for the scene that went has nothing left to
+        wait for: the new epoch says so, and no ``saved`` follows.
+        """
+        document, elements = parse_scene(scene_json)
+        self.epoch = epoch
+        self.document = document
+        self.elements = {element["id"]: element for element in elements}
+        self._sizes = {identifier: len(encode(each)) for identifier, each in self.elements.items()}
+        self.size = sum(self._sizes.values())
+        self.editor_label = None
+        # A file that was named and is not yet in the slot's stored list still
+        # has to be written: its id keeps those bytes whatever the scene.
+        self.dirty = bool(self._new_files)
+        for connection in self.connections.values():
+            connection.awaiting = None
+        self._broadcast(self._scene())
+        if self.dirty:
+            self.on_change()
 
     def retitle(self, title: str) -> None:
         """Take the slot's new title, which is already stored, and tell every connection."""
