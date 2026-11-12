@@ -16,6 +16,7 @@ The project is specified, licensed, and public on GitHub. Application code has s
 - The documentation site at <https://robert-patrick-texas.github.io/segl/>: every Markdown file as a page, with an index of all pages that opens with a link to the repository. `scripts/build_docs.py` builds it with `tools/md2html`, copied from vakr. Pictures go in `images/`. A broken link, anchor, or image stops the publish (D2-024).
 - The Python project: package `segl` under `src/segl`, built with hatchling, with FastAPI and uvicorn. `uv run segl` serves `GET /api/v1/health` on `bind` (default `127.0.0.1:8000`), and `segl --version` prints the application version from `versions.toml`, a copy of which the wheel carries.
 - The checks: `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`, and `uv run ty check`. Tests hold `pyproject.toml`, `.python-version`, and md2html's inline metadata to `versions.toml`, and check every source file for the license header.
+- The release command (`scripts/release.py`, `docs/RELEASING.md`): `check --gate` covers Python, every direct dependency, and the pinned GitHub Actions. `upgrade` moves one component at a time and holds one that fails the suite. `cut` writes the version and the changelog section. `publish` runs its preflight, tags, and creates the GitHub Release.
 - CI (`.github/workflows/ci.yml`) runs those checks on pushes to `main` and on pull requests.
 - The dev container, `deploy/Containerfile`: Ubuntu 26.04 and uv, running the suite with uv's Python.
 

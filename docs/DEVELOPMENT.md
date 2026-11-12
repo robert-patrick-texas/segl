@@ -9,7 +9,7 @@ These versions were verified on the development host, Ubuntu 26.04.1 LTS on amd6
 | Tool | Verified | Used for | From |
 |---|---|---|---|
 | git | 2.53.0 | Version control. Commits are signed off with `git commit -s` (D2-022). | T00 |
-| GitHub CLI (`gh`) | 2.102.0 | CI status and GitHub Releases. Log in with the `repo` and `workflow` scopes (`gh auth status`). | T01 |
+| GitHub CLI (`gh`) | 2.102.0 | CI status, GitHub Releases, and the newest release of each pinned action (`release.py check`). Log in with the `repo` and `workflow` scopes (`gh auth status`). | T01 |
 | uv | 0.13.7 | Python and every Python command (`uv sync`, `uv run`). It installs the pinned CPython, 3.15.2, so the app never uses the system Python. | T01 |
 | python3 | 3.14.4 (system) | Only `scripts/release.py`, which needs Python 3.11 or newer and the standard library. | T00 |
 | cloc | 2.06 | The line count in release notes (`RELEASING.md`). | T00 |
@@ -45,7 +45,7 @@ uv run ruff format --check .
 uv run ty check
 ```
 
-`uv run pytest` covers `tests/` and `tools/md2html`. One test builds the wheel with `uv build` to confirm it carries `versions.toml`, so it needs the network the first time. ruff's settings are in `pyproject.toml`: 100-character lines, Markdown left alone, and `scripts/` kept to Python 3.11 syntax because the host's `python3` runs them.
+`uv run pytest` covers `tests/` and `tools/md2html`. The release script's tests use fakes for the network, `gh`, and `git push`, and real `git` in a temporary repository. One test builds the wheel with `uv build` to confirm it carries `versions.toml`, so it needs the network the first time. ruff's settings are in `pyproject.toml`: 100-character lines, Markdown left alone, and `scripts/` kept to Python 3.11 syntax because the host's `python3` runs them.
 
 The dev container runs the same suite while it builds, from the repository root:
 
