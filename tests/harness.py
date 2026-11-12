@@ -596,6 +596,14 @@ def running_mount(
         with running_nginx(tools, prefix, https_port):
             # The client checks the test certificate and the site's name, as a browser would.
             tls = ssl.create_default_context(cafile=str(certificate[0]))
+            # Held at TLS 1.2 until the `websockets` client is sound under 1.3
+            # (docs/ROADMAP.md). Its sync client reads the socket from a second
+            # thread before it has written its request, and under TLS 1.3 on a
+            # busy machine that request was sometimes lost: nginx waited a
+            # minute for it, and the test failed with a handshake that was not
+            # answered. `tests/handshake_loop.py` measures it. nginx is not
+            # held: it runs the shipped files, and the browser tests use 1.3.
+            tls.maximum_version = ssl.TLSVersion.TLSv1_2
             yield Mount(segl=segl, https_port=https_port, tls=tls, prefix=prefix)
 
 

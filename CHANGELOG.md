@@ -86,4 +86,5 @@ The project is specified, licensed, and public on GitHub. A Python service reads
 - The editor's own way to open a scene file is off: its menu's Open, Ctrl+O, and a scene file dropped on the canvas. Each put the file in one browser's canvas and not in the slot. A dropped scene file is now offered for import.
 - The History control marks the first row of an epoch `replacement`, where it said `restore`: a restore or an import wrote it, and nothing stored says which.
 - `Repository.replace_head` takes `files=`, for the files an import brings. `Room.put` puts elements and files in place of a room's scene, and `Room.replace` reads a stored scene and calls it. `Saver.put` is the import beside `Saver.replace`.
+- The test harness's client speaks TLS 1.2 to the test nginx. Under TLS 1.3 its WebSocket client sometimes lost its request on a busy machine, which failed a test through nginx about once in a thousand handshakes, and twice in CI.
 - The license header moved from the agent rules to `CONTRIBUTING.md`. The rule to comment out superseded code was removed.

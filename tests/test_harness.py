@@ -23,6 +23,7 @@ after a silent SIGKILL. Both now quote the servers' logs.
 import os
 import signal
 import socket
+import ssl
 import subprocess
 import sys
 import threading
@@ -32,6 +33,7 @@ from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+import handshake_loop
 import harness
 import pytest
 from harness import BOARD_SITE, NginxTools, log_tails, open_socket, running_mount, running_segl
@@ -180,6 +182,49 @@ def test_a_socket_through_nginx_that_is_not_answered_fails_with_all_three_logs(
         assert f"--- segl ({mount.segl.log_file}), the last " in message
         # segl saw the health check with /board stripped.
         assert "GET /api/v1/health" in message
+
+
+def test_a_mounts_client_speaks_tls_1_2_and_nginx_still_offers_1_3(
+    tools: NginxTools, certificate: tuple[Path, Path], tmp_path: Path
+) -> None:
+    # Under TLS 1.3 the WebSocket client sometimes lost its request on a busy
+    # machine (draft2/STATUS.md, T09). The limit is the test client's own:
+    # nginx runs the shipped files, and still speaks TLS 1.3 to a client that asks.
+    with running_mount(tools, certificate, tmp_path) as mount:
+        assert mount.tls.maximum_version is ssl.TLSVersion.TLSv1_2
+        with mount.socket(BOARD_SITE, "/board/collab?slot=1") as connection:
+            assert connection.socket.version() == "TLSv1.2"  # ty: ignore[missing-attribute]
+        assert mount.get(BOARD_SITE, "/board/api/v1/health").json() == {"status": "ok"}
+
+        newest = ssl.create_default_context(cafile=str(certificate[0]))
+        plain = socket.create_connection(("127.0.0.1", mount.https_port), timeout=10)
+        with newest.wrap_socket(plain, server_hostname=BOARD_SITE) as wrapped:
+            assert wrapped.version() == "TLSv1.3"
+
+
+def test_the_loop_that_measures_the_hold_counts_its_handshakes(
+    tools: NginxTools, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Without --tls13 and without load: the harness as every test uses it.
+    assert handshake_loop.main(["3"]) == 0
+
+    assert capsys.readouterr().out == "3 handshakes over TLSv1.2: 0 not answered\n"
+
+
+def test_the_loop_stops_at_the_second_lost_handshake_and_says_so(
+    tools: NginxTools, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def lost(connection: object) -> None:
+        raise AssertionError("the WebSocket handshake was not answered")
+
+    # What the harness raises for a handshake nginx never got the request of.
+    monkeypatch.setattr(handshake_loop, "say_hello", lost)
+
+    assert handshake_loop.main(["9"]) == 1
+
+    printed = capsys.readouterr().out.splitlines()
+    assert printed[0].startswith("handshake 1 was lost after ")
+    assert printed[-1] == "2 handshakes over TLSv1.2: 2 not answered"
 
 
 def test_a_refused_handshake_is_still_the_clients_own_error(tmp_path: Path) -> None:
