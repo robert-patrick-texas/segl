@@ -22,7 +22,7 @@ import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import type { Cursor } from '../collab/protocol.ts';
 import type { SceneEditor } from '../collab/session.ts';
-import { goesToImport } from '../importing.ts';
+import { dropGoesTo } from '../importing.ts';
 import './canvas.css';
 import { makeEditor } from './editor.ts';
 import { clearHandle, publishHandle } from './handle.ts';
@@ -104,16 +104,18 @@ export default function Canvas({
 	);
 
 	// On the way down to the editor, which would open a dropped scene file
-	// itself. An image, or a library of shapes, goes on to it.
+	// itself, and would place an image on a viewer's canvas. For an editor, an
+	// image or a library of shapes goes on to it.
 	const dropped = useCallback(
 		(event: DragEvent<HTMLDivElement>) => {
 			const file = event.dataTransfer.files.item(0);
-			if (file === null || !goesToImport(file)) return;
+			const goesTo = dropGoesTo(file, viewOnly);
+			if (goesTo === 'editor') return;
 			event.preventDefault();
 			event.stopPropagation();
-			onSceneFile?.(file);
+			if (goesTo === 'import' && file !== null) onSceneFile?.(file);
 		},
-		[onSceneFile]
+		[onSceneFile, viewOnly]
 	);
 
 	return (

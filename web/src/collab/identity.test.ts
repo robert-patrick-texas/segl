@@ -14,7 +14,7 @@
 
 import { expect, test } from 'vitest';
 import type { SlotStorage } from '../slots.ts';
-import { newClientId, readClientId, readEditToken } from './identity.ts';
+import { newClientId, readClientId } from './identity.ts';
 
 function memory(initial: Record<string, string> = {}): SlotStorage & { data: Map<string, string> } {
 	const data = new Map(Object.entries(initial));
@@ -76,13 +76,4 @@ test.each(['', 'has space', 'x'.repeat(65), 'né'])(
 test('a browser without storage gets an id for the page', () => {
 	expect(readClientId(blocked, KEY, () => 'made-1')).toBe('made-1');
 	expect(readClientId(null, KEY, () => 'made-2')).toBe('made-2');
-});
-
-test('the edit token is read as stored, and is empty when there is none', () => {
-	const key = 'segl:/board/:editToken';
-
-	expect(readEditToken(memory({ [key]: 'correct-horse' }), key)).toBe('correct-horse');
-	expect(readEditToken(memory(), key)).toBe('');
-	expect(readEditToken(blocked, key)).toBe('');
-	expect(readEditToken(null, key)).toBe('');
 });

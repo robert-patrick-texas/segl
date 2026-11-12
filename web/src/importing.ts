@@ -61,6 +61,25 @@ export function goesToImport(file: FileLike): boolean {
 	return type !== LIBRARY_TYPE && !name.endsWith('.excalidrawlib');
 }
 
+/** Where something dropped on the canvas goes. */
+export type DropGoesTo = 'editor' | 'import' | 'nowhere';
+
+/**
+ * Decide a drop on the canvas, before the editor is given it. `file` is the
+ * first file of the drop, or null when it carries none, as a dragged link or
+ * a shape from the library does.
+ *
+ * A scene file goes to the import whoever drops it: the Import control then
+ * tells a viewer that importing needs the edit token. Everything else is the
+ * editor's, unless this browser is view-only. The editor's own drop handler
+ * does not ask about its view mode, and would place an image, or a link, on
+ * a canvas that then shows one person a drawing nobody else has (S-008).
+ */
+export function dropGoesTo(file: FileLike | null, viewOnly: boolean): DropGoesTo {
+	if (file !== null && goesToImport(file)) return 'import';
+	return viewOnly ? 'nowhere' : 'editor';
+}
+
 /** Characters a file name does not have on one system or another, and controls. */
 const NOT_IN_A_NAME = /[<>:"/\\|?*\p{Cc}]+/gu;
 

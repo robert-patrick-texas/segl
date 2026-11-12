@@ -1,0 +1,97 @@
+{
+	"comment": "What segl takes as an edit token: 1 to 256 printable ASCII characters, space to tilde, with no space at either end (docs/DEPLOY.md). A browser sends the token in a request header, which carries nothing else whole. true: a token. false: not one. tests/test_config.py and web/src/editToken.test.ts both read this file.",
+	"cases": [
+		[
+			"a",
+			true
+		],
+		[
+			"s3cret",
+			true
+		],
+		[
+			"S3gl+e2e/Token==",
+			true
+		],
+		[
+			"correct horse battery staple",
+			true
+		],
+		[
+			"100%",
+			true
+		],
+		[
+			"#e=&?",
+			true
+		],
+		[
+			"~!\"$'()*,-.:;<>@[\\]^_`{|}",
+			true
+		],
+		[
+			"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+			true
+		],
+		[
+			"a                                                                                                                                                                                                                                                              b",
+			true
+		],
+		[
+			"",
+			false
+		],
+		[
+			" ",
+			false
+		],
+		[
+			" x",
+			false
+		],
+		[
+			"x ",
+			false
+		],
+		[
+			"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+			false
+		],
+		[
+			"a\tb",
+			false
+		],
+		[
+			"a\nb",
+			false
+		],
+		[
+			"a\rb",
+			false
+		],
+		[
+			"a\u0000b",
+			false
+		],
+		[
+			"a\u007fb",
+			false
+		],
+		[
+			"kve\u00f0ja",
+			false
+		],
+		[
+			"k\u20ac",
+			false
+		],
+		[
+			"a\u00a0b",
+			false
+		],
+		[
+			"\ud83d\udd11",
+			false
+		]
+	]
+}

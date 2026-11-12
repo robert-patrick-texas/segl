@@ -22,27 +22,45 @@ import { routerBasename, storageKey, type AppConfig } from './config.ts';
 import { SlotPage } from './SlotPage.tsx';
 import { browserStorage, FIRST_SLOT, parseSlot, readLastSlot } from './slots.ts';
 import { useDisplayName, type DisplayName } from './useDisplayName.ts';
+import { useEditToken, type EditToken } from './useEditToken.ts';
 
 function LastSlot({ config }: { config: AppConfig }) {
 	const last = readLastSlot(browserStorage(), storageKey(config, 'lastSlot'));
 	return <Navigate to={`/s/${last ?? FIRST_SLOT}`} replace />;
 }
 
-function SlotRoute({ config, displayName }: { config: AppConfig; displayName: DisplayName }) {
-	const slot = parseSlot(useParams()['slot']);
-	if (slot === null) return <Navigate to={`/s/${FIRST_SLOT}`} replace />;
-	return <SlotPage config={config} slot={slot} displayName={displayName} />;
+interface SlotRouteProps {
+	config: AppConfig;
+	displayName: DisplayName;
+	editToken: EditToken;
 }
 
-export function App({ config }: { config: AppConfig }) {
+function SlotRoute({ config, displayName, editToken }: SlotRouteProps) {
+	const slot = parseSlot(useParams()['slot']);
+	if (slot === null) return <Navigate to={`/s/${FIRST_SLOT}`} replace />;
+	return <SlotPage config={config} slot={slot} displayName={displayName} editToken={editToken} />;
+}
+
+export interface AppProps {
+	config: AppConfig;
+	/** The token of the edit link this page was opened by, or null (`editToken.ts`). */
+	linkToken: string | null;
+}
+
+export function App({ config, linkToken }: AppProps) {
 	// Here, above the routes, so that moving between slots keeps the label
 	// and never asks the server for another.
 	const displayName = useDisplayName(config);
+	// Here too: a link's token is this browser's on every slot.
+	const editToken = useEditToken(config, linkToken);
 	return (
 		<BrowserRouter basename={routerBasename(config)}>
 			<Routes>
 				<Route path="/" element={<LastSlot config={config} />} />
-				<Route path="/s/:slot" element={<SlotRoute config={config} displayName={displayName} />} />
+				<Route
+					path="/s/:slot"
+					element={<SlotRoute config={config} displayName={displayName} editToken={editToken} />}
+				/>
 				<Route path="*" element={<Navigate to={`/s/${FIRST_SLOT}`} replace />} />
 			</Routes>
 		</BrowserRouter>

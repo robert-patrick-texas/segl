@@ -26,15 +26,16 @@ import {
 	restoreRevision,
 	type SlotScene
 } from './api.ts';
+import { editingState } from './bar/notice.ts';
 import { SeglBar } from './bar/SeglBar.tsx';
 import type { FileRef } from './collab/files.ts';
-import { readEditToken } from './collab/identity.ts';
 import { useCollab } from './collab/useCollab.ts';
 import { storageKey, type AppConfig } from './config.ts';
 import { exportName } from './importing.ts';
 import { loadedScene, type Load } from './load.ts';
 import { browserStorage, writeLastSlot } from './slots.ts';
 import type { DisplayName } from './useDisplayName.ts';
+import type { EditToken } from './useEditToken.ts';
 
 // Its own chunk: the bar paints before the editor has arrived.
 const Canvas = lazy(() => import('./canvas/Canvas.tsx'));
@@ -47,9 +48,12 @@ export interface SlotPageProps {
 	slot: number;
 	/** This browser's display name. It belongs to the browser, not to a slot. */
 	displayName: DisplayName;
+	/** This browser's edit token. It belongs to the browser too. */
+	editToken: EditToken;
 }
 
-export function SlotPage({ config, slot, displayName }: SlotPageProps) {
+export function SlotPage({ config, slot, displayName, editToken }: SlotPageProps) {
+	const token = editToken.token;
 	const [titles, setTitles] = useState(NO_TITLES);
 	const [load, setLoad] = useState<Load<SlotScene>>({ state: 'loading' });
 	const [attempt, setAttempt] = useState(0);
@@ -60,7 +64,9 @@ export function SlotPage({ config, slot, displayName }: SlotPageProps) {
 		slot,
 		epoch: scene === null ? null : scene.epoch,
 		files: scene === null ? NO_FILES : scene.files,
-		name: displayName.name
+		name: displayName.name,
+		editToken: token,
+		onGate: editToken.answered
 	});
 	// Until the server has said, a browser may edit unless a token is needed.
 	const viewOnly = collab.state.viewOnly ?? config.editRequired;
@@ -99,11 +105,10 @@ export function SlotPage({ config, slot, displayName }: SlotPageProps) {
 
 	const retitle = useCallback(
 		async (title: string) => {
-			const token = readEditToken(browserStorage(), storageKey(config, 'editToken'));
 			const stored = await renameSlot(config, slot, title, token);
 			setTitle(stored.number, stored.title);
 		},
-		[config, slot, setTitle]
+		[config, slot, token, setTitle]
 	);
 
 	const loadHistory = useCallback(
@@ -116,10 +121,9 @@ export function SlotPage({ config, slot, displayName }: SlotPageProps) {
 	const name = displayName.name;
 	const restore = useCallback(
 		async (revision: number) => {
-			const token = readEditToken(browserStorage(), storageKey(config, 'editToken'));
 			await restoreRevision(config, slot, revision, name, token);
 		},
-		[config, slot, name]
+		[config, slot, name, token]
 	);
 
 	// The exported file that waits for the second press, with the slot it was
@@ -135,10 +139,9 @@ export function SlotPage({ config, slot, displayName }: SlotPageProps) {
 	// over the socket.
 	const importFrom = useCallback(
 		async (file: File) => {
-			const token = readEditToken(browserStorage(), storageKey(config, 'editToken'));
 			await importScene(config, slot, file, name, token);
 		},
-		[config, slot, name]
+		[config, slot, name, token]
 	);
 
 	const title = titles.get(slot);
@@ -151,7 +154,11 @@ export function SlotPage({ config, slot, displayName }: SlotPageProps) {
 			<SeglBar
 				slot={slot}
 				titles={titles}
-				editRequired={config.editRequired}
+				editing={editingState({
+					editRequired: config.editRequired,
+					viewOnly: collab.state.viewOnly,
+					hasToken: token !== ''
+				})}
 				version={__SEGL_VERSION__}
 				displayName={displayName.name}
 				onRename={displayName.rename}

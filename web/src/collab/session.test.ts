@@ -172,6 +172,8 @@ interface Harness {
 	transport: FakeTransport;
 	sockets: FakeSocket[];
 	states: SessionState[];
+	/** What the session reported at each `welcome`: the token said, and the answer. */
+	gates: [string, boolean][];
 	hello: Hello;
 	/** The newest socket. */
 	socket(): FakeSocket;
@@ -183,6 +185,7 @@ function start(epoch = 1, files: FileRef[] = []): Harness {
 	const transport = new FakeTransport();
 	const sockets: FakeSocket[] = [];
 	const states: SessionState[] = [];
+	const gates: [string, boolean][] = [];
 	const hello: Hello = { clientId: 'client-1', displayName: 'Guest1', editToken: '' };
 	const session = new CollabSession({
 		url: URL,
@@ -192,6 +195,7 @@ function start(epoch = 1, files: FileRef[] = []): Harness {
 		files,
 		hello: () => ({ ...hello }),
 		onState: (state) => states.push(state),
+		onGate: (editToken, viewOnly) => gates.push([editToken, viewOnly]),
 		createSocket: (url) => {
 			const socket = new FakeSocket(url);
 			sockets.push(socket);
@@ -205,6 +209,7 @@ function start(epoch = 1, files: FileRef[] = []): Harness {
 		transport,
 		sockets,
 		states,
+		gates,
 		hello,
 		socket: () => sockets[sockets.length - 1]!,
 		state: () => states[states.length - 1] ?? INITIAL_STATE
@@ -875,6 +880,114 @@ describe("this browser's name", () => {
 
 		expect(harness.sockets).toHaveLength(1);
 		expect(harness.state().status).toBe('disconnected');
+	});
+});
+
+describe('the edit gate', () => {
+	test('welcome is the answer for the token its hello carried', () => {
+		const harness = start();
+		harness.hello.editToken = 'correct-horse';
+		harness.socket().open();
+		expect(harness.gates).toEqual([]);
+
+		welcome(harness.socket(), { viewOnly: false });
+
+		expect(harness.gates).toEqual([['correct-horse', false]]);
+	});
+
+	test('a browser without a token is answered too', () => {
+		const harness = start();
+
+		goLive(harness, [], true);
+
+		expect(harness.gates).toEqual([['', true]]);
+	});
+
+	test('the answer names the token that was sent, not the one of the moment it arrives', () => {
+		const harness = start();
+		harness.hello.editToken = 'from-a-link';
+		harness.socket().open();
+		// The page moved on to another token, and has not said hello with it.
+		harness.hello.editToken = 'stored';
+
+		welcome(harness.socket(), { viewOnly: true });
+
+		expect(harness.gates).toEqual([['from-a-link', true]]);
+	});
+
+	test('after a new hello, the state still holds the last answer until welcome', () => {
+		// Which is why the page is told the token with each answer.
+		const harness = start();
+		harness.hello.editToken = 'stored';
+		goLive(harness);
+		harness.hello.editToken = 'from-a-link';
+
+		harness.session.reconnect();
+		harness.socket().open();
+
+		expect(harness.state().viewOnly).toBe(false);
+		expect(harness.gates).toEqual([['stored', false]]);
+
+		welcome(harness.socket(), { viewOnly: true });
+
+		expect(harness.state().viewOnly).toBe(true);
+		expect(harness.gates).toEqual([
+			['stored', false],
+			['from-a-link', true]
+		]);
+	});
+
+	test('a welcome on a socket that was let go is no answer', () => {
+		const harness = start();
+		harness.hello.editToken = 'stored';
+		const first = harness.socket();
+		first.open();
+		harness.hello.editToken = 'from-a-link';
+		harness.session.reconnect();
+
+		welcome(first, { viewOnly: false });
+
+		expect(harness.gates).toEqual([]);
+		harness.socket().open();
+		welcome(harness.socket(), { viewOnly: true });
+		expect(harness.gates).toEqual([['from-a-link', true]]);
+	});
+
+	test('every welcome is an answer: after a drop the server is asked again', () => {
+		const harness = start();
+		harness.hello.editToken = 'correct-horse';
+		goLive(harness).drop();
+		vi.advanceTimersByTime(RETRY_DELAYS_MS[0]!);
+
+		// The token was changed on the server meanwhile.
+		goLive(harness, [], true);
+
+		expect(harness.gates).toEqual([
+			['correct-horse', false],
+			['correct-horse', true]
+		]);
+	});
+
+	test('a session nobody listens to for the answer works as before', () => {
+		const editor = new FakeEditor();
+		const sockets: FakeSocket[] = [];
+		const session = new CollabSession({
+			url: URL,
+			epoch: 1,
+			editor,
+			transport: new FakeTransport(),
+			hello: () => ({ clientId: 'client-1', displayName: null, editToken: '' }),
+			onState: () => undefined,
+			createSocket: (url) => {
+				const socket = new FakeSocket(url);
+				sockets.push(socket);
+				return socket;
+			}
+		});
+		session.start();
+		sockets[0]!.open();
+
+		expect(() => welcome(sockets[0]!)).not.toThrow();
 	});
 });
 

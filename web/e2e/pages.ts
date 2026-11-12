@@ -44,6 +44,11 @@ export function nameKey(baseURL: string | undefined): string {
 	return `segl:${mountOf(baseURL).basePath}:displayName`;
 }
 
+/** The `localStorage` key of this mount's edit token. */
+export function tokenKey(baseURL: string | undefined): string {
+	return `segl:${mountOf(baseURL).basePath}:editToken`;
+}
+
 /** The address of a slot's collaboration socket under this mount. */
 export function collabUrl(baseURL: string | undefined, slot: number): string {
 	const url = new URL(`collab?slot=${slot}`, baseURL);
@@ -86,18 +91,24 @@ export const SLOTS = {
 	empty: 9
 } as const;
 
-async function storeName(context: BrowserContext, key: string, name: string): Promise<void> {
+/** Put a value in a context's `localStorage` before any of its pages loads. */
+async function store(context: BrowserContext, key: string, value: string): Promise<void> {
 	await context.addInitScript(
-		([storageKey, value]) => {
+		([storageKey, stored]) => {
 			try {
 				// Only when absent, so a rename survives a reload.
-				if (localStorage.getItem(storageKey) === null) localStorage.setItem(storageKey, value);
+				if (localStorage.getItem(storageKey) === null) localStorage.setItem(storageKey, stored);
 			} catch {
 				// A page without storage, such as about:blank.
 			}
 		},
-		[key, name] as const
+		[key, value] as const
 	);
+}
+
+export interface PersonOptions {
+	/** An edit token this browser already has stored, as after an edit link. */
+	editToken?: string;
 }
 
 interface Fixtures {
@@ -107,7 +118,7 @@ interface Fixtures {
 	 * display name already stored. "Two browsers" in docs/TEST-PLAN.md is two
 	 * of these against the one server.
 	 */
-	person: (name: string) => Promise<Page>;
+	person: (name: string, options?: PersonOptions) => Promise<Page>;
 }
 
 /**
@@ -121,15 +132,18 @@ interface Fixtures {
 export const test = base.extend<Fixtures>({
 	storedName: [STORED_NAME, { option: true }],
 	context: async ({ context, baseURL, storedName }, use) => {
-		if (storedName !== null) await storeName(context, nameKey(baseURL), storedName);
+		if (storedName !== null) await store(context, nameKey(baseURL), storedName);
 		await use(context);
 	},
 	person: async ({ browser, baseURL }, use) => {
 		const contexts: BrowserContext[] = [];
-		await use(async (name) => {
+		await use(async (name, options = {}) => {
 			const context = await browser.newContext();
 			contexts.push(context);
-			await storeName(context, nameKey(baseURL), name);
+			await store(context, nameKey(baseURL), name);
+			if (options.editToken !== undefined) {
+				await store(context, tokenKey(baseURL), options.editToken);
+			}
 			return context.newPage();
 		});
 		for (const context of contexts) await context.close();

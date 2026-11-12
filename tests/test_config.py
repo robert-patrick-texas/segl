@@ -14,6 +14,7 @@
 
 """Settings: every key in docs/DEPLOY.md, the two sets of defaults, and refusals."""
 
+import json
 import re
 import tomllib
 from dataclasses import replace
@@ -30,6 +31,7 @@ from segl.config import (
     DEFAULTS,
     ConfigError,
     Settings,
+    is_edit_token,
     load_settings,
     parse_bind,
     parse_trusted_proxies,
@@ -235,6 +237,77 @@ def test_a_bad_edit_token_is_not_echoed(tmp_path: Path) -> None:
         load_settings(write(tmp_path, "edit_token = 12345678\n"))
 
     assert "12345678" not in str(refused.value)
+
+
+# What is, and is not, an edit token. web/src/editToken.test.ts reads the same file.
+TOKEN_CASES: list[tuple[str, bool]] = [
+    (text, usable)
+    for text, usable in json.loads(
+        (ROOT / "tests" / "edit_token_cases.json").read_text(encoding="utf-8")
+    )["cases"]
+]
+
+
+def toml_string(text: str) -> str:
+    """Return ``text`` as a TOML basic string, with every awkward character escaped."""
+    plain = set(range(0x20, 0x7F)) - {ord('"'), ord("\\")}
+    return '"' + "".join(c if ord(c) in plain else f"\\U{ord(c):08x}" for c in text) + '"'
+
+
+# The whole message. Nothing of the value is in it: it may be most of a real token.
+NOT_A_TOKEN = (
+    "edit_token must be 1 to 256 printable ASCII characters, with no space at either end, "
+    'or "" for none: a browser sends it in a request header'
+)
+
+
+def test_the_token_table_has_both_kinds() -> None:
+    assert sum(usable for _, usable in TOKEN_CASES) >= 5
+    assert sum(not usable for _, usable in TOKEN_CASES) >= 5
+
+
+@pytest.mark.parametrize(("text", "usable"), TOKEN_CASES)
+def test_an_edit_token_is_what_a_request_header_carries_whole(text: str, usable: bool) -> None:
+    assert is_edit_token(text) is usable
+
+
+@pytest.mark.parametrize("text", [text for text, usable in TOKEN_CASES if usable])
+def test_a_usable_edit_token_is_kept_as_written(tmp_path: Path, text: str) -> None:
+    settings = load_settings(write(tmp_path, f"edit_token = {toml_string(text)}\n"))
+
+    assert settings.edit_token == text
+    assert settings.edit_required
+
+
+@pytest.mark.parametrize("text", [text for text, usable in TOKEN_CASES if not usable and text])
+def test_a_token_no_browser_could_send_stops_segl_and_is_not_echoed(
+    tmp_path: Path, text: str
+) -> None:
+    # Such a token would let a browser draw, over the socket, and fail at every
+    # title, restore, import, and upload, which carry it in a header.
+    with pytest.raises(ConfigError) as refused:
+        load_settings(write(tmp_path, f"edit_token = {toml_string(text)}\n"))
+
+    assert str(refused.value) == NOT_A_TOKEN
+
+
+def test_an_empty_edit_token_is_none(tmp_path: Path) -> None:
+    settings = load_settings(write(tmp_path, 'edit_token = ""\n'))
+
+    assert settings.edit_token == ""
+    assert not settings.edit_required
+
+
+def test_the_command_refuses_a_token_no_browser_could_send(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = write(tmp_path, 'edit_token = "lykilor\u00f0 "\n')
+
+    assert cli.main(["--config", str(config)]) == 2
+
+    printed = capsys.readouterr().err
+    assert NOT_A_TOKEN in printed
+    assert "lykilor" not in printed
 
 
 def test_invalid_toml_is_a_config_error(tmp_path: Path) -> None:

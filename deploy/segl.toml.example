@@ -13,7 +13,10 @@ trusted_proxies = ["127.0.0.1", "::1"]
 
 # Empty: anyone who can open a slot can edit it. Set a value and only browsers
 # that hold it can edit; everyone else still watches. When you set one, make
-# this file mode 0640, owner root, group segl.
+# this file mode 0640, owner root, group segl. A token is 1 to 256 printable
+# ASCII characters with no space at either end: `openssl rand -base64 24`
+# writes a good one. Give it to an editor as a link to a slot that ends in
+# #e=<token> (docs/DEPLOY.md).
 edit_token = ""
 
 # Where segl keeps its data. The segl user needs to write the first two.

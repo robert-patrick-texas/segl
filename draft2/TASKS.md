@@ -251,6 +251,8 @@ Acceptance: T-009. ruff, ty, and the web checks pass.
 
 Store `#e=` into the `basePath` `localStorage` key and strip the fragment. Put the editor into view mode when this client must not edit, and say so in the bar. Send the token only as the HTTP header and inside WebSocket messages.
 
+The page takes the fragment out of the address at once and stores the token only once the server has taken it, so a link with a wrong token cannot displace a stored one (D2-032). A token is what a request header carries whole, and segl does not start with another. The notice in the bar has a sentence for each state of the gate. A viewer's canvas takes no drop, which the editor's view mode does not cover. T-008 runs in `web/e2e/token.spec.ts`, against a second test server with a token, directly and through nginx at both mounts. T-012 is `tests/test_sweep.py`, a walk over every route in process and through nginx, and `web/e2e/origin.spec.ts`, a page of another site in a real browser.
+
 Acceptance: T-008 in the browser, including the fragment link. T-012 across the routes that now exist, including a WebSocket handshake and the Origin refusals. ruff, ty, and the web checks pass.
 
 ## T11 — P0 browser matrix in the dev container

@@ -28,7 +28,7 @@ import './bar.css';
 import { HistoryControl } from './HistoryControl.tsx';
 import { ImportControl } from './ImportControl.tsx';
 import { NameControl } from './NameControl.tsx';
-import { sharedNotice } from './notice.ts';
+import { sharedNotice, type Editing } from './notice.ts';
 import { PresenceControl } from './PresenceControl.tsx';
 import { statusLabel } from './status.ts';
 import { TitleControl } from './TitleControl.tsx';
@@ -37,7 +37,8 @@ export interface SeglBarProps {
 	slot: number;
 	/** Titles by slot number. Empty until the slot list has loaded. */
 	titles: ReadonlyMap<number, string>;
-	editRequired: boolean;
+	/** Whether this browser may edit, and why not when it may not (S-016). */
+	editing: Editing;
 	version: string;
 	/** This browser's display name, or null until the server has assigned one. */
 	displayName: string | null;
@@ -70,7 +71,7 @@ export interface SeglBarProps {
 export function SeglBar({
 	slot,
 	titles,
-	editRequired,
+	editing,
 	version,
 	displayName,
 	onRename,
@@ -88,6 +89,7 @@ export function SeglBar({
 }: SeglBarProps) {
 	// In the slot's room: a restore or an import reaches this canvas over the socket.
 	const connected = status === 'live' || status === 'saving' || status === 'saved';
+	const notice = sharedNotice(editing);
 	return (
 		<header className="segl-bar">
 			<span className="segl-bar__brand">segl</span>
@@ -140,8 +142,9 @@ export function SeglBar({
 				<span aria-hidden="true">You:</span>
 				<NameControl name={displayName} onRename={onRename} />
 			</div>
-			<p className="segl-bar__notice" role="note">
-				{sharedNotice(editRequired)}
+			<p className="segl-bar__notice" role="note" data-editing={editing}>
+				{notice.shared}
+				{notice.editing !== '' && <span className="segl-bar__editing"> {notice.editing}</span>}
 			</p>
 			<span className="segl-bar__version" title="segl version">
 				segl {version}

@@ -513,6 +513,16 @@
 	text-align: right;
 }
 
+/*
+ * A browser that may not edit is told so in the color the bar uses for
+ * "not yet": the sentence about editing, not the whole notice.
+ */
+.segl-bar__notice[data-editing='locked'] .segl-bar__editing,
+.segl-bar__notice[data-editing='refused'] .segl-bar__editing {
+	color: #e9c46a;
+	font-weight: 600;
+}
+
 .segl-bar__version {
 	flex: 0 0 auto;
 	color: #a9bccb;

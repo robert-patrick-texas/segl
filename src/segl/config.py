@@ -21,6 +21,7 @@ the working directory when that file exists.
 
 import ipaddress
 import math
+import re
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -140,10 +141,28 @@ def parse_trusted_proxies(value: object) -> tuple[str, ...]:
     return tuple(proxies)
 
 
+# What a browser can send whole in the X-Segl-Edit-Token header: printable
+# ASCII, space to tilde. A header loses a space at either end, and a browser
+# refuses to send any other character, or sends it in an encoding of its own.
+# web/src/editToken.ts has the same rule, and tests/edit_token_cases.json
+# holds both to one table.
+_EDIT_TOKEN = re.compile(r"[\x21-\x7e](?:[\x20-\x7e]{0,254}[\x21-\x7e])?")
+
+
+def is_edit_token(text: str) -> bool:
+    """Return whether ``text`` can be an edit token (docs/DEPLOY.md)."""
+    return _EDIT_TOKEN.fullmatch(text) is not None
+
+
 def _edit_token(value: object) -> str:
-    # The message leaves the value out: it may be most of a real token.
+    # The messages leave the value out: it may be most of a real token.
     if not isinstance(value, str):
         raise ConfigError('edit_token must be a string, "" for none')
+    if value and not is_edit_token(value):
+        raise ConfigError(
+            "edit_token must be 1 to 256 printable ASCII characters, with no space at "
+            'either end, or "" for none: a browser sends it in a request header'
+        )
     return value
 
 

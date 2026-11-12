@@ -16,12 +16,37 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import { ApiError, importScene } from './api.ts';
 import type { AppConfig } from './config.ts';
 import {
+	dropGoesTo,
 	exportName,
 	goesToImport,
 	IMPORT_NEEDS_TOKEN,
 	importProblem,
 	nameHeader
 } from './importing.ts';
+
+describe('a drop on the canvas', () => {
+	const SCENE = { name: 'network.excalidraw', type: '' };
+	const IMAGE = { name: 'photo.png', type: 'image/png' };
+	const LIBRARY = { name: 'shapes.excalidrawlib', type: '' };
+
+	test('an editor: a scene file goes to the import, and the rest to the editor', () => {
+		expect(dropGoesTo(SCENE, false)).toBe('import');
+		expect(dropGoesTo(IMAGE, false)).toBe('editor');
+		expect(dropGoesTo(LIBRARY, false)).toBe('editor');
+		// A dragged link, or a shape out of the library: no file at all.
+		expect(dropGoesTo(null, false)).toBe('editor');
+	});
+
+	test("a viewer: nothing reaches the editor, which would place it on the viewer's canvas alone", () => {
+		expect(dropGoesTo(IMAGE, true)).toBe('nowhere');
+		expect(dropGoesTo(LIBRARY, true)).toBe('nowhere');
+		expect(dropGoesTo(null, true)).toBe('nowhere');
+	});
+
+	test('a viewer: a scene file still goes to the import, which says what it needs', () => {
+		expect(dropGoesTo(SCENE, true)).toBe('import');
+	});
+});
 
 describe('a file dropped on the canvas', () => {
 	test.each([

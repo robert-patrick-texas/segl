@@ -133,9 +133,29 @@ When `edit_token` is set:
 - Mutations include the token from `localStorage`: the HTTP header `X-Segl-Edit-Token`, and the same value in the WebSocket `hello`, which settles the connection as an editor or a viewer until it closes.
 - A missing or wrong token joins as view-only. The server drops scene, title, restore, and file mutations: `elements` gets an `error` with `view_only`, and a `PATCH`, a restore, or an upload gets `403` with `view_only`. Presence and rename still work, and so does reading the history.
 - The comparison is constant-time. Logs record the slot and the byte size, not the token and not the scene body.
-- A shared link may carry the token in the URL fragment `#e=...`. The page writes it to `localStorage` and removes the fragment with `history.replaceState`. The fragment is not sent on the HTTP request.
+- A shared link carries the token in the URL fragment, on any slot or on segl's root: `https://dev.example.com/board/s/1#e=<token>` (`DEPLOY.md` says how to write one). Everything after `#e=` is the token, percent-decoded. A browser does not send a fragment to the server. The page takes the fragment out of the address with `history.replaceState` before it does anything else, whether or not the token turns out to be right, and keeps the token for that page.
+- The page says `hello` with a link's token, and writes it to `localStorage` once `welcome` says that the connection may edit (D2-032). A token the server refuses is not stored. If the browser has a stored token, the page goes back to that one and says `hello` again. So a link with a wrong token, which any page on the web can make a browser open, cannot take the place of a token that works.
+- The server reads the token in `hello` alone (D2-027), so the page says `hello` again, on a new socket, whenever its token changes. A link opened in a tab that is already on a slot changes the fragment and loads nothing, and the page hears `hashchange`. A token stored by another tab of the same browser arrives as a `storage` event, and that tab may then edit too.
+- The token goes to the server in the header and in `hello`, and in no URL. It is not in the page Python serves, and not in a log.
 
-The editor runs in its view mode when this client is view-only, the title in the bar is text, not a button, and the history list has no restore buttons. The server says which in `welcome`. Until it has, a browser may edit unless a token is configured. The segl bar always states that the slot is a shared unauthenticated workspace. A view-only client also states that editing is locked. T10 adds the `#e=` link and the browser test of this flow.
+The server is the gate. What the page does for a view-only browser is so that nobody draws something only they can see:
+
+- The editor runs in its view mode, the title in the bar is text, not a button, the history list has no restore buttons, and the Import control says that importing needs the edit token. The server says whether a connection is view-only in `welcome`. Until it has, a browser may edit unless a token is configured.
+- Nothing dropped on a viewer's canvas reaches the editor. The pinned editor's drop handler does not ask about its view mode, and would place a dropped image, or embed a dropped link, on that one canvas. The canvas adapter decides a drop before the editor is given it (`dropGoesTo` in `web/src/importing.ts`). A scene file still goes to the Import control, which says what importing needs.
+
+The segl bar always states that the slot is a shared workspace that anyone who can open the page can see (S-016). The rest of the notice says where this browser stands with the gate:
+
+| State | When | The notice goes on |
+|---|---|---|
+| `open` | No token is configured. | "…can see it and edit it." |
+| `unlocked` | The server took this browser's token. | "This browser has the edit token and can edit." |
+| `locked` | A token is needed, and this browser has none. | "Editing is locked: it needs the edit token." |
+| `refused` | The server did not take this browser's token. | "Editing is locked: this segl did not take the edit token this browser has." |
+| `waiting` | This browser has a token, and the server has not answered yet. | "Editing needs the edit token." |
+
+The server's answer in `welcome` comes before the page's own `editRequired`, which is from when the page loaded: a token may have been set, or taken away, since. A view-only browser shows the sentence about editing in the bar's amber.
+
+`web/src/editToken.ts` is the link, the stored token, and the rule for which token a page sends. `web/src/useEditToken.ts` is its React state, above the routes, since the token belongs to the browser and not to a slot. `web/src/bar/notice.ts` is the notice.
 
 ## Display names
 

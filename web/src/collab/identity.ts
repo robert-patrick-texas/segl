@@ -14,8 +14,8 @@
 
 /**
  * What this browser tells the server about itself in `hello`, beside its
- * display name: an id of its own, and the edit token when it has one. Both
- * are in `localStorage`, under keys that carry the mount (docs/ARCHITECTURE.md).
+ * display name and its edit token (`editToken.ts`): an id of its own, in
+ * `localStorage` under a key that carries the mount (docs/ARCHITECTURE.md).
  */
 import type { SlotStorage } from '../slots.ts';
 
@@ -50,13 +50,4 @@ export function readClientId(
 		// Storage is full or blocked.
 	}
 	return id;
-}
-
-/** Return the edit token this browser has stored, or `''` (T10 stores it). */
-export function readEditToken(storage: SlotStorage | null, key: string): string {
-	try {
-		return storage?.getItem(key) ?? '';
-	} catch {
-		return '';
-	}
 }

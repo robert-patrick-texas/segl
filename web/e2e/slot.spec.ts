@@ -24,11 +24,14 @@ import {
 	elementIds,
 	elementOf,
 	expectEditor,
+	expectLive,
+	joinSlot,
 	mountOf,
 	openSlot,
 	sceneDocument,
 	SLOTS,
-	test
+	test,
+	tokenKey
 } from './pages.ts';
 
 const VERSION = readProjectVersion(new URL('../../versions.toml', import.meta.url));
@@ -70,6 +73,41 @@ test('the notice says the workspace is shared', async ({ page }) => {
 	await expect(page.getByRole('note')).toBeVisible();
 	await expect(page.getByRole('note')).toHaveText(
 		'Shared workspace. Anyone who can open this page can see it and edit it.'
+	);
+});
+
+test('without an edit token every browser edits, and an edit link changes only the address', async ({
+	page,
+	person,
+	baseURL
+}) => {
+	// The last sentence of T-008: with the token empty, both clients can edit.
+	// One of the two comes by a link that carries a token, as an old link would.
+	const slot = SLOTS.tools;
+	const row = ['direct', 'root', 'board'].indexOf(test.info().project.name);
+	const other = await person('Bea');
+
+	await page.goto(`s/${slot}#e=an-old-token`);
+	await expectEditor(page);
+	await expectLive(page);
+	await joinSlot(other, slot);
+
+	// The fragment goes, here as on a segl that has a token.
+	await expect(page).toHaveURL(new URL(`s/${slot}`, baseURL).href);
+	for (const browser of [page, other]) {
+		await expect(browser.getByRole('note')).toHaveAttribute('data-editing', 'open');
+		await expect(browser.getByRole('note')).toHaveText(
+			'Shared workspace. Anyone who can open this page can see it and edit it.'
+		);
+	}
+	const mine = await drawRectangle(page, -330, 120 + row * 70);
+	await expect.poll(() => elementIds(other)).toContain(mine);
+	const theirs = await drawRectangle(other, -210, 120 + row * 70);
+	await expect.poll(() => elementIds(page)).toContain(theirs);
+	// This segl lets every hello edit, so the link's token counts as taken and
+	// is kept (docs/SECURITY.md). It opens nothing: there is nothing to open.
+	expect(await page.evaluate((key) => localStorage.getItem(key), tokenKey(baseURL))).toBe(
+		'an-old-token'
 	);
 });
 

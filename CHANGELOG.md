@@ -4,7 +4,7 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
-The project is specified, licensed, and public on GitHub. A Python service reads its settings, keeps nine slots in SQLite, and serves them, and a browser application shows each slot as an Excalidraw canvas under the segl bar, where each browser has a display name. People on the same slot draw together live, and what they draw, images included, is saved and survives a restart. A slot's earlier versions are listed in the bar and can be restored, and a slot can be exported to an Excalidraw file and imported from one. CI and a dev container check both, including through nginx at `/board/`.
+The project is specified, licensed, and public on GitHub. A Python service reads its settings, keeps nine slots in SQLite, and serves them, and a browser application shows each slot as an Excalidraw canvas under the segl bar, where each browser has a display name. People on the same slot draw together live, and what they draw, images included, is saved and survives a restart. A slot's earlier versions are listed in the bar and can be restored, and a slot can be exported to an Excalidraw file and imported from one. With an edit token set, a browser without it watches and cannot change anything, and a link that carries the token lets a browser edit. CI and a dev container check both, including through nginx at `/board/`.
 
 ### New
 
@@ -61,9 +61,14 @@ The project is specified, licensed, and public on GitHub. A Python service reads
 - The Import control in the bar takes a file from the browser's file dialog, or one dropped on the canvas, and imports it after a second press. A browser without the edit token is told that importing needs it.
 - JSON export is the editor's own, in its menu under "Save to…". The file is named after the slot's title.
 - Tests for it: `tests/test_import.py`, more of `tests/test_saver.py`, `tests/test_room.py`, and `tests/test_repository.py`, `web/src/importing.test.ts`, and `web/e2e/import.spec.ts` (T-009, and the import part of T-008).
+- The edit link (S-008, D2-032). A link to a slot, or to segl's root, that ends in `#e=<token>` makes a browser an editor. The page takes the fragment out of the address at once, says `hello` with the token, and stores it under `segl:{basePath}:editToken` once the server has taken it. A wrong token is not stored and does not take the place of a stored one. A link opened in a tab that is already on a slot, and a token another tab stored, take effect without a page load. `docs/DEPLOY.md` says how to write a link.
+- The notice in the bar says where this browser stands with the edit gate (S-016): that it has the token and can edit, that editing is locked for want of the token, or that segl did not take the token it has.
+- Tests for the edit gate in a browser: `web/e2e/token.spec.ts` (T-008), against a second test server that has a token, directly and through nginx at `/board/` and at a host root. `web/e2e/origin.spec.ts` shows a page of another site refused by the Origin check, for a request and for the collaboration socket (T-012).
+- `tests/test_sweep.py` is T-012 as one walk over every route: no answer sets a cookie or carries a CORS header, a mutation or a WebSocket upgrade from another site is `bad_origin`, and a mutation without the token is `view_only`, in process and through nginx. A route that is added and is not in the walk fails a test.
 
 ### Changed
 
+- `edit_token` is 1 to 256 printable ASCII characters with no space at either end, or empty for none. segl stops with exit status 2 for any other value. A browser sends the token in a request header, which carries nothing else whole, so such a token never worked from a page: drawing went through, and every title, restore, import, and upload failed.
 - The Python pin is exactly 3.15.2 and follows the newest stable CPython uv offers. GitHub Releases are the publish destination. PyPI stays off until there is a demoable build.
 - The contributor manual lives in `docs/`. `draft1/` and `draft2/` stay in the repository: frozen history, and the agent workbook.
 - segl no longer has a `base_path` setting. It serves at its own root and works under any path nginx strips, such as `/board/` (D2-007).
@@ -91,4 +96,5 @@ The project is specified, licensed, and public on GitHub. A Python service reads
 
 ### Fixed
 
+- A viewer's canvas takes nothing that is dropped on it. The editor's view mode does not cover a drop, so an image dragged onto the canvas of a browser without the edit token was placed there, for that browser alone. The server had refused it all along.
 - A hand-made `elements` message with a number too large to hold, such as `1e999`, is `bad_message`. It used to be taken: Python read it as infinity, the other browsers were sent `Infinity`, which is not JSON, and the slot's stored scene could then not be loaded by any browser. No browser sends such a number.

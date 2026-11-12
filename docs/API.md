@@ -164,7 +164,7 @@ The first message must be `hello`, within 10 seconds. Until then the connection 
 
 Client → server:
 
-- `hello` — `{ "type": "hello", "clientId", "displayName", "editToken": "" }`. `clientId` is this browser's own id, 1–64 letters, digits, `_`, and `-`, which it keeps in `localStorage`. `displayName` is the stored label, taken as written and not title-cased, or `null` for a browser that has none yet. `editToken` is the stored token, or `""`. It decides `viewOnly` for the life of the connection.
+- `hello` — `{ "type": "hello", "clientId", "displayName", "editToken": "" }`. `clientId` is this browser's own id, 1–64 letters, digits, `_`, and `-`, which it keeps in `localStorage`. `displayName` is the stored label, taken as written and not title-cased, or `null` for a browser that has none yet. `editToken` is this browser's edit token, or `""`: the stored one, or the one of the edit link the page was opened by (`ARCHITECTURE.md`, edit gate). It decides `viewOnly` for the life of the connection, so a page whose token changes says `hello` again on a new socket.
 - `elements` — `{ "type": "elements", "epoch", "elements": [ ... ], "seq" }`. Each element is the editor's record, with a text `id` and whole-number `version` and `versionNonce`. The batch is taken whole or refused whole. `seq` is optional: the number this browser gives the message, which the server answers with `saved`. The list may be empty, which with a `seq` asks whether everything the server holds is saved.
 - `presence` — `{ "type": "presence", "cursor": { "x", "y" } }`, in the canvas's own coordinates, or `"cursor": null`.
 - `rename` — `{ "type": "rename", "displayName" }`, a name the person typed.

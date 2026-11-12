@@ -43,6 +43,22 @@ After the settings, segl opens `database`, before it listens. It creates the fil
 
 The example file ships with `edit_token = ""`. Operators who set a token restrict the file to mode `0640`, owner `root`, group `segl`.
 
+`edit_token` is empty, for none, or 1 to 256 printable ASCII characters, space to `~`, with no space at either end. A browser sends the token in a request header, and a header carries nothing else whole, so any other value stops segl with exit status 2. `openssl rand -base64 24` writes a good one. A changed token takes a restart, and ends every link and every stored copy of the old one.
+
+To let someone edit, send them a link to a slot, or to segl's root, with the token after `#e=`:
+
+```text
+https://dev.example.com/board/s/1#e=<token>
+```
+
+Everything after `#e=` is the token. One made of letters, digits, and `+ / = - _`, as `openssl rand -base64` writes it, goes in as it is. Percent-encode any other, a space and a `%` above all:
+
+```bash
+python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' '<token>'
+```
+
+The page takes the token out of the address when it opens, and the browser keeps it for that segl once the server has taken it (`ARCHITECTURE.md`, edit gate). The bar then says `This browser has the edit token and can edit.` A browser without the token says `Editing is locked: it needs the edit token.`, and one whose token segl did not take says so. A browser forgets the token when its stored data for segl's address is cleared. Treat a link as the token itself (`SECURITY.md`).
+
 ## Process layout
 
 | Path | Contents |
