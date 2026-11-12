@@ -21,3 +21,5 @@ playwright-report/
 segl.toml
 *.local.toml
 .DS_Store
+# Documentation site built by scripts/build_docs.py.
+_site/

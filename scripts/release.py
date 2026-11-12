@@ -42,6 +42,7 @@ CLOC_EXCLUDE_DIRS = ",".join(
         "vendor",
         "third_party",
         "site-packages",
+        "_site",
     ]
 )
 LOCK_NAMES = r"(uv\.lock|package-lock\.json|pnpm-lock\.yaml)"
@@ -58,7 +59,7 @@ def direct_rows(doc: dict) -> list[tuple[str, str, str, str]]:
         block = doc.get(ecosystem, {})
         if not isinstance(block, dict):
             continue
-        for bucket in ("dependencies", "dev"):
+        for bucket in ("dependencies", "dev", "docs"):
             entries = block.get(bucket, {})
             if not isinstance(entries, dict):
                 continue

@@ -26,12 +26,16 @@ segl/
   AGENTS.md                 # pointer at draft2
   README.md                 # public project page
   LICENSE
+  NOTICE                    # attributions (D2-019)
   CONTRIBUTING.md
   SECURITY.md               # how to report a vulnerability
   CHANGELOG.md
   versions.toml             # the only version list
   journal/                   # narrative highlights
   scripts/release.py
+  scripts/build_docs.py     # documentation site (T00b)
+  tools/md2html/            # Markdown to HTML, copied from vakr
+  images/                   # pictures for any page
   docs/                     # contributor and operator manual
   draft1/                   # frozen historical baseline, kept in git
   draft2/                   # agent workbook: status, tasks, rules

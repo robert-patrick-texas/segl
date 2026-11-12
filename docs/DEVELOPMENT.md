@@ -62,6 +62,59 @@ From T04: run Python on `127.0.0.1:8000` with `uv run segl`, which uses the deve
 
 The dev server serves the page at the host root. Mounting under a path such as `/board/` is tested through nginx and the production build, not the dev server (`TEST-PLAN.md` T-013).
 
+## Documentation site
+
+Every Markdown file in the repository is published as HTML at <https://robert-patrick-texas.github.io/segl/> (D2-024). `README.md` is the index page. Every page carries the same left-hand index of all pages, and that index opens with the project name linking to the GitHub repository. `.md` links become links between pages.
+
+```bash
+python3 scripts/build_docs.py          # build _site/ and check every link, anchor, and image
+python3 scripts/build_docs.py /tmp/x   # build somewhere else
+```
+
+Open `_site/index.html` in a browser to review it.
+
+The script runs `tools/md2html`, copied from vakr, with segl's settings:
+
+- the project name and repository from `versions.toml`
+- the repository entry at the top of the index (`--repo-in-index`)
+- `.github/` left out
+- `--check`
+
+It also copies `images/` into the site whole, and fails on a raw HTML `<img>` whose file is missing, which md2html does not check itself.
+
+`.github/workflows/pages.yml` runs the same script on every push to `main` and deploys `_site/`. A broken link stops the deploy.
+
+`tools/md2html` stays portable. It imports nothing from segl and hard-codes nothing about it, so it can go back to vakr unchanged. Until T01 adds its tests to the project's pytest run, run them with:
+
+```bash
+uv run --with pytest==9.2.0 --with markdown-it-py==4.3.0 --with mdit-py-plugins==0.7.0 \
+    pytest tools/md2html
+```
+
+## Images
+
+Pictures for any page go in `images/` at the repository root. The site build copies the folder whole, so one relative path works on GitHub and on the published site, from Markdown and from HTML.
+
+From a file at the root, such as `README.md`:
+
+```markdown
+![Two slots open side by side](images/two-slots.png)
+```
+
+From a file one folder down, in `docs/`, `draft2/`, or `journal/`:
+
+```markdown
+![Two slots open side by side](../images/two-slots.png)
+```
+
+```html
+<img src="../images/two-slots.png" alt="Two slots open side by side" width="1600" height="900">
+```
+
+- Use PNG, JPEG, GIF, SVG, or WebP, with lowercase hyphenated file names.
+- Give every picture alt text. In HTML, `width` and `height` (the file's size in pixels) let the page reserve the space before the picture loads.
+- Keep files small. Git keeps every version of every picture.
+
 ## Releases
 
 `RELEASING.md`.

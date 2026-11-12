@@ -13,6 +13,7 @@ The project is specified, licensed, and public on GitHub, and application code h
 - The public repository <https://github.com/robert-patrick-texas/segl>, with GitHub private vulnerability reporting.
 - nginx files in `deploy/nginx/`. They hold an upstream and WebSocket map, proxy settings (forwarded client address, a body limit above segl's own, timeouts, gzip), a `/board/` mount, and two example sites.
 - `docs/DEVELOPMENT.md` lists the development host's tools, the checks, and the dev loop.
+- The documentation site at <https://robert-patrick-texas.github.io/segl/>: every Markdown file as a page, with an index of all pages that opens with a link to the repository. `scripts/build_docs.py` builds it with `tools/md2html`, copied from vakr. Pictures go in `images/`. A broken link, anchor, or image stops the publish (D2-024).
 
 ### Changed
 

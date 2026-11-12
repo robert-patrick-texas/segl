@@ -12,10 +12,11 @@ Slots 1–9 need no account. An optional site-wide edit token can limit who chan
 |---|---|
 | Repository | <https://github.com/robert-patrick-texas/segl> |
 | Start here | [`docs/README.md`](docs/README.md) |
+| Documentation site | <https://robert-patrick-texas.github.io/segl/> |
 | Development | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) |
-| nginx | [`deploy/nginx/`](deploy/nginx/) and [`docs/DEPLOY.md`](docs/DEPLOY.md#nginx) |
+| nginx | [`deploy/nginx/`](https://github.com/robert-patrick-texas/segl/tree/main/deploy/nginx) and [`docs/DEPLOY.md`](docs/DEPLOY.md#nginx) |
 | Versions | [`versions.toml`](versions.toml) |
 | Changes | [`CHANGELOG.md`](CHANGELOG.md) |
 | Contributing | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 | Vulnerability reports | [`SECURITY.md`](SECURITY.md) |
-| Narrative | [`journal/`](journal/) |
+| Narrative | [`journal/`](https://github.com/robert-patrick-texas/segl/tree/main/journal) |

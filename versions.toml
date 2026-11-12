@@ -19,6 +19,12 @@ node = ""
 
 [python.dev]
 
+# The documentation site's converter, tools/md2html (copied from vakr).
+# Its inline script metadata (PEP 723) mirrors these pins.
+[python.docs]
+markdown-it-py = "4.3.0"
+mdit-py-plugins = "0.7.0"
+
 [web.dependencies]
 
 [web.dev]

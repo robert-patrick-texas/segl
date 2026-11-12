@@ -5,7 +5,7 @@ This file is the source of truth for what is done and what to do next. Update it
 - Updated: 2026-11-11
 - Phase: P0 collaborative slots
 - Next task: T01
-- Completed: T00
+- Completed: T00, T00b
 - Blocked: no
 - Application code: none
 
@@ -37,3 +37,11 @@ This file is the source of truth for what is done and what to do next. Update it
   - The default display names have 190 entries after dropping five.
   - `uvx ruff check scripts/release.py` reports EXE001 and FLY002, and `ruff format --check` wants to rewrap five lines. All of it is in code that predates T00, and the same two findings appear on the baseline commit. The checks ran with ruff's default 88-character lines because the repository has no ruff settings yet. T01's acceptance runs ruff over the whole tree under the project's own settings.
   - Next action T01.
+- 2026-11-11: T00b done (documentation site, D2-024), at the user's request. Evidence:
+  - `tools/md2html` copied from vakr `99f62e3`, with `--repo-in-index` added. `uv run --with pytest==9.2.0 --with markdown-it-py==4.3.0 --with mdit-py-plugins==0.7.0 pytest tools/md2html` gave 22 passed.
+  - md2html's packages moved from markdown-it-py 4.2.0 and mdit-py-plugins 0.6.1 to 4.3.0 and 0.7.0, the newest per `python3 scripts/release.py check`, which now reports both current.
+  - `python3 scripts/build_docs.py` rendered 36 Markdown files with 0 broken links and 0 broken HTML images, after two README folder links were pointed at GitHub's tree view.
+  - A scratch copy showed a Markdown image and an HTML `<img>` both published from `images/`, a missing `<img>` file failing the build with exit 1, and `<img>` examples in code blocks ignored.
+  - Screenshots through the Playwright 1.64.1 container (Chromium's libraries are missing on the host) showed the index opening with the GitHub mark and "segl", and no sideways scroll at 390 px.
+  - GitHub Pages was already set to "GitHub Actions" (`build_type: workflow`). `.github/workflows/pages.yml` deploys on push to `main`.
+  - Next action remains T01.

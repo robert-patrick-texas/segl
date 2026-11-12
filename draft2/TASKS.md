@@ -31,6 +31,22 @@ The steps that had to happen before T01. Done 2026-11-11:
 
 Acceptance (evidence in `STATUS.md`): `git log` shows both signed-off commits on `main`, and `origin` is the public GitHub repository. `nginx -t` passes for both site examples in `deploy/nginx/`. `python3 scripts/release.py check` reports the 3.15.2 pin. `python3 scripts/release.py notes` prints the line count as the first table row.
 
+## T00b — Documentation site
+
+- Status: done
+- Requires: T00
+- Requirements: D2-024
+
+Done 2026-11-11 at the user's request:
+
+1. `tools/md2html`, copied from vakr at `99f62e3`, with one added option, `--repo-in-index`, and a test for it.
+2. `scripts/build_docs.py`, which builds `_site/` from every Markdown file except `.github/`, copies `images/`, and checks raw HTML `<img>` paths.
+3. `.github/workflows/pages.yml`, which deploys `_site/` to GitHub Pages on every push to `main`.
+4. `images/` for pictures on any page (`docs/DEVELOPMENT.md`).
+5. md2html's two packages in `versions.toml` `[python.docs]`, moved to their newest releases. `NOTICE` names md2html and the Octicons mark.
+
+Acceptance (evidence in `STATUS.md`): md2html's tests pass. `python3 scripts/build_docs.py` exits 0 with no broken links. The Pages workflow deploys, and the site answers at its URL.
+
 ## T01 — Python skeleton, CI, and dev container
 
 - Status: next
@@ -40,7 +56,7 @@ Acceptance (evidence in `STATUS.md`): `git log` shows both signed-off commits on
 
 Create the uv project at the repository root with package `segl` under `src/segl`. Read the Python pin (`runtime.python`, an exact version such as `3.15.2`) and the application version from `versions.toml`. Write the same pin to `.python-version`. Set `requires-python` to the pin's minor (`>=3.15,<3.16`). Set the project license field to `Apache-2.0` and the project version to the `versions.toml` application version.
 
-Depend on FastAPI and uvicorn. Dev-depend on pytest, httpx, ruff, and ty. Take the newest stable release of each, pin it exactly (`==`) in `pyproject.toml`, and record the same versions in `versions.toml`. Configure ruff and ty for the pin's minor in `pyproject.toml`.
+Depend on FastAPI and uvicorn. Dev-depend on pytest, httpx, ruff, and ty. Take the newest stable release of each, pin it exactly (`==`) in `pyproject.toml`, and record the same versions in `versions.toml`. Configure ruff and ty for the pin's minor in `pyproject.toml`. Add a `docs` dependency group holding md2html's two packages at the `[python.docs]` pins, and point pytest and ty at `tools/md2html` as vakr's `pyproject.toml` does, so `uv run pytest` and `uv run ty check` cover it. md2html keeps its inline metadata for `uv run`.
 
 Add a console script `segl` whose `--version` prints the application version from `versions.toml`. The installed package carries a copy of `versions.toml` that the build puts inside it. A checkout reads the file at the repository root. Tests cover both lookups.
 
@@ -54,7 +70,7 @@ Add `deploy/Containerfile` from `ubuntu:26.04`. It installs uv and runs `uv sync
 
 Acceptance:
 
-- `uv run pytest` passes the health, version-lookup, and license-header tests.
+- `uv run pytest` passes the health, version-lookup, and license-header tests, and md2html's tests.
 - `uv run segl --version` prints the application version from `versions.toml`.
 - `.python-version` matches `versions.toml` `runtime.python`. Every direct Python dependency in `pyproject.toml` is listed in `versions.toml` at the same version, and a test checks this.
 - `uv run ruff check .` and `uv run ruff format --check .` pass.
@@ -75,7 +91,7 @@ Out of scope: the release command (T01b), React, Excalidraw, SQLite, nginx, the 
 Finish `scripts/release.py` to the contract in `docs/RELEASING.md`:
 
 - `check` lists every pinned component beside its newest stable release: Python through `uv python list`, each direct Python dependency through PyPI, Node and each direct web dependency through npm once `web/` exists, and the GitHub Actions pins in `.github/workflows/`. `check --gate` exits 1 when a component has a newer release and no hold, when a component could not be checked, or when a hold is stale because a release newer than the skipped one exists.
-- `upgrade` moves each outdated component on its own and runs the suite. It keeps the move when the suite passes. Otherwise it restores the previous version and records `[held.<name>]` with `version`, `skipped`, `reason` (the first failing test), and `since`.
+- `upgrade` moves each outdated component on its own and runs the suite. It keeps the move when the suite passes. Otherwise it restores the previous version and records `[held.<name>]` with `version`, `skipped`, `reason` (the first failing test), and `since`. A move of a `[python.docs]` package also updates `tools/md2html/md2html.py`'s inline metadata.
 - `cut` and `publish` behave as `docs/RELEASING.md` describes, including the preflight order.
 
 Tests replace the network, `gh`, and `git push` with fakes, and use a temporary git repository with a local bare remote, as Sunstone's `tools/release` tests do.

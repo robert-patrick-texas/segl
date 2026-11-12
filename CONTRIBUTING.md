@@ -30,10 +30,13 @@ limitations under the License.
 
 When a dependency's license requires an attribution notice, add it to `NOTICE` in the change that adds the dependency (D2-019).
 
+Files copied whole from another project keep their own header, and `NOTICE` names their source. `tools/md2html`, from vakr, is one.
+
 ## Notes that travel with a change
 
 - Add a [`CHANGELOG.md`](CHANGELOG.md) bullet when the change is something another contributor or an operator needs to know.
 - Add `journal/YYYY-MM-DD-short-title.md` when the change has a story or a lesson worth keeping. Ordinary tasks do not need a journal entry.
+- Every Markdown file is published to the documentation site. Pictures go in `images/` ([`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md#images)). Run `python3 scripts/build_docs.py` after editing documents: a broken link, anchor, or image stops the publish.
 
 ## Checks
 

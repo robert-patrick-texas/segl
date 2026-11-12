@@ -1,6 +1,6 @@
 # Releasing
 
-`versions.toml` at the repository root is the only list of versions. It holds the application version, the exact Python version, the Node version used to build the frontend, and the direct dependency versions. Lockfiles hold the transitive closure. Application code that displays or checks a version reads `versions.toml`. `.python-version`, `pyproject.toml`, `web/.node-version`, and `web/package.json` mirror the matching entries. A change that adds or upgrades a direct dependency updates `versions.toml` in the same change.
+`versions.toml` at the repository root is the only list of versions. It holds the application version, the exact Python version, the Node version used to build the frontend, and the direct dependency versions. Lockfiles hold the transitive closure. Application code that displays or checks a version reads `versions.toml`. `.python-version`, `pyproject.toml`, `web/.node-version`, `web/package.json`, and the inline metadata of `tools/md2html/md2html.py` mirror the matching entries. A change that adds or upgrades a direct dependency updates `versions.toml` in the same change.
 
 `0.0.0` means unpublished. Do not publish it.
 
@@ -77,11 +77,11 @@ The line count is `cloc`'s code column for files written in this repository. Tha
 
 ```bash
 cloc . --json --quiet --fullpath \
-  --exclude-dir=node_modules,.venv,venv,dist,build,vendor,third_party,site-packages \
+  --exclude-dir=node_modules,.venv,venv,dist,build,vendor,third_party,site-packages,_site \
   --not-match-f='(uv\.lock|package-lock\.json|pnpm-lock\.yaml)'
 ```
 
-`cloc` is installed on the development host (`DEVELOPMENT.md`). Documentation, the journal, deploy files, and application source all count. `node_modules`, virtualenvs, build output, and an embedded copy of upstream Excalidraw do not.
+`cloc` is installed on the development host (`DEVELOPMENT.md`). Documentation, the journal, deploy files, and application source all count. `node_modules`, virtualenvs, build output, the generated documentation site (`_site/`), and an embedded copy of upstream Excalidraw do not.
 
 ## Changelog and journal
 

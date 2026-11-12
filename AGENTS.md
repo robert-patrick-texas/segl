@@ -1,4 +1,4 @@
-# segl
+# segl agent instructions
 
 Current agent instructions are in [`draft2/`](draft2/README.md).
 

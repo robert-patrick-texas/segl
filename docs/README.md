@@ -1,6 +1,6 @@
 # segl documentation
 
-Contributor and operator manual. The agent task queue is [`draft2/STATUS.md`](../draft2/STATUS.md). [`draft1/`](../draft1/README.md) is the frozen earlier baseline and is not the current specification.
+Contributor and operator manual, also published at <https://robert-patrick-texas.github.io/segl/>. The agent task queue is [`draft2/STATUS.md`](../draft2/STATUS.md). [`draft1/`](../draft1/README.md) is the frozen earlier baseline and is not the current specification.
 
 | Document | What it answers |
 |---|---|
