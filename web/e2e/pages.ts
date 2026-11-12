@@ -148,6 +148,18 @@ export async function joinSlot(page: Page, slot: number): Promise<void> {
 	await expect(connectionStatus(page)).toHaveText('Live');
 }
 
+/**
+ * Go to another slot through the bar, without a page load, and wait until
+ * this page is in that slot's room. The heading is waited for first: until
+ * the page has moved, the bar still says `Live`, about the slot it is leaving.
+ */
+export async function switchSlot(page: Page, slot: number, title: string): Promise<void> {
+	await page.getByRole('link', { name: `Slot ${slot}:` }).click();
+	await expect(page.getByRole('heading', { level: 1 })).toHaveText(title);
+	await expectEditor(page);
+	await expect(connectionStatus(page)).toHaveText('Live');
+}
+
 /** The number in the presence control. */
 export function presenceCount(page: Page): Locator {
 	return page.getByTestId('presence-count');
@@ -182,6 +194,8 @@ export interface SceneDocument {
 
 /** The scene document the mounted editor would store. */
 export async function sceneDocument(page: Page): Promise<SceneDocument> {
+	// Between two slots there is no canvas for a moment.
+	await page.waitForFunction(() => window.SEGL_CANVAS !== undefined);
 	const text = await page.evaluate(() => window.SEGL_CANVAS!.document());
 	return JSON.parse(text) as SceneDocument;
 }
@@ -228,5 +242,6 @@ export interface CanvasPeer {
 
 /** The other connections the editor is drawing cursors for. */
 export async function canvasPeers(page: Page): Promise<CanvasPeer[]> {
+	await page.waitForFunction(() => window.SEGL_CANVAS !== undefined);
 	return JSON.parse(await page.evaluate(() => window.SEGL_CANVAS!.peers())) as CanvasPeer[];
 }

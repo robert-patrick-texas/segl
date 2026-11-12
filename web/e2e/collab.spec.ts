@@ -33,6 +33,7 @@ import {
 	openPeople,
 	presenceCount,
 	SLOTS,
+	switchSlot,
 	test
 } from './pages.ts';
 
@@ -362,9 +363,7 @@ test('a drawing stays on its slot when the person goes to another', async ({ pag
 
 	// Through the bar, without a page load: the canvas of one slot is taken
 	// down and the next one put up.
-	await page.getByRole('link', { name: `Slot ${SLOTS.names}:` }).click();
-	await expect(page.getByRole('heading', { level: 1 })).toHaveText(`Workspace ${SLOTS.names}`);
-	await expect(connectionStatus(page)).toHaveText('Live');
+	await switchSlot(page, SLOTS.names, `Workspace ${SLOTS.names}`);
 	const there = await drawRectangle(page, 100, 200);
 
 	const other = await person('Bea');
@@ -373,8 +372,7 @@ test('a drawing stays on its slot when the person goes to another', async ({ pag
 	expect(await elementIds(other)).not.toContain(here);
 	expect(await elementIds(page)).not.toContain(here);
 
-	await page.getByRole('link', { name: `Slot ${SLOTS.drawing}:` }).click();
-	await expect(connectionStatus(page)).toHaveText('Live');
+	await switchSlot(page, SLOTS.drawing, `Workspace ${SLOTS.drawing}`);
 	await expectElement(page, here);
 	expect(await elementIds(page)).not.toContain(there);
 });
