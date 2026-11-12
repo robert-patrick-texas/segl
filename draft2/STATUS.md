@@ -44,4 +44,5 @@ This file is the source of truth for what is done and what to do next. Update it
   - A scratch copy showed a Markdown image and an HTML `<img>` both published from `images/`, a missing `<img>` file failing the build with exit 1, and `<img>` examples in code blocks ignored.
   - Screenshots through the Playwright 1.64.1 container (Chromium's libraries are missing on the host) showed the index opening with the GitHub mark and "segl", and no sideways scroll at 390 px.
   - GitHub Pages was already set to "GitHub Actions" (`build_type: workflow`). `.github/workflows/pages.yml` deploys on push to `main`.
+  - Pages run 43142713250 for `96e0fa4` succeeded. https://robert-patrick-texas.github.io/segl/ and `docs/DEVELOPMENT.html`, `docs/DECISIONS.html`, `all-docs.html`, and `draft2/STATUS.html` each answered 200, and the live index opens with the `segl on GitHub` link.
   - Next action remains T01.
