@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/** The HTTP routes this page reads (docs/API.md). Every URL is under segl's root. */
+/** The HTTP routes this page calls (docs/API.md). Every URL is under segl's root. */
 
 import { apiUrl, type AppConfig } from './config.ts';
 
@@ -36,17 +36,30 @@ export interface SlotScene {
 export class ApiError extends Error {
 	readonly status: number;
 	readonly code: string;
+	/** The seconds a `Retry-After` header named, or null. */
+	readonly retryAfter: number | null;
 
-	constructor(status: number, code: string, message: string) {
+	constructor(status: number, code: string, message: string, retryAfter: number | null = null) {
 		super(message);
 		this.name = 'ApiError';
 		this.status = status;
 		this.code = code;
+		this.retryAfter = retryAfter;
 	}
 }
 
-async function getJson(url: URL, signal?: AbortSignal): Promise<unknown> {
-	const response = await fetch(url, { headers: { Accept: 'application/json' }, signal });
+/** `Retry-After` as whole seconds. segl never sends its other form, a date. */
+function retryAfter(response: Response): number | null {
+	const value = response.headers.get('Retry-After');
+	return value !== null && /^\d+$/.test(value) ? Number(value) : null;
+}
+
+function getJson(url: URL, signal?: AbortSignal): Promise<unknown> {
+	return requestJson(url, { signal });
+}
+
+async function requestJson(url: URL, init: RequestInit): Promise<unknown> {
+	const response = await fetch(url, { ...init, headers: { Accept: 'application/json' } });
 	let body: unknown;
 	try {
 		body = await response.json();
@@ -58,7 +71,8 @@ async function getJson(url: URL, signal?: AbortSignal): Promise<unknown> {
 		throw new ApiError(
 			response.status,
 			typeof error === 'string' ? error : 'unknown',
-			typeof message === 'string' ? message : `${url.pathname} answered ${response.status}`
+			typeof message === 'string' ? message : `${url.pathname} answered ${response.status}`,
+			retryAfter(response)
 		);
 	}
 	return body;
@@ -98,4 +112,21 @@ export async function fetchScene(
 		editorLabel: String(body.editorLabel ?? ''),
 		files: Array.isArray(body.files) ? body.files : []
 	};
+}
+
+/**
+ * Take the next display name from the server, such as `Alpha1`. Each call
+ * takes one, and an address may make 30 calls a minute, so call it only for a
+ * browser that has no label (`assignName` in names.ts).
+ */
+export async function allocateDisplayName(
+	config: AppConfig,
+	signal?: AbortSignal
+): Promise<string> {
+	const url = apiUrl(config, 'display-name');
+	const body = (await requestJson(url, { method: 'POST', signal })) as { displayName?: unknown };
+	if (typeof body?.displayName !== 'string' || body.displayName === '') {
+		throw new ApiError(200, 'unexpected', `${url.pathname} did not return a display name`);
+	}
+	return body.displayName;
 }

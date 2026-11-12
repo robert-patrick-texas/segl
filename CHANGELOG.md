@@ -4,7 +4,7 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
-The project is specified, licensed, and public on GitHub. A Python service reads its settings, keeps nine slots in SQLite, and serves them, and a browser application shows each slot as an Excalidraw canvas under the segl bar. Nothing drawn is saved or shared yet. CI and a dev container check both, including through nginx at `/board/`.
+The project is specified, licensed, and public on GitHub. A Python service reads its settings, keeps nine slots in SQLite, and serves them, and a browser application shows each slot as an Excalidraw canvas under the segl bar, where each browser has a display name. Nothing drawn is saved or shared yet. CI and a dev container check both, including through nginx at `/board/`.
 
 ### New
 
@@ -34,6 +34,10 @@ The project is specified, licensed, and public on GitHub. A Python service reads
 - Web checks: `npm --prefix web run check` (`tsc --noEmit`), `test` (Vitest), `format:check` (Prettier), `build`, and `e2e` (Playwright). The browser tests run against Python serving the build, directly and behind nginx with the `deploy/nginx/` files, at a host root and at `/board/`. They refuse every request to another origin and fail if the page attempted one. `PW_WS_ENDPOINT` uses a browser running elsewhere.
 - CI runs the web checks, the build, and the browser tests. The dev container has Node and runs the web checks and the build. `scripts/release.py upgrade` and `cut` run them too.
 - `versions.toml` lists Node 26.13.1 and every direct web dependency. `web/package.json`, `web/package-lock.json`, and `web/.node-version` mirror it, and a test holds them to it. `scripts/release.py check` covers them.
+- Display names (S-009). `deploy/display-names.txt` is the packaged word list, 190 words. `POST /api/v1/display-name` returns the next name, such as `Alpha1`, then `Bravo2`, from the word file and a counter in SQLite that never repeats. One client address gets 30 names a minute. The next call is a `429` with `rate_limited` and `Retry-After`.
+- segl reads the `display_names` file when it starts. A file that is missing, has a line that is not a word of 1–10 letters, or has no words stops it with exit status 1.
+- The segl bar shows this browser's name after `You:`. A new browser asks the server once and keeps the answer in `localStorage`, across reloads, slots, and tabs. The name is a button: a typed name is title-cased (`john smith` becomes `John Smith`), kept the same way, and shown only in that browser until live collaboration exists.
+- `tests/display_name_cases.json` holds the browser's title case and the server's to one table of cases.
 
 ### Changed
 

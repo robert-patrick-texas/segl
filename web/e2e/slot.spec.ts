@@ -17,9 +17,9 @@
  * (S-016), and the navigation rules (D2-006). Each test runs at a host root
  * and at `/board/`.
  */
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
 import { readProjectVersion } from '../scripts/app-version.ts';
-import { expectEditor, mountOf, openSlot, sceneDocument } from './pages.ts';
+import { expectEditor, mountOf, openSlot, sceneDocument, test } from './pages.ts';
 
 const VERSION = readProjectVersion(new URL('../../versions.toml', import.meta.url));
 

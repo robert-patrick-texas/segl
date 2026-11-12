@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from harness import EMPTY_SCENE, make_settings, running_segl
+from harness import DISPLAY_NAMES_FILE, EMPTY_SCENE, make_settings, running_segl
 
 from segl import cli
 from segl.app import create_app
@@ -218,7 +218,10 @@ def test_the_command_opens_the_configured_database(
 ) -> None:
     database = tmp_path / "var" / "segl.sqlite"
     config = tmp_path / "segl.toml"
-    config.write_text(f'database = "{database}"\nhistory_limit = 7\n', encoding="utf-8")
+    config.write_text(
+        f'database = "{database}"\nhistory_limit = 7\ndisplay_names = "{DISPLAY_NAMES_FILE}"\n',
+        encoding="utf-8",
+    )
     seen: list[int] = []
 
     def fake_run(app: FastAPI, **options: object) -> None:

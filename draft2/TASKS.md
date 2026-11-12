@@ -177,9 +177,11 @@ Acceptance:
 
 Copy `draft2/display-names.txt` to `deploy/display-names.txt`. From then on `deploy/display-names.txt` is the packaged list. Implement allocation, the 30/minute limit per client address, and `POST /api/v1/display-name`. The bar shows the current label and accepts a rename, title-cased. Until T06 carries it on the socket, the rename is only shown locally: store it in `localStorage` now, and T06 must not allocate again.
 
+The server reads the word file at startup and stops when it has no usable words (`src/segl/names.py`). The title case is written on both sides now, `title_case_name` in Python and `titleCaseName` in `web/src/names.ts`, and both are held to `tests/display_name_cases.json`. T06 calls the Python one for the `rename` message. The browser tests start with a stored name, because of the limit (`docs/DEVELOPMENT.md`).
+
 Acceptance:
 
-- T-014 runs against a temp word file, including its rate-limit case through the nginx harness.
+- T-014 runs against a temp word file, including its rate-limit case through the nginx harness. Its broadcast of the rename is T06's.
 - A test checks that the packaged file has at least 100 unique `^[A-Za-z]{1,10}$` entries.
 - The browser keeps a label across reload.
 - ruff, ty, and the web checks pass.

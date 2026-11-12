@@ -26,6 +26,7 @@ from starlette.exceptions import HTTPException
 from starlette.staticfiles import StaticFiles
 
 from segl.config import Settings
+from segl.names import AllocationLimit, load_display_names, retry_after
 from segl.repository import InvalidSlot, Repository, Slot
 from segl.versions import app_version
 from segl.web import ROOT_PAGE, SLOT_PAGE, WebBuild, load_web_build, render_page
@@ -106,11 +107,15 @@ def create_app(settings: Settings, repository: Repository) -> FastAPI:
 
     The application closes the repository when it shuts down. It serves the
     web application when ``settings.web_dir`` holds a build, and the API alone
-    when it does not.
+    when it does not. The display-name words are read here, once, so a
+    replaced file takes a restart.
 
     Raises:
+        DisplayNamesError: When ``display_names`` is missing or has no usable words.
         WebBuildError: When ``web_dir`` has an ``index.html`` segl cannot use.
     """
+    words = load_display_names(settings.display_names)
+    allocation_limit = AllocationLimit()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
@@ -136,6 +141,7 @@ def create_app(settings: Settings, repository: Repository) -> FastAPI:
         lifespan=lifespan,
     )
     app.state.settings = settings
+    app.state.display_names = words
     web_build = load_web_build(settings.web_dir)
     app.state.web_build = web_build
 
@@ -190,6 +196,24 @@ def create_app(settings: Settings, repository: Repository) -> FastAPI:
                 "files": [],
             }
         )
+
+    @app.post("/api/v1/display-name")
+    def display_name(request: Request) -> JSONResponse:
+        # No edit token: a viewer has a name too. The address is the one
+        # uvicorn settled on, which is X-Forwarded-For only when the connection
+        # came from a trusted proxy (docs/SECURITY.md).
+        client = request.client.host if request.client else ""
+        wait = allocation_limit.admit(client)
+        if wait > 0:
+            return _error(
+                429,
+                "rate_limited",
+                "Too many names were asked for from this address. Try again in a minute.",
+                {"Retry-After": retry_after(wait)},
+            )
+        name = repository.allocate_display_name(words)
+        # Each answer is a different name, so no cache may replay one.
+        return JSONResponse({"displayName": name}, headers={"Cache-Control": "no-store"})
 
     if web_build is not None:
         _add_web_routes(app, web_build, settings.edit_required)

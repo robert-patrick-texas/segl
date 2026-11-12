@@ -1,0 +1,113 @@
+{
+	"comment": "Names a person types, and what segl shows for each (docs/ARCHITECTURE.md, Display names). null: refused. tests/test_names.py and web/src/names.test.ts both read this file.",
+	"cases": [
+		[
+			"john smith",
+			"John Smith"
+		],
+		[
+			"NASA",
+			"Nasa"
+		],
+		[
+			"  john   smith  ",
+			"John Smith"
+		],
+		[
+			"john\tsmith\n",
+			"John Smith"
+		],
+		[
+			"McKinley",
+			"Mckinley"
+		],
+		[
+			"alpha1",
+			"Alpha1"
+		],
+		[
+			"o'brien",
+			"O'brien"
+		],
+		[
+			"jean-luc picard",
+			"Jean-luc Picard"
+		],
+		[
+			"x",
+			"X"
+		],
+		[
+			"7 of 9",
+			"7 Of 9"
+		],
+		[
+			"élodie ÉCLAIR",
+			"Élodie Éclair"
+		],
+		[
+			"ångström",
+			"Ångström"
+		],
+		[
+			"ΟΔΥΣΣΕΎΣ",
+			"Οδυσσεύς"
+		],
+		[
+			"anna maria",
+			"Anna Maria"
+		],
+		[
+			"田中　太郎",
+			"田中 太郎"
+		],
+		[
+			"𐐨𐐩",
+			"𐐀𐐩"
+		],
+		[
+			"straße",
+			"Straße"
+		],
+		[
+			"ßeta",
+			"Sseta"
+		],
+		[
+			"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		],
+		[
+			"ab ab ab ab ab ab ab ab ab ab ab ab ab a",
+			"Ab Ab Ab Ab Ab Ab Ab Ab Ab Ab Ab Ab Ab A"
+		],
+		[
+			"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+			"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+		],
+		[
+			"",
+			null
+		],
+		[
+			"   ",
+			null
+		],
+		[
+			"\t\n",
+			null
+		],
+		[
+			"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			null
+		],
+		[
+			"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+			null
+		],
+		[
+			"ßaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			null
+		]
+	]
+}

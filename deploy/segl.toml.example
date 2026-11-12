@@ -19,7 +19,9 @@ edit_token = ""
 # Where segl keeps its data. The segl user needs to write the first two.
 database = "/opt/segl/var/segl.sqlite"
 assets_dir = "/opt/segl/var/assets"
-# One name per line for new visitors. Replace the file to change them.
+# One word per line, 1 to 10 letters, for the names new visitors are given
+# (Alpha1, Bravo2). Edit the file to change them, then restart segl. segl does
+# not start when the file is missing or has no words.
 display_names = "/opt/segl/etc/display-names.txt"
 
 # The built web application: the folder that holds index.html. segl reads it

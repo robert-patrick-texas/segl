@@ -23,8 +23,8 @@
  *     SEGL_UPDATE_FIXTURE=1 npm run e2e -- fixture.spec.ts --project direct
  */
 import { readFileSync, writeFileSync } from 'node:fs';
-import { expect, test } from '@playwright/test';
-import { openSlot, sceneDocument } from './pages.ts';
+import { expect } from '@playwright/test';
+import { openSlot, sceneDocument, test } from './pages.ts';
 
 const FIXTURE = new URL('../../src/segl/empty_scene.json', import.meta.url);
 

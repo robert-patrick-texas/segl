@@ -46,6 +46,8 @@ const CONFIG = join(WORK, 'segl.toml');
 if (process.env['TEST_WORKER_INDEX'] === undefined) {
 	rmSync(WORK, { recursive: true, force: true });
 	mkdirSync(WORK, { recursive: true });
+	// The two-word file of docs/TEST-PLAN.md T-014: labels are Guest1, Staff2, and on.
+	writeFileSync(join(WORK, 'display-names.txt'), 'Guest\nStaff\n');
 	writeFileSync(
 		CONFIG,
 		[

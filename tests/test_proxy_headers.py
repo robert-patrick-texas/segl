@@ -14,8 +14,8 @@
 
 """``trusted_proxies`` decides whose X-Forwarded-For the running server believes.
 
-No route reports the client address yet (the display-name limit is T05), so
-these tests read it from the access log of a real ``segl`` process.
+These tests read the address from the access log of a real ``segl`` process.
+The display-name limit counts by the same address (tests/test_names.py).
 """
 
 from pathlib import Path

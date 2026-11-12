@@ -18,6 +18,7 @@ import { fetchScene, fetchSlots, type SlotScene } from './api.ts';
 import { SeglBar } from './bar/SeglBar.tsx';
 import { storageKey, type AppConfig } from './config.ts';
 import { browserStorage, writeLastSlot } from './slots.ts';
+import type { DisplayName } from './useDisplayName.ts';
 
 // Its own chunk: the bar paints before the editor has arrived.
 const Canvas = lazy(() => import('./canvas/Canvas.tsx'));
@@ -29,7 +30,14 @@ type Load =
 
 const NO_TITLES: ReadonlyMap<number, string> = new Map();
 
-export function SlotPage({ config, slot }: { config: AppConfig; slot: number }) {
+export interface SlotPageProps {
+	config: AppConfig;
+	slot: number;
+	/** This browser's display name. It belongs to the browser, not to a slot. */
+	displayName: DisplayName;
+}
+
+export function SlotPage({ config, slot, displayName }: SlotPageProps) {
 	const [titles, setTitles] = useState(NO_TITLES);
 	const [load, setLoad] = useState<Load>({ state: 'loading' });
 	const [attempt, setAttempt] = useState(0);
@@ -66,6 +74,8 @@ export function SlotPage({ config, slot }: { config: AppConfig; slot: number }) 
 				titles={titles}
 				editRequired={config.editRequired}
 				version={__SEGL_VERSION__}
+				displayName={displayName.name}
+				onRename={displayName.rename}
 			/>
 			<main className="segl__canvas">
 				{load.state === 'ready' && (

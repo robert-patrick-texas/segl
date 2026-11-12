@@ -14,12 +14,14 @@
 
 /**
  * The segl bar. It sits above the canvas, outside it, and holds the slot
- * buttons, the shared title, room for the presence count (T06), and the
- * notice that the workspace is shared (S-016).
+ * buttons, the shared title, room for the presence count (T06), this
+ * browser's display name (S-009), and the notice that the workspace is shared
+ * (S-016).
  */
 import { NavLink } from 'react-router';
 import { SLOT_NUMBERS } from '../slots.ts';
 import './bar.css';
+import { NameControl } from './NameControl.tsx';
 import { sharedNotice } from './notice.ts';
 
 export interface SeglBarProps {
@@ -28,9 +30,20 @@ export interface SeglBarProps {
 	titles: ReadonlyMap<number, string>;
 	editRequired: boolean;
 	version: string;
+	/** This browser's display name, or null until the server has assigned one. */
+	displayName: string | null;
+	/** Store a name the person typed. Returns it as stored, or null when it is not usable. */
+	onRename: (text: string) => string | null;
 }
 
-export function SeglBar({ slot, titles, editRequired, version }: SeglBarProps) {
+export function SeglBar({
+	slot,
+	titles,
+	editRequired,
+	version,
+	displayName,
+	onRename
+}: SeglBarProps) {
 	return (
 		<header className="segl-bar">
 			<span className="segl-bar__brand">segl</span>
@@ -53,6 +66,11 @@ export function SeglBar({ slot, titles, editRequired, version }: SeglBarProps) {
 			<h1 className="segl-bar__title">{titles.get(slot) ?? ''}</h1>
 			{/* The presence count and its list go here in T06. */}
 			<div className="segl-bar__presence" data-testid="presence" />
+			<div className="segl-bar__you">
+				{/* The button's own label says the same to a screen reader. */}
+				<span aria-hidden="true">You:</span>
+				<NameControl name={displayName} onRename={onRename} />
+			</div>
 			<p className="segl-bar__notice" role="note">
 				{sharedNotice(editRequired)}
 			</p>

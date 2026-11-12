@@ -60,7 +60,7 @@ segl's own redirects are relative. It sends none today: the framework's trailing
 2. nginx terminates TLS, strips `/board`, and proxies `/s/1` to `127.0.0.1:8888`, with the client's address in `X-Forwarded-For`.
 3. Python returns `index.html` with `../` asset URLs and `SEGL_CONFIG`.
 4. The app stores last-slot `1`, loads the head scene from `api/v1/slots/1/scene` under its root, and mounts Excalidraw.
-5. If `displayName` is missing, the app asks the server for the next label and stores it.
+5. If `displayName` is missing, the app asks the server for the next label (`POST api/v1/display-name`) and stores it.
 6. The app opens the WebSocket and sends `hello` with `clientId`, the display name, and the edit token when the browser has one.
 7. The server joins the connection to the in-memory room for slot 1 and sends the current head epoch, the title, and the current participant list.
 8. An edit in the canvas sends the changed elements. The server reconciles them into the room scene, broadcasts the winners, and schedules a head flush.
@@ -102,11 +102,15 @@ The editor runs in its view mode when this client is view-only. The segl bar alw
 
 ## Display names
 
-The packaged list is `draft2/display-names.txt`. T05 copies it to `deploy/display-names.txt` and the `.deb` installs it at `/opt/segl/etc/display-names.txt`. A site may replace that file. Lines that are blank or start with `#` are ignored. Every remaining line is 1–10 ASCII letters. Startup fails if the filtered list is empty.
+The packaged list is `deploy/display-names.txt`, copied in T05 from `draft2/display-names.txt`. The `.deb` installs it at `/opt/segl/etc/display-names.txt`. A site may replace that file. Lines that are blank or start with `#` are ignored, and so are spaces around a word. Every remaining line is 1–10 ASCII letters. segl reads the file once, when it starts, so a changed file takes a restart. Startup fails, with exit status 1 and a message that names the file, if the file is missing, has a line that is not such a word, or has no words left.
 
 The counter is one row in SQLite. It starts at 1 and survives restarts. Assignment is a single transaction: read `next_value`, increment it, commit, then choose `word = lines[(value - 1) % len(lines)]` and return `f"{word}{value}"`. The first three packaged assignments are `Alpha1`, `Bravo2`, `Charlie3`.
 
-The browser calls assignment only when it has no stored label, then stores the result. A person may replace the label. The client and the server title-case a manual name: split on whitespace, uppercase the first character of each word, lowercase the rest (`john smith` becomes `John Smith`, and `NASA` becomes `Nasa`). Automatic names skip that transform so file spellings such as `McKinley` stay as written. Manual names are 1–40 characters after trimming. Duplicate manual names are allowed. The menu count is connections, so two tabs can show the same label twice.
+The browser calls assignment (`POST api/v1/display-name`) only when it has no stored label, then stores the result under `segl:{basePath}:displayName`. A reload, another slot, and another tab of the same browser all show the stored label and do not ask again. One client address is given at most 30 names a minute (`SECURITY.md`). A browser that is refused, or cannot reach the server, shows `Set your name` in place of a label, stays usable, and asks again later: after the `Retry-After` time of a refusal, and otherwise after half a minute.
+
+A person may replace the label: the label in the segl bar is a button that opens a field. Enter, or leaving the field, keeps the new name. Escape keeps the old one. The client and the server title-case a manual name: split on whitespace, join the words with one space, uppercase the first character of each word, lowercase the rest (`john smith` becomes `John Smith`, and `NASA` becomes `Nasa`). Where the uppercase of that first character is more than one character, only the first of them stays uppercase (`ßeta` becomes `Sseta`), so title-casing a name twice gives the same name. Automatic names skip that transform so file spellings such as `McKinley` stay as written, and a field that is closed without a change renames nothing. Manual names are 1–40 characters after that transform. One that is not is refused, and the field says so. Duplicate manual names are allowed. The menu count is connections, so two tabs can show the same label twice.
+
+Until T06, a rename is stored in this browser and shown only there. T06 sends the stored label in `hello`, sends a rename on the socket, and does not allocate again. The two implementations of the title case, `src/segl/names.py` and `web/src/names.ts`, are held to one table of cases, `tests/display_name_cases.json`.
 
 ## Data the MVP stores
 

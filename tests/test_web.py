@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from harness import ROOT, make_settings, running_segl
+from harness import DISPLAY_NAMES_FILE, ROOT, make_settings, running_segl
 
 from segl import cli
 from segl.app import create_app
@@ -271,7 +271,8 @@ def test_the_command_refuses_an_index_that_is_not_a_build(
     (tmp_path / "web" / "index.html").write_text("<p>not a build</p>", encoding="utf-8")
     config = tmp_path / "segl.toml"
     config.write_text(
-        f'database = "{tmp_path / "segl.sqlite"}"\nweb_dir = "{tmp_path / "web"}"\n',
+        f'database = "{tmp_path / "segl.sqlite"}"\nweb_dir = "{tmp_path / "web"}"\n'
+        f'display_names = "{DISPLAY_NAMES_FILE}"\n',
         encoding="utf-8",
     )
 

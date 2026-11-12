@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Fixtures: a bootstrapped database, and what the release-script tests need.
+"""Fixtures: a bootstrapped database, nginx for the tests that go through it,
+and what the release-script tests need.
 
 ``repository`` is a SQLite file in the test's temporary folder, with the nine
 slots. For the release script there are fakes and a throwaway git repository.
@@ -29,7 +30,9 @@ from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
+import harness
 import pytest
+from harness import NginxTools
 from release_components import Component, LookupFailed, Sources
 from release_proc import Result, Runner
 
@@ -135,6 +138,18 @@ LATEST = {
 }
 
 Reply = str | Exception | Result | Callable[[Sequence[str]], Result]
+
+
+@pytest.fixture(scope="session")
+def tools() -> NginxTools:
+    """nginx and openssl. Without them the test skips, or fails where nginx is required."""
+    return harness.nginx_tools_or_skip()
+
+
+@pytest.fixture(scope="session")
+def certificate(tools: NginxTools, tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path]:
+    """The test certificate for both site examples, and its key."""
+    return harness.make_certificate(tools, tmp_path_factory.mktemp("certificate"))
 
 
 @pytest.fixture

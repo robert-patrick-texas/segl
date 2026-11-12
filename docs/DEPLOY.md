@@ -31,6 +31,8 @@ segl checks the file when it starts. A key it does not know, such as a misspelle
 
 Without `--config`, segl runs with development defaults: the values above, except `database = "var/segl.sqlite"`, `assets_dir = "var/assets"`, `display_names = "deploy/display-names.txt"`, and `web_dir = "web/dist"`, relative to the working directory. Git ignores `var/`. Without `--config`, segl also reads `segl.toml` from the working directory when that file exists, so a local file, which git ignores too, can override any of them. With `--config`, only the named file is read. Tests point `database`, `assets_dir`, and `display_names` at temporary paths and may shorten the flush interval.
 
+`display_names` is the word file new visitors are named from (`ARCHITECTURE.md`, display names): one word of 1–10 ASCII letters on a line, with blank lines and `#` comments skipped. segl reads it once, when it starts, so a changed file takes a restart. A file that is missing, has a line that is not such a word, or has no words stops segl with exit status 1 and one line that names the file, and the line number when a line is at fault.
+
 After the settings, segl opens `database`, before it listens. It creates the file, and its folder, when they are missing, applies the migrations the file lacks, and adds the nine slots (`DATA-MODEL.md`). A database it cannot open, or one written by a newer segl, stops it with exit status 1 and one line that names the file.
 
 The example file ships with `edit_token = ""`. Operators who set a token restrict the file to mode `0640`, owner `root`, group `segl`.

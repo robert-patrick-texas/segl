@@ -18,9 +18,12 @@
  *
  * Every request to another origin is refused, as with outbound network
  * blocked, and counted. The editor still has to paint, with its fonts.
+ *
+ * The first test's browser is a new visitor, so the request for a display
+ * name is part of what is watched.
  */
-import { expect, test, type Page } from '@playwright/test';
-import { expectEditor, mountOf, sceneDocument } from './pages.ts';
+import { expect, type Page } from '@playwright/test';
+import { expectEditor, mountOf, nameButton, sceneDocument, test } from './pages.ts';
 
 interface Traffic {
 	/** Paths asked of the page's own origin. */
@@ -52,40 +55,47 @@ async function watch(page: Page, origin: string): Promise<Traffic> {
 	return traffic;
 }
 
-test('the slot page stays inside its mount, with outbound network blocked', async ({
-	page,
-	baseURL
-}) => {
-	const { origin, basePath } = mountOf(baseURL);
-	const traffic = await watch(page, origin);
+test.describe('a new visitor', () => {
+	test.use({ storedName: null });
 
-	await page.goto('s/1');
-	await expectEditor(page);
-	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Workspace 1');
+	test('the slot page stays inside its mount, with outbound network blocked', async ({
+		page,
+		baseURL
+	}) => {
+		const { origin, basePath } = mountOf(baseURL);
+		const traffic = await watch(page, origin);
 
-	// A text element makes the editor fetch a canvas font, which it would take
-	// from a public CDN if it were not pointed at segl.
-	const font = page.waitForResponse((response) => response.url().includes('/fonts/'));
-	await page.locator('[data-testid="toolbar-text"]').click({ force: true });
-	const canvas = (await page.locator('.excalidraw canvas.interactive').boundingBox())!;
-	await page.mouse.click(canvas.x + canvas.width / 2, canvas.y + canvas.height / 2);
-	await page.keyboard.type('segl');
-	await page.keyboard.press('Escape');
-	expect((await font).status()).toBe(200);
-	expect((await sceneDocument(page)).elements.map((element) => element.type)).toEqual(['text']);
-	await page.waitForLoadState('networkidle');
+		await page.goto('s/1');
+		await expectEditor(page);
+		await expect(page.getByRole('heading', { level: 1 })).toHaveText('Workspace 1');
+		// The label came from this segl, under the mount.
+		await expect(nameButton(page)).toHaveText(/^(Guest|Staff)\d+$/);
 
-	expect(traffic.outside).toEqual([]);
-	expect(traffic.failed).toEqual([]);
-	expect(traffic.local.filter((path) => !path.startsWith(basePath))).toEqual([]);
-	// The page, the API, the build's files, and the editor's fonts, all under the mount.
-	expect(traffic.local).toContain(`${basePath}s/1`);
-	expect(traffic.local).toContain(`${basePath}api/v1/slots/1/scene`);
-	expect(traffic.local.some((path) => path.startsWith(`${basePath}assets/`))).toBe(true);
-	expect(traffic.local.some((path) => path.startsWith(`${basePath}fonts/`))).toBe(true);
-	// No cookie (S-007).
-	expect(traffic.cookies).toEqual([]);
-	expect(await page.evaluate(() => document.cookie)).toBe('');
+		// A text element makes the editor fetch a canvas font, which it would take
+		// from a public CDN if it were not pointed at segl.
+		const font = page.waitForResponse((response) => response.url().includes('/fonts/'));
+		await page.locator('[data-testid="toolbar-text"]').click({ force: true });
+		const canvas = (await page.locator('.excalidraw canvas.interactive').boundingBox())!;
+		await page.mouse.click(canvas.x + canvas.width / 2, canvas.y + canvas.height / 2);
+		await page.keyboard.type('segl');
+		await page.keyboard.press('Escape');
+		expect((await font).status()).toBe(200);
+		expect((await sceneDocument(page)).elements.map((element) => element.type)).toEqual(['text']);
+		await page.waitForLoadState('networkidle');
+
+		expect(traffic.outside).toEqual([]);
+		expect(traffic.failed).toEqual([]);
+		expect(traffic.local.filter((path) => !path.startsWith(basePath))).toEqual([]);
+		// The page, the API, the build's files, and the editor's fonts, all under the mount.
+		expect(traffic.local).toContain(`${basePath}s/1`);
+		expect(traffic.local).toContain(`${basePath}api/v1/slots/1/scene`);
+		expect(traffic.local).toContain(`${basePath}api/v1/display-name`);
+		expect(traffic.local.some((path) => path.startsWith(`${basePath}assets/`))).toBe(true);
+		expect(traffic.local.some((path) => path.startsWith(`${basePath}fonts/`))).toBe(true);
+		// No cookie (S-007).
+		expect(traffic.cookies).toEqual([]);
+		expect(await page.evaluate(() => document.cookie)).toBe('');
+	});
 });
 
 test('opening the root stays inside the mount too', async ({ page, baseURL }) => {

@@ -23,6 +23,7 @@ import uvicorn
 
 from segl.app import create_app
 from segl.config import ConfigError, load_settings
+from segl.names import DisplayNamesError
 from segl.repository import Repository, StorageError
 from segl.versions import app_version
 from segl.web import WebBuildError
@@ -50,8 +51,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"segl: {exc}", file=sys.stderr)
         return 2
     # The database is opened, migrated, and given its nine slots before the
-    # port is, so a database segl cannot use stops it here with one line. The
-    # application closes it at shutdown. The `with` covers a stop before that.
+    # port is, so a database segl cannot use stops it here with one line. So
+    # does a display-name file without words, which create_app reads. The
+    # application closes the database at shutdown. The `with` covers a stop
+    # before that.
     try:
         with Repository(settings.database, history_limit=settings.history_limit) as repository:
             repository.bootstrap()
@@ -72,7 +75,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 proxy_headers=True,
                 forwarded_allow_ips=list(settings.trusted_proxies),
             )
-    except (StorageError, WebBuildError) as exc:
+    except (StorageError, DisplayNamesError, WebBuildError) as exc:
         print(f"segl: {exc}", file=sys.stderr)
         return 1
     return 0

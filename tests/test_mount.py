@@ -22,36 +22,12 @@ The tests need nginx and openssl. Without them they skip and say why. With
 ``SEGL_REQUIRE_NGINX`` set, as in the dev container and CI, they fail instead.
 """
 
-import ssl
-from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+from collections.abc import Iterator
 from pathlib import Path
 
 import harness
 import pytest
-from harness import BOARD_SITE, ROOT_SITE, NginxTools, Reply, SeglServer
-
-
-@dataclass(frozen=True)
-class Mount:
-    """nginx serving both site examples in front of one segl process."""
-
-    segl: SeglServer
-    https_port: int
-    tls: ssl.SSLContext
-
-    def get(self, site: str, path: str, headers: Mapping[str, str] | None = None) -> Reply:
-        return harness.fetch(self.https_port, path, site=site, tls=self.tls, headers=headers)
-
-
-@pytest.fixture(scope="module")
-def tools() -> NginxTools:
-    return harness.nginx_tools_or_skip()
-
-
-@pytest.fixture(scope="module")
-def certificate(tools: NginxTools, tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path]:
-    return harness.make_certificate(tools, tmp_path_factory.mktemp("certificate"))
+from harness import BOARD_SITE, ROOT_SITE, Mount, NginxTools
 
 
 @pytest.fixture(scope="module")
@@ -60,22 +36,8 @@ def mount(
     certificate: tuple[Path, Path],
     tmp_path_factory: pytest.TempPathFactory,
 ) -> Iterator[Mount]:
-    folder = tmp_path_factory.mktemp("mount")
-    https_port = harness.free_port()
-    with harness.running_segl(folder / "segl") as segl:
-        prefix = harness.install_nginx(
-            folder / "nginx",
-            sites=(BOARD_SITE, ROOT_SITE),
-            upstream_port=segl.port,
-            http_port=harness.free_port(),
-            https_port=https_port,
-            certificate=certificate[0],
-            key=certificate[1],
-        )
-        with harness.running_nginx(tools, prefix, https_port):
-            # The client checks the test certificate and the site's name, as a browser would.
-            tls = ssl.create_default_context(cafile=str(certificate[0]))
-            yield Mount(segl=segl, https_port=https_port, tls=tls)
+    with harness.running_mount(tools, certificate, tmp_path_factory.mktemp("mount")) as mount:
+        yield mount
 
 
 @pytest.mark.parametrize("site", [BOARD_SITE, ROOT_SITE])

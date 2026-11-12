@@ -54,6 +54,11 @@ NGINX_FILES = ROOT / "deploy" / "nginx"
 EMPTY_SCENE_FILE = ROOT / "src" / "segl" / "empty_scene.json"
 EMPTY_SCENE: Any = json.loads(EMPTY_SCENE_FILE.read_text(encoding="utf-8"))
 
+# The packaged display-name list, and the two-word file docs/TEST-PLAN.md
+# T-014 names, which every test server gets unless the test wrote its own.
+DISPLAY_NAMES_FILE = ROOT / "deploy" / "display-names.txt"
+TEST_DISPLAY_NAMES = "Guest\nStaff\n"
+
 # Set in the dev container and in CI, where a missing nginx is a failure, not a skip.
 REQUIRE_NGINX = "SEGL_REQUIRE_NGINX"
 # `http2 on;` in the site examples needs this release.
@@ -96,7 +101,13 @@ http {
 
 
 def make_settings(**changes: Any) -> Settings:
-    """Return the settings deploy/segl.toml.example gives, with ``changes`` applied."""
+    """Return the settings deploy/segl.toml.example gives, with ``changes`` applied.
+
+    One value differs: ``display_names`` is the packaged list in the checkout,
+    because the application reads the file and the example's path exists only
+    on an installed host.
+    """
+    changes.setdefault("display_names", DISPLAY_NAMES_FILE)
     return replace(load_settings(ROOT / "deploy" / "segl.toml.example"), **changes)
 
 
@@ -135,11 +146,12 @@ def fetch(
     port: int,
     path: str,
     *,
+    method: str = "GET",
     site: str | None = None,
     tls: ssl.SSLContext | None = None,
     headers: Mapping[str, str] | None = None,
 ) -> Reply:
-    """GET ``path`` from 127.0.0.1:``port``. Redirects are returned, not followed.
+    """Ask 127.0.0.1:``port`` for ``path``. Redirects are returned, not followed.
 
     With ``site`` and ``tls``, the request is HTTPS for that host name, as a
     browser would send it: the name is in the TLS handshake and, with the
@@ -151,7 +163,7 @@ def fetch(
     else:
         connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
     try:
-        connection.request("GET", path, headers=dict(headers or {}))
+        connection.request(method, path, headers=dict(headers or {}))
         response = connection.getresponse()
         return Reply(response.status, response.headers, response.read())
     finally:
@@ -195,6 +207,9 @@ class SeglServer:
     def get(self, path: str, headers: Mapping[str, str] | None = None) -> Reply:
         return fetch(self.port, path, headers=headers)
 
+    def post(self, path: str, headers: Mapping[str, str] | None = None) -> Reply:
+        return fetch(self.port, path, method="POST", headers=headers)
+
     def log(self) -> str:
         return self.log_file.read_text(encoding="utf-8")
 
@@ -215,16 +230,20 @@ def running_segl(folder: Path, config: str = "") -> Generator[SeglServer]:
     """Run ``python -m segl --config`` on a free loopback port until the block ends.
 
     The data paths point inside ``folder``. ``config`` is further TOML, and
-    may replace them.
+    may replace them. The display-name file is ``Guest`` and ``Staff``, unless
+    the folder already has a ``display-names.txt``.
     """
     folder.mkdir(parents=True, exist_ok=True)
+    names = folder / "display-names.txt"
+    if not names.exists():
+        names.write_text(TEST_DISPLAY_NAMES, encoding="utf-8")
     port = free_port()
     config_file = folder / "segl.toml"
     config_file.write_text(
         f'bind = "127.0.0.1:{port}"\n'
         f'database = "{folder / "segl.sqlite"}"\n'
         f'assets_dir = "{folder / "assets"}"\n'
-        f'display_names = "{folder / "display-names.txt"}"\n' + config,
+        f'display_names = "{names}"\n' + config,
         encoding="utf-8",
     )
     server = SeglServer(port=port, config=config_file, log_file=folder / "segl.log")
@@ -355,6 +374,47 @@ def check_nginx(tools: NginxTools, prefix: Path) -> subprocess.CompletedProcess[
     """Run ``nginx -t`` on a prefix."""
     command = [*nginx_command(tools, prefix), "-t"]
     return subprocess.run(command, capture_output=True, text=True, check=False)
+
+
+@dataclass(frozen=True)
+class Mount:
+    """nginx serving both site examples in front of one segl process."""
+
+    segl: SeglServer
+    https_port: int
+    tls: ssl.SSLContext
+
+    def get(self, site: str, path: str, headers: Mapping[str, str] | None = None) -> Reply:
+        return fetch(self.https_port, path, site=site, tls=self.tls, headers=headers)
+
+    def post(self, site: str, path: str, headers: Mapping[str, str] | None = None) -> Reply:
+        return fetch(self.https_port, path, method="POST", site=site, tls=self.tls, headers=headers)
+
+
+@contextmanager
+def running_mount(
+    tools: NginxTools, certificate: tuple[Path, Path], folder: Path, config: str = ""
+) -> Generator[Mount]:
+    """Run a segl process, and nginx in front of it with both site examples.
+
+    ``certificate`` is the pair ``make_certificate`` returned. ``config`` is
+    further TOML for segl.
+    """
+    https_port = free_port()
+    with running_segl(folder / "segl", config) as segl:
+        prefix = install_nginx(
+            folder / "nginx",
+            sites=(BOARD_SITE, ROOT_SITE),
+            upstream_port=segl.port,
+            http_port=free_port(),
+            https_port=https_port,
+            certificate=certificate[0],
+            key=certificate[1],
+        )
+        with running_nginx(tools, prefix, https_port):
+            # The client checks the test certificate and the site's name, as a browser would.
+            tls = ssl.create_default_context(cafile=str(certificate[0]))
+            yield Mount(segl=segl, https_port=https_port, tls=tls)
 
 
 @contextmanager

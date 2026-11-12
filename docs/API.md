@@ -19,7 +19,7 @@ A mutation, or a WebSocket upgrade, whose `Origin` header is present and does no
 | GET | `/api/v1/slots/{n}/revisions` | Newest first, at most 50: revision, epoch, authorLabel, createdAt. Scene bodies stay on the single-revision route. |
 | GET | `/api/v1/slots/{n}/revisions/{revision}` | One stored scene. |
 | POST | `/api/v1/slots/{n}/restore` | Body `{ "revision" }`. Replaces the head, increments epoch, appends a revision, broadcasts to the room. Edit token when set. |
-| POST | `/api/v1/display-name` | Allocates the next `WordN`. No edit token. Rate-limited to 30 calls per minute per client address (`SECURITY.md`). |
+| POST | `/api/v1/display-name` | Allocates the next `WordN` and returns `{ "displayName" }`. No body and no edit token. At most 30 names per minute per client address (`SECURITY.md`). The next call gets `429` with `rate_limited` and a `Retry-After` header. |
 | POST | `/api/v1/slots/{n}/import` | Body is an Excalidraw JSON document. Same epoch rules as restore. Edit token when set. Reject above `max_scene_bytes` with `413` and `payload_too_large`. |
 
 Paths are exact. A trailing slash, as in `/api/v1/health/`, is a `404` and is not redirected.
@@ -32,6 +32,7 @@ Errors that no route names:
 |---|---|---|
 | 404 | `not_found` | No route has this path. |
 | 405 | `method_not_allowed` | The path exists and does not take this method. The `Allow` header lists the ones it takes. Slots have no create or delete route. |
+| 429 | `rate_limited` | This client address has been given 30 display names in the last minute. `Retry-After` is the whole seconds until it may have another. The refused call takes no name. |
 | 500 | `internal_error` | segl failed, for example because it could not read the database. The cause is in the server log, not in the response. |
 
 A slot's metadata, from `/api/v1/slots/4`:
@@ -53,6 +54,14 @@ A slot's scene, from `/api/v1/slots/4/scene`:
 ```
 
 `scene` is the stored document, returned as it was saved. `savedAt` is when the head was last written, in UTC to the millisecond. `editorLabel` is `System` until a connection has saved the slot.
+
+A display name, from `POST /api/v1/display-name`:
+
+```json
+{ "displayName": "Alpha1" }
+```
+
+Every call takes the next number, so the response is sent with `Cache-Control: no-store`, and a browser calls the route only when it has no stored label (`ARCHITECTURE.md`, display names).
 
 Uploaded files, for the editor's file model (T07):
 

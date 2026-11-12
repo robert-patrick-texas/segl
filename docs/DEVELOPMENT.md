@@ -50,6 +50,8 @@ The browser reaches nginx by address, as `https://127.0.0.1:18951/board/`, and d
 
 `web/e2e/mount.spec.ts` is the page half of T-013 and T-010. It refuses every request to another origin, as with outbound network blocked, and fails if the page attempted one, asked for a path outside its mount, got an error status, or was sent a cookie.
 
+A test's browser starts with a display name already in `localStorage` (`Tester`), as a returning visitor's does, and asks the server for none. segl gives one address 30 names a minute, and every browser test comes from `127.0.0.1`. The specs import `test` from `web/e2e/pages.ts`, which stores that name. The few tests about a new visitor opt out with `test.use({ storedName: null })`, and take 18 names in a run. The test server's word file is `Guest` and `Staff`.
+
 The canvas is pixels, so the specs read the scene through `window.SEGL_CANVAS.document()`, a read-only handle the canvas adapter publishes (`web/src/canvas/handle.ts`). It returns the scene document as the editor serializes it for storage.
 
 ## The empty scene
@@ -71,7 +73,7 @@ uv run ruff format --check .
 uv run ty check
 ```
 
-`uv run pytest` covers `tests/` and `tools/md2html`. The page tests (`tests/test_web.py`) use a small stand-in for `web/dist`, so pytest needs no web build. One of them holds the stand-in to the real build when `web/dist` exists, and skips when it does not. Some tests start a real `segl` process on a free loopback port. The mount tests (`tests/test_mount.py`) also start nginx in front of it, from a temporary copy of the `deploy/nginx/` files (`tests/harness.py`). On a host without nginx or openssl they skip, and the summary line says why. With `SEGL_REQUIRE_NGINX=1` they fail instead. The dev container and CI set it. The release script's tests use fakes for the network, `gh`, and `git push`, and real `git` in a temporary repository. One test builds the wheel with `uv build` to confirm it carries `versions.toml` and the SQL migrations, so it needs the network the first time. The repository and slot tests each use a SQLite file in pytest's temporary folder. ruff's settings are in `pyproject.toml`: 100-character lines, Markdown left alone, and `scripts/` kept to Python 3.11 syntax because the host's `python3` runs them.
+`uv run pytest` covers `tests/` and `tools/md2html`. The page tests (`tests/test_web.py`) use a small stand-in for `web/dist`, so pytest needs no web build. One of them holds the stand-in to the real build when `web/dist` exists, and skips when it does not. Some tests start a real `segl` process on a free loopback port. The mount tests (`tests/test_mount.py`) also start nginx in front of it, from a temporary copy of the `deploy/nginx/` files (`tests/harness.py`), and so does the display-name limit's test (`tests/test_names.py`). A test server's word file is `Guest` and `Staff`. On a host without nginx or openssl they skip, and the summary line says why. With `SEGL_REQUIRE_NGINX=1` they fail instead. The dev container and CI set it. The release script's tests use fakes for the network, `gh`, and `git push`, and real `git` in a temporary repository. One test builds the wheel with `uv build` to confirm it carries `versions.toml` and the SQL migrations, so it needs the network the first time. The repository and slot tests each use a SQLite file in pytest's temporary folder. ruff's settings are in `pyproject.toml`: 100-character lines, Markdown left alone, and `scripts/` kept to Python 3.11 syntax because the host's `python3` runs them.
 
 The dev container runs the same suite while it builds, from the repository root:
 
@@ -90,7 +92,7 @@ npm --prefix web run build             # web/dist, which Python serves
 npm --prefix web run e2e               # Playwright, against Python serving that build
 ```
 
-`npm --prefix web run format` rewrites the files Prettier would complain about. Vitest covers the modules that need no browser: how the page finds segl's root, slot parsing and the last slot, the canvas adapter's reading of a stored scene, and the build scripts. A test (`tests/test_pins.py`) holds `web/package.json`, `web/package-lock.json`, and `web/.node-version` to `versions.toml`.
+`npm --prefix web run format` rewrites the files Prettier would complain about. Vitest covers the modules that need no browser: how the page finds segl's root, slot parsing and the last slot, display names, the canvas adapter's reading of a stored scene, and the build scripts. `tests/display_name_cases.json` is one table of typed names and what segl shows for each. Vitest and pytest both read it, so the browser's title case and the server's cannot drift apart. A test (`tests/test_pins.py`) holds `web/package.json`, `web/package-lock.json`, and `web/.node-version` to `versions.toml`.
 
 CI runs the same commands (`.github/workflows/ci.yml`). It installs nginx and Chromium, sets `SEGL_REQUIRE_NGINX=1`, and builds `web/` before pytest. The dev container runs them too, except the browser tests, which join in T11.
 
