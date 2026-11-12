@@ -128,7 +128,7 @@ Acceptance:
 
 ## T03 — SQLite slots
 
-- Status: next
+- Status: done
 - Requires: T02
 - Requirements: S-003
 - Read: `docs/DATA-MODEL.md`
@@ -141,7 +141,7 @@ Acceptance: a test boots a temp database, reads nine titles `Workspace 1`–`Wor
 
 ## T04 — Excalidraw shell
 
-- Status: pending
+- Status: next
 - Requires: T03
 - Requirements: S-001, S-003, S-006, S-014, S-016
 - Read: `docs/ARCHITECTURE.md` (mount and navigation), `docs/DECISIONS.md` D2-004, D2-007, and D2-023, `docs/DEVELOPMENT.md`

@@ -4,10 +4,10 @@ This file is the source of truth for what is done and what to do next. Update it
 
 - Updated: 2026-11-12
 - Phase: P0 collaborative slots
-- Next task: T03
-- Completed: T00, T00b, T01, T01b, T02
+- Next task: T04
+- Completed: T00, T00b, T01, T01b, T02, T03
 - Blocked: no
-- Application code: Python service (`src/segl`) with settings, and the health and config routes
+- Application code: Python service (`src/segl`) with settings, SQLite storage for the nine slots, and the health, config, and slot read routes
 
 ## Log
 
@@ -116,3 +116,41 @@ This file is the source of truth for what is done and what to do next. Update it
   - Not done or not exercised: the port-80 servers in the site examples, the WebSocket and the page through nginx (T06, T04), gzip, IPv6 listeners (the copies drop them), rootless Docker and Podman, and the `Host` header segl receives, which T06's Origin check will test. Unknown paths still get FastAPI's `{"detail":"Not Found"}`, not the `{ "error", "message" }` shape in `docs/API.md`; T03 adds the first coded error.
   - Still not listed in `versions.toml` or checked: the uv 0.13.7 image digest in `deploy/Containerfile`.
   - Next action T03.
+- 2026-11-12: T03 done. Evidence, all on commit `3d41422`:
+  - `uv run pytest` gave 259 passed and none skipped, on the host with SQLite 3.53.1 in Python 3.15.2. The 99 new tests are in `tests/test_repository.py`, `tests/test_slots.py`, `tests/test_routes.py`, and `tests/test_mount.py`.
+  - The acceptance test, `test_a_new_database_serves_nine_isolated_slots`, boots a temporary database and reads it over HTTP:
+    - `GET /api/v1/slots` and each `GET /api/v1/slots/{n}` gave the titles `Workspace 1` to `Workspace 9`.
+    - Every scene started as `{"elements": []}`. After a head was saved to slot 2, slot 2 returned it and the other eight were unchanged.
+    - `/api/v1/slots/0`, `/api/v1/slots/10`, and both with `/scene` gave `404` with `invalid_slot`.
+  - A real `python -m segl --config` process created its database, served the nine slots, and after a restart still had a title and a scene written in between. After SIGTERM only `segl.sqlite` was left, with no `-wal` or `-shm` file.
+  - Through nginx, `/board/api/v1/slots`, `/board/api/v1/slots/9/scene`, and the `invalid_slot` answer for slot 10 reached segl, and the same at a host root. None set a cookie.
+  - The repository tests cover every method in `docs/DATA-MODEL.md`:
+    - The tables SQLite holds are the four in the page's SQL block, compared as text.
+    - A second bootstrap keeps a renamed title, a saved head, and the name counter.
+    - `save_head` and `append_revision` refuse an epoch that is not current and write nothing.
+    - The 51st revision drops the oldest, per slot.
+    - `replace_head` raises the epoch and writes the head and a revision together, and a replace that fails halfway changes nothing.
+    - Names from `Guest` / `Staff` come out `Guest1`, `Staff2`, `Guest3`.
+    - 80 calls from 8 threads share the one connection.
+    - A failed migration leaves the schema number and the tables as they were. A database with a higher schema number is refused and unchanged.
+  - 24 deliberate breakages each failed a test. Among them: bootstrap overwriting slots or heads, foreign keys off, WAL not set, either epoch check removed, history not trimmed, no rollback, the lock removed, a newer schema accepted, the route parsing `{n}` with `int()`, each error handler removed, the command skipping bootstrap, and the shutdown not closing the database.
+  - `uv run segl` in an empty folder created `var/segl.sqlite` and answered `/api/v1/slots/9`. With a file where `var/` should be, it printed `segl: cannot open the database var/segl.sqlite: [Errno 17] File exists: 'var'` and exited 1.
+  - `uv run ruff check .` and `uv run ty check` printed `All checks passed!`. `uv run ruff format --check .` printed `36 files already formatted`.
+  - `docker build --progress=plain -f deploy/Containerfile .` (rootful Docker) ran 259 passed on Python 3.15.2.
+  - CI run 43171471809 succeeded with 259 passed. Pages run 43171471800 succeeded. `python3 scripts/build_docs.py` found 0 broken links.
+  - Choices the task left open:
+    - The `segl` command opens and bootstraps the database before it listens, and passes the repository to `create_app(settings, repository)`. A database it cannot use is one line and exit status 1, not a traceback from the server.
+    - The application closes the database in its shutdown hook. After SIGTERM, uvicorn ends the process as soon as that hook returns, so code after `uvicorn.run` does not run. T07's flush on SIGTERM belongs in the same hook, before the close.
+    - One connection behind a lock, with `synchronous = FULL`. The slot routes are plain functions, which FastAPI runs in worker threads. T06's room, on the event loop, must call the repository through a worker thread.
+    - The schema number is `PRAGMA user_version`, so there is no migrations table beside the four in `docs/DATA-MODEL.md`.
+    - `GET /api/v1/slots` returns `{ "slots": [ ... ] }`, an object like every other response. The scene route returns `{ "scene", "epoch", "savedAt", "editorLabel", "files" }`, and `files` is `[]` until T07.
+    - `{n}` is exactly one of `1` to `9`. `01`, `+1`, and digits of other scripts are `invalid_slot`.
+    - `append_revision` checks the epoch as `save_head` does. The restore and import method is `replace_head`.
+    - `rename_slot` stores the title it is given. T06's `PATCH` route owns the trim and the 1–80 character rule.
+    - Every error has the `{ "error", "message" }` shape: `not_found`, `method_not_allowed`, and `internal_error` are new codes in `docs/API.md`.
+    - The license-header test now covers `.sql` files.
+  - For T04: the placeholder is `PLACEHOLDER_SCENE` in `src/segl/repository.py`, the exact text `{"elements":[]}`. Replacing it in existing heads is a data change in `bootstrap()` or a new numbered migration, not an edit to `0001_slots.sql`.
+  - Not done or not exercised: a FastAPI validation error (422) still has the framework's `{"detail": ...}` shape, and no route can produce one yet. A database on a filesystem without WAL support was not tried. `rename_slot`, `save_head`, `append_revision`, `replace_head`, the revision reads, and `allocate_display_name` have no route yet (T05 to T09). Rootless Docker and Podman were not tried.
+  - `README.md` still says application code has not started and names T01 as the next step. It was not changed in this task.
+  - Still not listed in `versions.toml` or checked: the uv 0.13.7 image digest in `deploy/Containerfile`.
+  - Next action T04.
