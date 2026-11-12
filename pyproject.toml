@@ -18,6 +18,9 @@ dependencies = [
     "fastapi==0.162.5",
     # Plain uvicorn, not [standard], as in vakr and Sunstone.
     "uvicorn==0.54.0",
+    # The WebSocket protocol for uvicorn, which has none of its own, and the
+    # client the tests connect with.
+    "websockets==17.4",
 ]
 
 [project.urls]

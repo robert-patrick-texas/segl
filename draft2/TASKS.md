@@ -188,7 +188,7 @@ Acceptance:
 
 ## T06 — Live collaboration and titles
 
-- Status: pending
+- Status: done
 - Requires: T05
 - Requirements: S-002, S-003 (titles), S-008, S-010, S-013
 - Read: `docs/ARCHITECTURE.md` (collaboration, edit gate), `docs/API.md` (WebSocket, slot route), `docs/SECURITY.md` (Origin)
@@ -198,6 +198,8 @@ Implement the room, the WebSocket messages, reconcile, presence, and the view-on
 Implement title editing in the bar and `PATCH /api/v1/slots/{n}`, broadcast to the room as a `slot` message. Refuse a WebSocket upgrade or a mutation whose `Origin` does not match `Host` (`docs/SECURITY.md`).
 
 If the pinned package exports a reconcile helper, use it in the client and match it in the server unit test. Otherwise use version, then versionNonce. Record the choice in `docs/DECISIONS.md`.
+
+The package exports `reconcileElements`, and D2-025 records the choice. The room keeps its scene in memory, and T07 writes it to the head. The server gates on the token in `hello` and on the `X-Segl-Edit-Token` header, and the page already sends a stored token both ways. T-008 is tested at the socket and the route here, with real processes. T10 adds the `#e=` link and tests T-008 in the browser. `websockets` is a new dependency, and a participant has no color (D2-027).
 
 Acceptance: T-001, T-002, T-003, T-008, T-015, T-016, the reconnect half of T-004, and the WebSocket half of T-013 (two contexts sync over `/board/collab` through nginx). Two browsers means two Playwright contexts against one server. ruff, ty, and the web checks pass.
 

@@ -18,7 +18,12 @@
  */
 import { Excalidraw } from '@excalidraw/excalidraw';
 import '@excalidraw/excalidraw/index.css';
-import { useEffect, useMemo } from 'react';
+import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { Cursor } from '../collab/protocol.ts';
+import type { SceneEditor } from '../collab/session.ts';
+import './canvas.css';
+import { makeEditor } from './editor.ts';
 import { clearHandle, publishHandle } from './handle.ts';
 import { initialDataFrom } from './scene.ts';
 
@@ -27,16 +32,67 @@ export interface CanvasProps {
 	document: unknown;
 	/** True when this browser may look and not edit. */
 	viewOnly?: boolean;
+	/** Called with the editor once it is mounted, and with null when it goes. */
+	onEditor?: (editor: SceneEditor | null) => void;
+	/** Called when anything in the editor changed. The elements may be the same. */
+	onChange?: () => void;
+	/** Called as this browser's pointer moves over the canvas. */
+	onCursor?: (cursor: Cursor) => void;
 }
 
-export default function Canvas({ document, viewOnly = false }: CanvasProps) {
+type PointerUpdate = { pointer: { x: number; y: number } };
+
+export default function Canvas({
+	document,
+	viewOnly = false,
+	onEditor,
+	onChange,
+	onCursor
+}: CanvasProps) {
 	const initialData = useMemo(() => initialDataFrom(document), [document]);
-	useEffect(() => clearHandle, []);
+	// The editor hands out its API from its constructor: during a render, and
+	// before it has mounted or loaded the scene. In development React constructs
+	// the editor twice and mounts one of the two. So the APIs are only kept
+	// here, and the first change the editor reports picks the one whose editor
+	// has loaded, which the one that was thrown away never does.
+	const offered = useRef<ExcalidrawImperativeAPI[]>([]);
+	const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null);
+	const keepApi = useCallback((given: ExcalidrawImperativeAPI) => {
+		offered.current.push(given);
+	}, []);
+	const changed = useCallback(() => {
+		if (offered.current.length > 0) {
+			const mounted = offered.current.find((each) => !each.getAppState().isLoading);
+			if (mounted !== undefined) {
+				offered.current = [];
+				setApi(mounted);
+			}
+		}
+		onChange?.();
+	}, [onChange]);
+
+	useEffect(() => {
+		if (api === null) return;
+		publishHandle(api);
+		onEditor?.(makeEditor(api));
+		return () => {
+			clearHandle();
+			onEditor?.(null);
+		};
+	}, [api, onEditor]);
+
+	const pointerMoved = useCallback(
+		({ pointer }: PointerUpdate) => onCursor?.({ x: pointer.x, y: pointer.y }),
+		[onCursor]
+	);
+
 	return (
 		<Excalidraw
 			initialData={initialData}
-			excalidrawAPI={publishHandle}
+			excalidrawAPI={keepApi}
 			viewModeEnabled={viewOnly}
+			onChange={changed}
+			onPointerUpdate={pointerMoved}
 		/>
 	);
 }

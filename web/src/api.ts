@@ -59,7 +59,10 @@ function getJson(url: URL, signal?: AbortSignal): Promise<unknown> {
 }
 
 async function requestJson(url: URL, init: RequestInit): Promise<unknown> {
-	const response = await fetch(url, { ...init, headers: { Accept: 'application/json' } });
+	const response = await fetch(url, {
+		...init,
+		headers: { Accept: 'application/json', ...init.headers }
+	});
 	let body: unknown;
 	try {
 		body = await response.json();
@@ -92,6 +95,37 @@ export async function fetchSlots(config: AppConfig, signal?: AbortSignal): Promi
 		throw new ApiError(200, 'unexpected', `${url.pathname} did not return the slot list`);
 	}
 	return body.slots;
+}
+
+/** The header a mutation carries when this browser has the edit token. */
+export const EDIT_TOKEN_HEADER = 'X-Segl-Edit-Token';
+
+/**
+ * Give a slot a new title. The server trims it, stores it, and tells every
+ * browser on the slot. Returns the slot as stored. `editToken` is this
+ * browser's stored token, or `''`. It goes in a header, never in the URL.
+ */
+export async function renameSlot(
+	config: AppConfig,
+	slot: number,
+	title: string,
+	editToken: string,
+	signal?: AbortSignal
+): Promise<SlotInfo> {
+	const url = apiUrl(config, `slots/${slot}`);
+	const body = await requestJson(url, {
+		method: 'PATCH',
+		headers: {
+			'Content-Type': 'application/json',
+			...(editToken === '' ? {} : { [EDIT_TOKEN_HEADER]: editToken })
+		},
+		body: JSON.stringify({ title }),
+		signal
+	});
+	if (!isSlotInfo(body)) {
+		throw new ApiError(200, 'unexpected', `${url.pathname} did not return the slot`);
+	}
+	return body;
 }
 
 /** One slot's head scene. */

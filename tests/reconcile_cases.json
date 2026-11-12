@@ -1,0 +1,649 @@
+{
+	"comment": "Which copy of an element is kept (docs/ARCHITECTURE.md, Collaboration; D2-025). `stored` is the scene one side holds, and `incoming` is what arrives. `result` is the scene afterwards, in drawing order. `winners` are the incoming elements that were kept. tests/test_reconcile.py holds segl.reconcile to this table. web/e2e/reconcile.spec.ts holds the pinned editor's reconcileElements to it, with either side as the local one.",
+	"cases": [
+		{
+			"name": "a new element is added",
+			"stored": [
+				{
+					"id": "a",
+					"type": "rectangle",
+					"version": 1,
+					"versionNonce": 100,
+					"index": "a0",
+					"isDeleted": false
+				}
+			],
+			"incoming": [
+				{
+					"id": "b",
+					"type": "rectangle",
+					"version": 1,
+					"versionNonce": 200,
+					"index": "a1",
+					"isDeleted": false
+				}
+			],
+			"result": [
+				{
+					"id": "a",
+					"version": 1,
+					"versionNonce": 100,
+					"isDeleted": false
+				},
+				{
+					"id": "b",
+					"version": 1,
+					"versionNonce": 200,
+					"isDeleted": false
+				}
+			],
+			"winners": [
+				"b"
+			]
+		},
+		{
+			"name": "an element is added to an empty scene",
+			"stored": [],
+			"incoming": [
+				{
+					"id": "a",
+					"type": "rectangle",
+					"version": 1,
+					"versionNonce": 100,
+					"index": "a0",
+					"isDeleted": false
+				}
+			],
+			"result": [
+				{
+					"id": "a",
+					"version": 1,
+					"versionNonce": 100,
+					"isDeleted": false
+				}
+			],
+			"winners": [
+				"a"
+			]
+		},
+		{
+			"name": "the higher version replaces the stored copy",
+			"stored": [
+				{
+					"id": "a",
+					"type": "rectangle",
+					"version": 1,
+					"versionNonce": 100,
+					"index": "a0",
+					"isDeleted": false
+				},
+				{
+					"id": "b",
+					"type": "rectangle",
+					"version": 1,
+					"versionNonce": 200,
+					"index": "a1",
+					"isDeleted": false
+				}
+			],
+			"incoming": [
+				{
+					"id": "a",
+					"type": "rectangle",
+					"version": 2,
+					"versionNonce": 900,
+					"index": "a0",
+					"isDeleted": false
+				}
+			],
+			"result": [
+				{
+					"id": "a",
+					"version": 2,
+					"versionNonce": 900,
+					"isDeleted": false
+				},
+				{
+					"id": "b",
+					"version": 1,
+					"versionNonce": 200,
+					"isDeleted": false
+				}
+			],
+			"winners": [
+				"a"
+			]
+		},
+		{
+			"name": "a lower version is dropped",
+			"stored": [
+				{
+					"id": "a",
+					"type": "rectangle",
+					"version": 5,
+					"versionNonce": 100,
+					"index": "a0",
+					"isDeleted": false
+				}
+			],
+			"incoming": [
+				{
+					"id": "a",
+					"type": "rectangle",
+					"version": 4,
+					"versionNonce": 1,
+					"index": "a0",
+					"isDeleted": false
+				}
+			],
+			"result": [
+				{
+					"id": "a",
+					"version": 5,
+					"versionNonce": 100,
+					"isDeleted": false
+				}
+			],
+			"winners": []
+		},
+		{
+			"name": "on equal versions the lower versionNonce wins",
+			"stored": [
+				{
+					"id": "a",
+					"type": "rectangle",
+					"version": 3,
+					"versionNonce": 700,
+					"index": "a0",
+					"isDeleted": false
+				}
+			],
+			"incoming": [
+				{
+					"id": "a",
+					"type": "rectangle",
+					"version": 3,
+					"versionNonce": 699,
+					"index": "a0",
+					"isDeleted": false
+				}
+			],
+			"result": [
+				{
+					"id": "a",
+					"version": 3,
+					"versionNonce": 699,
+					"isDeleted": false
+				}
+			],
+			"winners": [
+				"a"
+			]
+		},
+		{
+			"name": "on equal versions the higher versionNonce loses",
+			"stored": [
+				{
+					"id": "a",
+					"type": "rectangle",
+					"version": 3,
+					"versionNonce": 700,
+					"index": "a0",
+					"isDeleted": false
+				}
+			],
+			"incoming": [
+				{
+					"id": "a",
+					"type": "rectangle",
+					"version": 3,
+					"versionNonce": 701,
+					"index": "a0",
+					"isDeleted": false
+				}
+			],
+			"result": [
+				{
+					"id": "a",
+					"version": 3,
+					"versionNonce": 700,
+					"isDeleted": false
+				}
+			],
+			"winners": []
+		},
+		{
+			"name": "the copy already held changes nothing",
+			"stored": [
+				{
+					"id": "a",
+					"type": "rectangle",
+					"version": 1,
+					"versionNonce": 100,
+					"index": "a0",
+					"isDeleted": false
+				},
+				{
+					"id": "b",
+					"type": "rectangle",
+					"version": 1,
+					"versionNonce": 200,
+					"index": "a1",
+					"isDeleted": false
+				}
+			],
+			"incoming": [
+				{
+					"id": "a",
+					"type": "rectangle",
+					"version": 1,
+					"versionNonce": 100,
+					"index": "a0",
+					"isDeleted": false
+				}
+			],
+			"result": [
+				{
+					"id": "a",
+					"version": 1,
+					"versionNonce": 100,
+					"isDeleted": false
+				},
+				{
+					"id": "b",
+					"version": 1,
+					"versionNonce": 200,
+					"isDeleted": false
+				}
+			],
+			"winners": []
+		},
+		{
+			"name": "a deletion with the higher version wins",
+			"stored": [
+				{
+					"id": "a",
+					"type": "rectangle",
+					"version": 4,
+					"versionNonce": 100,
+					"index": "a0",
+					"isDeleted": false
+				},
+				{
+					"id": "b",
+					"type": "rectangle",
+					"version": 1,
+					"versionNonce": 200,
+					"index": "a1",
+					"isDeleted": false
+				}
+			],
+			"incoming": [
+				{
+					"id": "a",
+					"type": "rectangle",
+					"version": 5,
+					"versionNonce": 50,
+					"index": "a0",
+					"isDeleted": true
+				}
+			],
+			"result": [
+				{
+					"id": "a",
+					"version": 5,
+					"versionNonce": 50,
+					"isDeleted": true
+				},
+				{
+					"id": "b",
+					"version": 1,
+					"versionNonce": 200,
+					"isDeleted": false
+				}
+			],
+			"winners": [
+				"a"
+			]
+		},
+		{
+			"name": "an older copy does not bring a deleted element back",
+			"stored": [
+				{
+					"id": "a",
+					"type": "rectangle",
+					"version": 5,
+					"versionNonce": 50,
+					"index": "a0",
+					"isDeleted": true
+				}
+			],
+			"incoming": [
+				{
+					"id": "a",
+					"type": "rectangle",
+					"version": 4,
+					"versionNonce": 100,
+					"index": "a0",
+					"isDeleted": false
+				}
+			],
+			"result": [
+				{
+					"id": "a",
+					"version": 5,
+					"versionNonce": 50,
+					"isDeleted": true
+				}
+			],
+			"winners": []
+		},
+		{
+			"name": "a move made at the same time as a deletion loses to the lower versionNonce",
+			"stored": [
+				{
+					"id": "a",
+					"type": "rectangle",
+					"version": 5,
+					"versionNonce": 50,
+					"index": "a0",
+					"isDeleted": true
+				}
+			],
+			"incoming": [
+				{
+					"id": "a",
+					"type": "rectangle",
+					"version": 5,
+					"versionNonce": 60,
+					"index": "a0",
+					"isDeleted": false
+				}
+			],
+			"result": [
+				{
+					"id": "a",
+					"version": 5,
+					"versionNonce": 50,
+					"isDeleted": true
+				}
+			],
+			"winners": []
+		},
+		{
+			"name": "a newer copy of a deleted element, such as an undo, wins",
+			"stored": [
+				{
+					"id": "a",
+					"type": "rectangle",
+					"version": 5,
+					"versionNonce": 50,
+					"index": "a0",
+					"isDeleted": true
+				}
+			],
+			"incoming": [
+				{
+					"id": "a",
+					"type": "rectangle",
+					"version": 6,
+					"versionNonce": 10,
+					"index": "a0",
+					"isDeleted": false
+				}
+			],
+			"result": [
+				{
+					"id": "a",
+					"version": 6,
+					"versionNonce": 10,
+					"isDeleted": false
+				}
+			],
+			"winners": [
+				"a"
+			]
+		},
+		{
+			"name": "two people's elements both stay",
+			"stored": [
+				{
+					"id": "a",
+					"type": "rectangle",
+					"version": 1,
+					"versionNonce": 100,
+					"index": "a0",
+					"isDeleted": false
+				},
+				{
+					"id": "b",
+					"type": "rectangle",
+					"version": 1,
+					"versionNonce": 200,
+					"index": "a1",
+					"isDeleted": false
+				}
+			],
+			"incoming": [
+				{
+					"id": "c",
+					"type": "rectangle",
+					"version": 1,
+					"versionNonce": 300,
+					"index": "a2",
+					"isDeleted": false
+				}
+			],
+			"result": [
+				{
+					"id": "a",
+					"version": 1,
+					"versionNonce": 100,
+					"isDeleted": false
+				},
+				{
+					"id": "b",
+					"version": 1,
+					"versionNonce": 200,
+					"isDeleted": false
+				},
+				{
+					"id": "c",
+					"version": 1,
+					"versionNonce": 300,
+					"isDeleted": false
+				}
+			],
+			"winners": [
+				"c"
+			]
+		},
+		{
+			"name": "a batch is settled element by element",
+			"stored": [
+				{
+					"id": "a",
+					"type": "rectangle",
+					"version": 2,
+					"versionNonce": 100,
+					"index": "a0",
+					"isDeleted": false
+				},
+				{
+					"id": "b",
+					"type": "rectangle",
+					"version": 2,
+					"versionNonce": 200,
+					"index": "a1",
+					"isDeleted": false
+				}
+			],
+			"incoming": [
+				{
+					"id": "a",
+					"type": "rectangle",
+					"version": 3,
+					"versionNonce": 5,
+					"index": "a0",
+					"isDeleted": false
+				},
+				{
+					"id": "b",
+					"type": "rectangle",
+					"version": 1,
+					"versionNonce": 5,
+					"index": "a1",
+					"isDeleted": false
+				},
+				{
+					"id": "c",
+					"type": "rectangle",
+					"version": 1,
+					"versionNonce": 300,
+					"index": "a2",
+					"isDeleted": false
+				}
+			],
+			"result": [
+				{
+					"id": "a",
+					"version": 3,
+					"versionNonce": 5,
+					"isDeleted": false
+				},
+				{
+					"id": "b",
+					"version": 2,
+					"versionNonce": 200,
+					"isDeleted": false
+				},
+				{
+					"id": "c",
+					"version": 1,
+					"versionNonce": 300,
+					"isDeleted": false
+				}
+			],
+			"winners": [
+				"a",
+				"c"
+			]
+		},
+		{
+			"name": "a new element takes its place by its index",
+			"stored": [
+				{
+					"id": "a",
+					"type": "rectangle",
+					"version": 1,
+					"versionNonce": 100,
+					"index": "a0",
+					"isDeleted": false
+				},
+				{
+					"id": "c",
+					"type": "rectangle",
+					"version": 1,
+					"versionNonce": 300,
+					"index": "a2",
+					"isDeleted": false
+				}
+			],
+			"incoming": [
+				{
+					"id": "b",
+					"type": "rectangle",
+					"version": 1,
+					"versionNonce": 200,
+					"index": "a1",
+					"isDeleted": false
+				}
+			],
+			"result": [
+				{
+					"id": "a",
+					"version": 1,
+					"versionNonce": 100,
+					"isDeleted": false
+				},
+				{
+					"id": "b",
+					"version": 1,
+					"versionNonce": 200,
+					"isDeleted": false
+				},
+				{
+					"id": "c",
+					"version": 1,
+					"versionNonce": 300,
+					"isDeleted": false
+				}
+			],
+			"winners": [
+				"b"
+			]
+		},
+		{
+			"name": "an element moved to the front is ordered by its new index",
+			"stored": [
+				{
+					"id": "a",
+					"type": "rectangle",
+					"version": 1,
+					"versionNonce": 100,
+					"index": "a0",
+					"isDeleted": false
+				},
+				{
+					"id": "b",
+					"type": "rectangle",
+					"version": 1,
+					"versionNonce": 200,
+					"index": "a1",
+					"isDeleted": false
+				},
+				{
+					"id": "c",
+					"type": "rectangle",
+					"version": 1,
+					"versionNonce": 300,
+					"index": "a2",
+					"isDeleted": false
+				}
+			],
+			"incoming": [
+				{
+					"id": "a",
+					"type": "rectangle",
+					"version": 2,
+					"versionNonce": 100,
+					"index": "a3",
+					"isDeleted": false
+				}
+			],
+			"result": [
+				{
+					"id": "b",
+					"version": 1,
+					"versionNonce": 200,
+					"isDeleted": false
+				},
+				{
+					"id": "c",
+					"version": 1,
+					"versionNonce": 300,
+					"isDeleted": false
+				},
+				{
+					"id": "a",
+					"version": 2,
+					"versionNonce": 100,
+					"isDeleted": false
+				}
+			],
+			"winners": [
+				"a"
+			]
+		}
+	]
+}

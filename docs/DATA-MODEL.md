@@ -93,6 +93,8 @@ The repository holds one connection behind a lock, and every method blocks. HTTP
 
 ## Flush and revision rules
 
+T07 implements these. Until then a slot's live scene is in its room, in memory, from the first connection to the slot until segl stops (`ARCHITECTURE.md`, collaboration), and the head keeps what it held at startup. The title is not part of the scene: `PATCH /api/v1/slots/{n}` stores it at once, through `rename_slot`.
+
 - Mark the room dirty on each accepted element mutation.
 - Flush the head at least every `head_flush_seconds` (default 0.2) while dirty, when the last connection for that slot closes, and on SIGTERM.
 - Skip the write when the JSON is unchanged.

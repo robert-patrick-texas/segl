@@ -74,6 +74,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 # comes from one of these addresses, which is nginx (docs/SECURITY.md).
                 proxy_headers=True,
                 forwarded_allow_ips=list(settings.trusted_proxies),
+                # The WebSocket at /collab. A message may be a whole scene.
+                # uvicorn pings each connection every 20 seconds by default.
+                ws="websockets-sansio",
+                ws_max_size=settings.max_scene_bytes,
             )
     except (StorageError, DisplayNamesError, WebBuildError) as exc:
         print(f"segl: {exc}", file=sys.stderr)

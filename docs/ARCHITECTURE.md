@@ -14,7 +14,7 @@ How the MVP processes run together. Contracts are in `API.md` and `DATA-MODEL.md
 
 Node runs in the build environment and in the dev container's frontend build. systemd does not start Node.
 
-In-memory room state (who is connected, cursors, dirty heads waiting to flush) lives in the one Python process. A restart drops presence and reloads each slot from its head row.
+In-memory room state (who is connected, cursors, the scene as edited, dirty heads waiting to flush) lives in the one Python process. A restart drops presence and reloads each slot from its head row.
 
 ## Mount and navigation
 
@@ -61,29 +61,38 @@ segl's own redirects are relative. It sends none today: the framework's trailing
 3. Python returns `index.html` with `../` asset URLs and `SEGL_CONFIG`.
 4. The app stores last-slot `1`, loads the head scene from `api/v1/slots/1/scene` under its root, and mounts Excalidraw.
 5. If `displayName` is missing, the app asks the server for the next label (`POST api/v1/display-name`) and stores it.
-6. The app opens the WebSocket and sends `hello` with `clientId`, the display name, and the edit token when the browser has one.
-7. The server joins the connection to the in-memory room for slot 1 and sends the current head epoch, the title, and the current participant list.
-8. An edit in the canvas sends the changed elements. The server reconciles them into the room scene, broadcasts the winners, and schedules a head flush.
+6. Once the canvas is mounted with that scene, the app opens the WebSocket and sends `hello` with `clientId`, the display name, and the edit token when the browser has one.
+7. The server joins the connection to the in-memory room for slot 1 and sends `welcome`, with the epoch, the title, and the participant list, and then `scene`, the room's elements. The app merges them into the canvas.
+8. An edit in the canvas sends the changed elements. The server reconciles them into the room scene, broadcasts the winners, and schedules a head flush (T07).
 9. Other browsers on slot 1 apply those elements. Slot 2 is a different room and a different SQLite head.
 
 ## Collaboration
 
-segl owns the wire protocol. The canvas adapter is the only module that imports Excalidraw.
+segl owns the wire protocol (`API.md`, WebSocket). The canvas adapter, `web/src/canvas/`, is the only module that imports Excalidraw.
 
-- Element messages carry the element records the editor produces (`id`, `version`, and the deletion flag the pinned package uses).
-- The server keeps the element with the greater `version`. On a tie, it keeps the lower `versionNonce`. That is the rule of `reconcileElements`, the helper the pinned package exports, which the client calls (D2-025). A server-side unit test holds the server to the same rule.
-- Deleted elements stay in the scene as tombstones so an older copy cannot resurrect them.
-- A full-scene replace happens on join (load the head) and when the epoch changes (restore or import).
-- Each head has an integer `epoch`, starting at 1. Ordinary element messages must name the current epoch. A stale epoch gets the current scene back so the client can reconcile, and the stale elements are not applied.
+The server side is three modules. `src/segl/reconcile.py` is the rule for which copy of an element is kept. `src/segl/room.py` is one slot's room: its connections and its scene, with no I/O. `src/segl/collab.py` is the socket around a room. A room is made from the slot's head the first time someone opens the slot, and stays for the life of the process. Everything a room does runs on the event loop, and the repository, which blocks, is called from a worker thread.
+
+- Element messages carry the element records the editor produces (`id`, `version`, `versionNonce`, and `isDeleted`, the deletion flag the pinned package uses). The server reads those fields and `index`, and stores and sends the rest as it arrived.
+- The server keeps the element with the greater `version`. On a tie, it keeps the lower `versionNonce`. That is the rule of `reconcileElements`, the helper the pinned package exports, which the client calls (D2-025). One table of cases, `tests/reconcile_cases.json`, holds the server's rule (pytest), the editor's helper (a browser test), and the client's own rule for what to send (Vitest) to the same answers.
+- The editor's helper also keeps this browser's copy of an element it is editing, resizing, or creating, whatever arrives. Only the client can know that.
+- Deleted elements stay in the scene as tombstones so an older copy cannot resurrect them. A deletion made at the same moment as another edit is settled by the same rule as any two edits.
+- The scene is ordered by each element's fractional `index`, as text, and then by `id`, which is the editor's order.
+- A full-scene replace happens when the epoch changes (restore or import). On join the client is sent the room's scene and merges it into the canvas, which holds the head it loaded over HTTP.
+- Each head has an integer `epoch`, starting at 1. Ordinary element messages must name the current epoch. A stale epoch gets the current scene back, which the client puts in place of its own, and the stale elements are not applied.
 - Restore and JSON import increment the epoch, replace the scene, append a revision, and broadcast the new scene to the room.
-- A title change (`PATCH` on the slot) is broadcast to the room as a `slot` message, so every open bar shows the new title.
+- A title change (`PATCH` on the slot) is broadcast to the room as a `slot` message, so every open bar shows the new title. Two changes at once are stored and sent in one order.
 - Images are files, not elements. The browser that places one uploads the bytes (`POST api/v1/slots/{n}/assets`), then announces the file id and its hash in a `files` message. The server records the mapping with the head and relays it. Other browsers fetch `api/v1/assets/{hash}` and add the file to their editor, and a new load gets the mapping with the scene. T07 settles the details against the pinned editor's file model.
-- Cursors and the participant list are presence. They are not written to SQLite and they are not part of the scene.
-- The client shows one of: connecting, live, saving, saved, disconnected. `saved` means the head flush that includes that edit has finished.
-- On reconnect the client sends any elements it still holds that the server may have missed, then applies the server reconcile result. It does not replace the server head with a blind full-scene upload.
-- While the socket is down the canvas stays usable. Those edits are queued and reconciled when the socket returns.
+- Cursors and the participant list are presence. They are not written to SQLite and they are not part of the scene. The editor draws each cursor, with its label, in a color it derives from the connection id, so the protocol carries no color. The editor's own row of avatars is hidden, because pressing one follows that person's view, which segl does not carry.
+- The client shows one of: connecting, live, saving, saved, disconnected. It is live once `welcome` arrives. `saved` means the head flush that includes that edit has finished (T07).
+- The client keeps no queue of edits. It keeps the copy of each element the server is known to hold, and whatever the canvas holds that beats that copy is what it sends, at most once every 30 ms. Cursor messages go at most once every 50 ms.
+- While the socket is down the canvas stays usable, and the client tries again after 0.5, 1, 2, and then every 5 seconds. On reconnect it says `hello` again, merges the scene it is sent, and sends the elements it holds that beat the server's copies: the edits made while it was down. It does not replace the server head with a blind full-scene upload, and an element the server holds a newer copy of is not sent.
+- A broadcast never waits for a slow browser. Each connection has an outbox, and a browser that stops reading is disconnected (`API.md`, limits).
+
+Until T07 writes the head, a room's scene is only in memory. A drawing outlasts every browser leaving the slot, and a reload gets it back from the room. A restart of segl loses it, and `GET api/v1/slots/{n}/scene` still returns the stored head, not the room.
 
 The acknowledged-save boundary is the head flush. A crash can lose edits that were broadcast to peers but not flushed. Peers that are still open resend on reconnect. The flush interval default is 200 ms, and a flush also runs when the last client leaves the slot and on process shutdown. History rows are a coarser sample of that head (default 1 second, plus last-leave, restore, and import), capped at 50 per slot.
+
+The appearance of the canvas that the editor keeps outside the elements, such as the background color and the grid, is not shared live. Upstream's own collaboration does not share it either.
 
 ## Edit gate
 
@@ -93,12 +102,12 @@ When `edit_token` is empty, every connection may mutate the scene, the title, th
 
 When `edit_token` is set:
 
-- Mutations include the token from `localStorage` (HTTP header `X-Segl-Edit-Token`, and the same value inside the WebSocket `hello` / later mutation messages).
-- A missing or wrong token joins as view-only. The server drops scene, title, restore, and file mutations. Presence and rename still work.
+- Mutations include the token from `localStorage`: the HTTP header `X-Segl-Edit-Token`, and the same value in the WebSocket `hello`, which settles the connection as an editor or a viewer until it closes.
+- A missing or wrong token joins as view-only. The server drops scene, title, restore, and file mutations: `elements` gets an `error` with `view_only`, and a `PATCH` gets `403` with `view_only`. Presence and rename still work.
 - The comparison is constant-time. Logs record the slot and the byte size, not the token and not the scene body.
 - A shared link may carry the token in the URL fragment `#e=...`. The page writes it to `localStorage` and removes the fragment with `history.replaceState`. The fragment is not sent on the HTTP request.
 
-The editor runs in its view mode when this client is view-only. The segl bar always states that the slot is a shared unauthenticated workspace. A view-only client also states that editing is locked.
+The editor runs in its view mode when this client is view-only, and the title in the bar is text, not a button. The server says which in `welcome`. Until it has, a browser may edit unless a token is configured. The segl bar always states that the slot is a shared unauthenticated workspace. A view-only client also states that editing is locked. T10 adds the `#e=` link and the browser test of this flow.
 
 ## Display names
 
@@ -110,7 +119,7 @@ The browser calls assignment (`POST api/v1/display-name`) only when it has no st
 
 A person may replace the label: the label in the segl bar is a button that opens a field. Enter, or leaving the field, keeps the new name. Escape keeps the old one. The client and the server title-case a manual name: split on whitespace, join the words with one space, uppercase the first character of each word, lowercase the rest (`john smith` becomes `John Smith`, and `NASA` becomes `Nasa`). Where the uppercase of that first character is more than one character, only the first of them stays uppercase (`ßeta` becomes `Sseta`), so title-casing a name twice gives the same name. Automatic names skip that transform so file spellings such as `McKinley` stay as written, and a field that is closed without a change renames nothing. Manual names are 1–40 characters after that transform. One that is not is refused, and the field says so. Duplicate manual names are allowed. The menu count is connections, so two tabs can show the same label twice.
 
-Until T06, a rename is stored in this browser and shown only there. T06 sends the stored label in `hello`, sends a rename on the socket, and does not allocate again. The two implementations of the title case, `src/segl/names.py` and `web/src/names.ts`, are held to one table of cases, `tests/display_name_cases.json`.
+The label reaches the other browsers on the socket. `hello` carries the stored label, which the server takes as written, so a name from the word file keeps its spelling. A name the person types afterwards goes as `rename`, from the tab it was typed in and from every other tab of that browser, which hear of it through `localStorage`. The server title-cases it again and sends it to everyone on the slot. A browser that had no label when its socket opened says `hello` again, on a new socket, once the server has assigned one, because `rename` would title-case it. The socket never allocates a name. The two implementations of the title case, `src/segl/names.py` and `web/src/names.ts`, are held to one table of cases, `tests/display_name_cases.json`.
 
 ## Data the MVP stores
 

@@ -19,6 +19,7 @@ node = "26.13.1"
 [python.dependencies]
 fastapi = "0.162.5"
 uvicorn = "0.54.0"
+websockets = "17.4"
 
 [python.dev]
 httpx2 = "2.16.0"

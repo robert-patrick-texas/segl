@@ -12,21 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/** One slot: the segl bar, and under it the canvas with that slot's head scene. */
-import { lazy, Suspense, useEffect, useState } from 'react';
-import { fetchScene, fetchSlots, type SlotScene } from './api.ts';
+/**
+ * One slot: the segl bar, and under it the canvas with that slot's scene,
+ * shared live with everyone else on the slot.
+ */
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { fetchScene, fetchSlots, renameSlot, type SlotScene } from './api.ts';
 import { SeglBar } from './bar/SeglBar.tsx';
+import { readEditToken } from './collab/identity.ts';
+import { useCollab } from './collab/useCollab.ts';
 import { storageKey, type AppConfig } from './config.ts';
+import { loadedScene, type Load } from './load.ts';
 import { browserStorage, writeLastSlot } from './slots.ts';
 import type { DisplayName } from './useDisplayName.ts';
 
 // Its own chunk: the bar paints before the editor has arrived.
 const Canvas = lazy(() => import('./canvas/Canvas.tsx'));
-
-type Load =
-	| { state: 'loading' }
-	| { state: 'ready'; scene: SlotScene }
-	| { state: 'failed'; message: string };
 
 const NO_TITLES: ReadonlyMap<number, string> = new Map();
 
@@ -39,8 +40,18 @@ export interface SlotPageProps {
 
 export function SlotPage({ config, slot, displayName }: SlotPageProps) {
 	const [titles, setTitles] = useState(NO_TITLES);
-	const [load, setLoad] = useState<Load>({ state: 'loading' });
+	const [load, setLoad] = useState<Load<SlotScene>>({ state: 'loading' });
 	const [attempt, setAttempt] = useState(0);
+	// Null on the way to another slot too, while `load` is still the old slot's.
+	const scene = loadedScene(load, slot);
+	const collab = useCollab({
+		config,
+		slot,
+		epoch: scene === null ? null : scene.epoch,
+		name: displayName.name
+	});
+	// Until the server has said, a browser may edit unless a token is needed.
+	const viewOnly = collab.state.viewOnly ?? config.editRequired;
 
 	useEffect(() => {
 		writeLastSlot(browserStorage(), storageKey(config, 'lastSlot'), slot);
@@ -50,9 +61,9 @@ export function SlotPage({ config, slot, displayName }: SlotPageProps) {
 		const abort = new AbortController();
 		setLoad({ state: 'loading' });
 		Promise.all([fetchSlots(config, abort.signal), fetchScene(config, slot, abort.signal)])
-			.then(([slots, scene]) => {
+			.then(([slots, loaded]) => {
 				setTitles(new Map(slots.map((entry) => [entry.number, entry.title])));
-				setLoad({ state: 'ready', scene });
+				setLoad({ state: 'ready', slot, scene: loaded });
 			})
 			.catch((error: unknown) => {
 				if (abort.signal.aborted) return;
@@ -61,6 +72,27 @@ export function SlotPage({ config, slot, displayName }: SlotPageProps) {
 			});
 		return () => abort.abort();
 	}, [config, slot, attempt]);
+
+	const setTitle = useCallback((number: number, title: string) => {
+		setTitles((before) =>
+			before.get(number) === title ? before : new Map(before).set(number, title)
+		);
+	}, []);
+
+	// The room's title: in `welcome`, and again whenever someone changes it.
+	const roomTitle = collab.state.title;
+	useEffect(() => {
+		if (roomTitle !== null) setTitle(slot, roomTitle);
+	}, [roomTitle, slot, setTitle]);
+
+	const retitle = useCallback(
+		async (title: string) => {
+			const token = readEditToken(browserStorage(), storageKey(config, 'editToken'));
+			const stored = await renameSlot(config, slot, title, token);
+			setTitle(stored.number, stored.title);
+		},
+		[config, slot, setTitle]
+	);
 
 	const title = titles.get(slot);
 	useEffect(() => {
@@ -76,14 +108,28 @@ export function SlotPage({ config, slot, displayName }: SlotPageProps) {
 				version={__SEGL_VERSION__}
 				displayName={displayName.name}
 				onRename={displayName.rename}
+				status={collab.state.status}
+				participants={collab.state.participants}
+				self={collab.state.connectionId}
+				canEdit={!viewOnly}
+				onRetitle={retitle}
 			/>
 			<main className="segl__canvas">
-				{load.state === 'ready' && (
+				{scene !== null && (
 					<Suspense fallback={<p className="segl__status">Loading the editor…</p>}>
-						<Canvas key={slot} document={load.scene.scene} />
+						<Canvas
+							key={slot}
+							document={scene.scene}
+							viewOnly={viewOnly}
+							onEditor={collab.onEditor}
+							onChange={collab.onChange}
+							onCursor={collab.onCursor}
+						/>
 					</Suspense>
 				)}
-				{load.state === 'loading' && <p className="segl__status">Loading slot {slot}…</p>}
+				{scene === null && load.state !== 'failed' && (
+					<p className="segl__status">Loading slot {slot}…</p>
+				)}
 				{load.state === 'failed' && (
 					<p className="segl__status" role="alert">
 						segl could not load slot {slot}: {load.message}

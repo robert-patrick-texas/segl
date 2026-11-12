@@ -4,7 +4,7 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
-The project is specified, licensed, and public on GitHub. A Python service reads its settings, keeps nine slots in SQLite, and serves them, and a browser application shows each slot as an Excalidraw canvas under the segl bar, where each browser has a display name. Nothing drawn is saved or shared yet. CI and a dev container check both, including through nginx at `/board/`.
+The project is specified, licensed, and public on GitHub. A Python service reads its settings, keeps nine slots in SQLite, and serves them, and a browser application shows each slot as an Excalidraw canvas under the segl bar, where each browser has a display name. People on the same slot draw together live. Nothing drawn is saved yet: a restart of segl loses it. CI and a dev container check both, including through nginx at `/board/`.
 
 ### New
 
@@ -38,6 +38,13 @@ The project is specified, licensed, and public on GitHub. A Python service reads
 - segl reads the `display_names` file when it starts. A file that is missing, has a line that is not a word of 1–10 letters, or has no words stops it with exit status 1.
 - The segl bar shows this browser's name after `You:`. A new browser asks the server once and keeps the answer in `localStorage`, across reloads, slots, and tabs. The name is a button: a typed name is title-cased (`john smith` becomes `John Smith`), kept the same way, and shown only in that browser until live collaboration exists.
 - `tests/display_name_cases.json` holds the browser's title case and the server's to one table of cases.
+- Live collaboration (S-002). `/collab?slot=N` is a WebSocket, and each slot has a room in the server. An edit in one browser reaches the others on the slot, with each person's cursor and name. Two edits to one element are settled as the pinned editor settles them: the higher `version` wins, then the lower `versionNonce`. A deleted element stays deleted. `tests/reconcile_cases.json` holds the server, the editor's `reconcileElements`, and the browser's own rule to one table.
+- The segl bar shows who is on the slot: the number of connections, which opens a list of their names (S-010), and the state of the connection, `Connecting…`, `Live`, or `Disconnected` (S-013). With the socket down the canvas stays usable. The page reconnects by itself and sends what was drawn meanwhile, without overwriting a newer edit.
+- The slot's title is a button in the bar. `PATCH /api/v1/slots/{n}` stores a new one, 1–80 characters, and every browser on the slot shows it at once.
+- A rename reaches everyone on the slot, title-cased by the server as well.
+- The edit gate on the server (S-008). With `edit_token` set, a connection whose `hello` lacks the token watches live and cannot change elements, and a `PATCH` without the `X-Segl-Edit-Token` header is a `403` with `view_only`. The page puts the editor in view mode for such a connection.
+- The Origin check. A mutation, or a WebSocket handshake, whose `Origin` does not match `Host` is refused with `403` and `bad_origin`.
+- `websockets` 17.4 is a dependency: uvicorn serves the socket with it, and the tests connect with its client (D2-027).
 
 ### Changed
 
@@ -51,4 +58,7 @@ The project is specified, licensed, and public on GitHub. A Python service reads
 - segl's default address is `127.0.0.1:8888`, not port 8000, which other development servers commonly use. The upstream in `deploy/nginx/segl-http.conf`, `deploy/segl.toml.example`, and the Vite dev server's proxy follow. The mount tests take the upstream to replace from the default, so the nginx file cannot fall out of step with it.
 - The default display names no longer include Bush, Clinton, Obama, Trump, or Biden.
 - The test client's transport is httpx2, not httpx, which Starlette deprecates there. `versions.toml` gains `[python.build]` for the build backend.
+- The browser tests run one at a time, and no longer expect an empty slot: the slots are shared, and a room keeps what a test drew. `web/e2e/pages.ts` says which slot each kind of test may change.
+- A participant has no `color` in the WebSocket messages. The pinned editor colors a cursor from the connection id and takes no other. `welcome` gained `connectionId`, and the client's `presence` is a cursor alone.
+- `GET` and `PATCH` of `/api/v1/slots/{n}` are one route, so a `405` there names both in `Allow`.
 - The license header moved from the agent rules to `CONTRIBUTING.md`. The rule to comment out superseded code was removed.

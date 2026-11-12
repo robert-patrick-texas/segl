@@ -43,6 +43,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from websockets.sync.client import ClientConnection, connect
+from websockets.typing import Origin
 
 from segl.config import DEFAULT_BIND, Settings, load_settings
 
@@ -150,12 +152,13 @@ def fetch(
     site: str | None = None,
     tls: ssl.SSLContext | None = None,
     headers: Mapping[str, str] | None = None,
+    body: bytes | None = None,
 ) -> Reply:
     """Ask 127.0.0.1:``port`` for ``path``. Redirects are returned, not followed.
 
     With ``site`` and ``tls``, the request is HTTPS for that host name, as a
     browser would send it: the name is in the TLS handshake and, with the
-    port, in ``Host``.
+    port, in ``Host``. ``body`` is sent as it is.
     """
     connection: http.client.HTTPConnection
     if site is not None and tls is not None:
@@ -163,11 +166,55 @@ def fetch(
     else:
         connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
     try:
-        connection.request(method, path, headers=dict(headers or {}))
+        connection.request(method, path, body=body, headers=dict(headers or {}))
         response = connection.getresponse()
         return Reply(response.status, response.headers, response.read())
     finally:
         connection.close()
+
+
+def open_socket(
+    port: int,
+    path: str,
+    *,
+    site: str | None = None,
+    tls: ssl.SSLContext | None = None,
+    origin: str | None = None,
+) -> ClientConnection:
+    """Open a WebSocket to 127.0.0.1:``port`` at ``path``, as ``fetch`` asks for a page.
+
+    ``origin`` is the ``Origin`` header a browser would send. A handshake that
+    is refused raises ``websockets.exceptions.InvalidStatus``, which carries
+    the HTTP response.
+    """
+    plain = socket.create_connection(("127.0.0.1", port), timeout=10)
+    sent_from = None if origin is None else Origin(origin)
+    # proxy=None: never through a proxy the environment names.
+    if site is not None and tls is not None:
+        uri = f"wss://{site}:{port}{path}"
+        return connect(uri, sock=plain, ssl=tls, server_hostname=site, origin=sent_from, proxy=None)
+    return connect(f"ws://127.0.0.1:{port}{path}", sock=plain, origin=sent_from, proxy=None)
+
+
+def say_hello(
+    connection: ClientConnection,
+    name: str | None = "Guest1",
+    *,
+    token: str = "",
+    client_id: str = "client-1",
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Send ``hello`` on a new socket, and return the ``welcome`` and the ``scene``."""
+    hello = {"type": "hello", "clientId": client_id, "displayName": name, "editToken": token}
+    connection.send(json.dumps(hello))
+    return next_message(connection), next_message(connection)
+
+
+def next_message(connection: ClientConnection, seconds: float = 5.0) -> dict[str, Any]:
+    """Return the next message on a socket. A socket with none fails the test."""
+    try:
+        return json.loads(connection.recv(timeout=seconds))
+    except TimeoutError:
+        raise AssertionError(f"no message arrived in {seconds} seconds") from None
 
 
 def _stop(process: subprocess.Popen[bytes]) -> None:
@@ -209,6 +256,14 @@ class SeglServer:
 
     def post(self, path: str, headers: Mapping[str, str] | None = None) -> Reply:
         return fetch(self.port, path, method="POST", headers=headers)
+
+    def patch(self, path: str, body: object, headers: Mapping[str, str] | None = None) -> Reply:
+        """Send ``body`` as JSON."""
+        sent = json.dumps(body).encode()
+        return fetch(self.port, path, method="PATCH", headers=headers, body=sent)
+
+    def socket(self, path: str, origin: str | None = None) -> ClientConnection:
+        return open_socket(self.port, path, origin=origin)
 
     def log(self) -> str:
         return self.log_file.read_text(encoding="utf-8")
@@ -389,6 +444,28 @@ class Mount:
 
     def post(self, site: str, path: str, headers: Mapping[str, str] | None = None) -> Reply:
         return fetch(self.https_port, path, method="POST", site=site, tls=self.tls, headers=headers)
+
+    def patch(
+        self, site: str, path: str, body: object, headers: Mapping[str, str] | None = None
+    ) -> Reply:
+        """Send ``body`` as JSON."""
+        sent = json.dumps(body).encode()
+        return fetch(
+            self.https_port,
+            path,
+            method="PATCH",
+            site=site,
+            tls=self.tls,
+            headers=headers,
+            body=sent,
+        )
+
+    def origin(self, site: str) -> str:
+        """Return the ``Origin`` of a page this mount served for ``site``."""
+        return f"https://{site}:{self.https_port}"
+
+    def socket(self, site: str, path: str, origin: str | None = None) -> ClientConnection:
+        return open_socket(self.https_port, path, site=site, tls=self.tls, origin=origin)
 
 
 @contextmanager

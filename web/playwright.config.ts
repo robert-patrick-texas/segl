@@ -67,6 +67,11 @@ export default defineConfig({
 	testDir: 'e2e',
 	outputDir: 'test-results',
 	timeout: 30_000,
+	// One test at a time. Every project talks to the one server, whose slots
+	// are shared by design: what one test draws on a slot, another test on that
+	// slot would see arrive, and each would count the other's connection.
+	workers: 1,
+	fullyParallel: false,
 	forbidOnly: Boolean(process.env['CI']),
 	reporter: [['list']],
 	use: {

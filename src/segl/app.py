@@ -15,25 +15,35 @@
 """The segl ASGI application. Routes follow docs/API.md."""
 
 import json
+import unicodedata
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from http import HTTPStatus
 from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 from starlette.staticfiles import StaticFiles
 
+from segl.collab import Rooms, serve
 from segl.config import Settings
 from segl.names import AllocationLimit, load_display_names, retry_after
+from segl.origin import OriginCheck
 from segl.repository import InvalidSlot, Repository, Slot
+from segl.room import may_edit
 from segl.versions import app_version
 from segl.web import ROOT_PAGE, SLOT_PAGE, WebBuild, load_web_build, render_page
 
 # The only texts that name a slot. int() would also take "01", "+1", and the
 # digits of other scripts.
 _SLOT_TEXTS = {str(number): number for number in range(1, 10)}
+
+# The longest slot title, in characters.
+MAX_TITLE_LENGTH = 80
+# The largest body of a title change. A title is at most 80 characters.
+_TITLE_BODY_BYTES = 4096
 
 
 def _error(status: int, code: str, message: str, headers: Any = None) -> JSONResponse:
@@ -51,6 +61,40 @@ def _slot_number(text: str) -> int:
         return _SLOT_TEXTS[text]
     except KeyError:
         raise InvalidSlot(text) from None
+
+
+def clean_title(value: object) -> str | None:
+    """Return a slot title as it is stored, or None when it is not usable.
+
+    A title is one line of text: 1 to 80 characters once the spaces around it
+    are dropped, with no control characters.
+    """
+    if not isinstance(value, str):
+        return None
+    title = value.strip()
+    if not 1 <= len(title) <= MAX_TITLE_LENGTH:
+        return None
+    # Cc is a control character, such as a line break. Cs is half of a
+    # surrogate pair, which JSON can carry and SQLite cannot store.
+    if any(unicodedata.category(character) in ("Cc", "Cs") for character in title):
+        return None
+    return title
+
+
+async def _json_object(request: Request, limit: int) -> dict[str, Any] | JSONResponse:
+    """Return a request's body as a JSON object, or the error to answer with."""
+    body = b""
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > limit:
+            return _error(413, "payload_too_large", f"The body is larger than {limit} bytes.")
+    try:
+        parsed = json.loads(body)
+    except ValueError, RecursionError:
+        parsed = None
+    if not isinstance(parsed, dict):
+        return _error(400, "bad_request", "The body is a JSON object.")
+    return parsed
 
 
 def _slot_json(slot: Slot) -> dict[str, object]:
@@ -142,6 +186,11 @@ def create_app(settings: Settings, repository: Repository) -> FastAPI:
     )
     app.state.settings = settings
     app.state.display_names = words
+    rooms = Rooms(repository)
+    app.state.rooms = rooms
+    # Before every route: a mutation or a WebSocket handshake from a page on
+    # another site is refused with bad_origin (docs/SECURITY.md).
+    app.add_middleware(OriginCheck)
     web_build = load_web_build(settings.web_dir)
     app.state.web_build = web_build
 
@@ -177,9 +226,27 @@ def create_app(settings: Settings, repository: Repository) -> FastAPI:
     def slots() -> dict[str, list[dict[str, object]]]:
         return {"slots": [_slot_json(slot) for slot in repository.list_slots()]}
 
-    @app.get("/api/v1/slots/{n}")
-    def slot(n: str) -> dict[str, object]:
-        return _slot_json(repository.get_slot(_slot_number(n)))
+    # One route for both methods, so that the 405 for any other method names
+    # both in its Allow header.
+    @app.api_route("/api/v1/slots/{n}", methods=["GET", "PATCH"])
+    async def slot(n: str, request: Request) -> JSONResponse:
+        number = _slot_number(n)
+        if request.method == "GET":
+            return JSONResponse(_slot_json(await run_in_threadpool(repository.get_slot, number)))
+        if not may_edit(settings.edit_token, request.headers.get("x-segl-edit-token")):
+            return _error(403, "view_only", "Editing needs the edit token.")
+        body = await _json_object(request, _TITLE_BODY_BYTES)
+        if isinstance(body, JSONResponse):
+            return body
+        title = clean_title(body.get("title"))
+        if title is None:
+            return _error(
+                422,
+                "invalid_title",
+                f"A title is 1 to {MAX_TITLE_LENGTH} characters on one line.",
+            )
+        # Stored, then sent to the slot's room as a `slot` message.
+        return JSONResponse(_slot_json(await rooms.retitle(number, title)))
 
     @app.get("/api/v1/slots/{n}/scene")
     def scene(n: str) -> JSONResponse:
@@ -214,6 +281,10 @@ def create_app(settings: Settings, repository: Repository) -> FastAPI:
         name = repository.allocate_display_name(words)
         # Each answer is a different name, so no cache may replay one.
         return JSONResponse({"displayName": name}, headers={"Cache-Control": "no-store"})
+
+    @app.websocket("/collab")
+    async def collab(websocket: WebSocket) -> None:
+        await serve(websocket, rooms, settings)
 
     if web_build is not None:
         _add_web_routes(app, web_build, settings.edit_required)

@@ -285,6 +285,9 @@ def test_the_command_serves_with_a_missing_config_file(
         "port": 8888,
         "proxy_headers": True,
         "forwarded_allow_ips": ["127.0.0.1", "::1"],
+        # The WebSocket: a message may be a whole scene, max_scene_bytes.
+        "ws": "websockets-sansio",
+        "ws_max_size": 52428800,
     }
     assert OpenedDatabase.opened == [(Path("/opt/segl/var/segl.sqlite"), 50)]
     assert read == [Path("/opt/segl/etc/display-names.txt")]

@@ -258,14 +258,15 @@ test('Escape keeps the old name, and so does a name that is not usable', async (
 	await expect(nameButton(page)).toHaveText(STORED_NAME);
 	expect(await storedName(page, baseURL)).toBe(STORED_NAME);
 
-	// Leaving the field keeps a usable name, and drops one that is not.
+	// Leaving the field keeps a usable name, and drops one that is not. The
+	// notice is somewhere to press that does nothing itself.
 	await nameButton(page).click();
 	await nameField(page).fill('grace  HOPPER');
-	await page.getByRole('heading', { level: 1 }).click();
+	await page.getByRole('note').click();
 	await expect(nameButton(page)).toHaveText('Grace Hopper');
 	await nameButton(page).click();
 	await nameField(page).fill('  ');
-	await page.getByRole('heading', { level: 1 }).click();
+	await page.getByRole('note').click();
 	await expect(nameButton(page)).toHaveText('Grace Hopper');
 	expect(await storedName(page, baseURL)).toBe('Grace Hopper');
 });
@@ -296,7 +297,7 @@ test.describe('a label from the word file', () => {
 		await nameField(page).press('Enter');
 		await expect(nameButton(page)).toHaveText('McKinley7');
 		await nameButton(page).click();
-		await page.getByRole('heading', { level: 1 }).click();
+		await page.getByRole('note').click();
 		await expect(nameButton(page)).toHaveText('McKinley7');
 
 		expect(await storedName(page, baseURL)).toBe('McKinley7');

@@ -19,7 +19,7 @@ These versions were verified on the development host, Ubuntu 26.04.1 LTS on amd6
 | openssl | 3.5.5 | The mount tests' certificate. | T02 |
 | dpkg-deb | 1.23.7 | Building the `.deb`. | T12 |
 
-Python-side tools come from `uv.lock`, not the host: ruff, ty, pytest, and httpx2 (T01). httpx2 is the transport of the FastAPI test client. Starlette deprecates plain httpx there. Web-side tools come from `web/package-lock.json`: Vite, TypeScript, Vitest, Playwright, and Prettier (T04).
+Python-side tools come from `uv.lock`, not the host: ruff, ty, pytest, and httpx2 (T01). httpx2 is the transport of the FastAPI test client. Starlette deprecates plain httpx there. `websockets` (T06) is a dependency of segl itself, the WebSocket protocol uvicorn serves `/collab` with (D2-027), and the tests that need a real socket use its client. Web-side tools come from `web/package-lock.json`: Vite, TypeScript, Vitest, Playwright, and Prettier (T04).
 
 Do not use pip, poetry, pnpm, yarn, a virtualenv made by hand, or a Playwright installed system-wide.
 
@@ -46,13 +46,17 @@ CI installs the browser with `npx playwright install --with-deps chromium`, whic
 
 Every spec runs three times, as the projects `direct` (Python alone), `root` (nginx at a host root), and `board` (nginx at `/board/`). The specs open paths relative to the project's base URL, so the same test covers each mount. `SEGL_E2E_PORT` moves the three ports.
 
+The tests run one at a time (`workers: 1`). The three projects share the one server, and its slots are shared by design: a room keeps what was drawn on its slot until the server stops, and counts every connection. So a test asserts on what it drew itself, by element id, and never on a slot being empty. `SLOTS` in `web/e2e/pages.ts` says which slot each kind of test may change. Slot 9 is never drawn on, for the tests about an empty slot. The title test puts `Workspace 4` back when it ends. The run takes about three minutes.
+
+"Two browsers" in `TEST-PLAN.md` is two browser contexts against that server. The `person` fixture makes one: a page in a context of its own, with a display name already stored. `web/e2e/collab.spec.ts` holds T-001 to T-004, the broadcast of T-014, T-015, and T-016, and in the `board` project those tests are the WebSocket half of T-013, over `wss://…/board/collab`. T-004 takes the network away with `page.routeWebSocket`, which closes the page's socket and refuses the ones it tries next until the test restores it.
+
 The browser reaches nginx by address, as `https://127.0.0.1:18951/board/`, and does not check the test certificate, which names the example sites. The mount tests in `tests/test_mount.py` cover the site names and verify the certificate.
 
 `web/e2e/mount.spec.ts` is the page half of T-013 and T-010. It refuses every request to another origin, as with outbound network blocked, and fails if the page attempted one, asked for a path outside its mount, got an error status, or was sent a cookie.
 
 A test's browser starts with a display name already in `localStorage` (`Tester`), as a returning visitor's does, and asks the server for none. segl gives one address 30 names a minute, and every browser test comes from `127.0.0.1`. The specs import `test` from `web/e2e/pages.ts`, which stores that name. The few tests about a new visitor opt out with `test.use({ storedName: null })`, and take 18 names in a run. The test server's word file is `Guest` and `Staff`.
 
-The canvas is pixels, so the specs read the scene through `window.SEGL_CANVAS.document()`, a read-only handle the canvas adapter publishes (`web/src/canvas/handle.ts`). It returns the scene document as the editor serializes it for storage.
+The canvas is pixels, so the specs read the scene through `window.SEGL_CANVAS.document()`, a read-only handle the canvas adapter publishes (`web/src/canvas/handle.ts`). It returns the scene document as the editor serializes it for storage, which leaves deleted elements out. `peers()` returns the other connections the editor is drawing cursors for. `reconcile(local, remote)` runs the editor's own `reconcileElements` beside the canvas, and `web/e2e/reconcile.spec.ts` holds it to `tests/reconcile_cases.json`, the table the server's rule is held to.
 
 ## The empty scene
 
@@ -73,7 +77,7 @@ uv run ruff format --check .
 uv run ty check
 ```
 
-`uv run pytest` covers `tests/` and `tools/md2html`. The page tests (`tests/test_web.py`) use a small stand-in for `web/dist`, so pytest needs no web build. One of them holds the stand-in to the real build when `web/dist` exists, and skips when it does not. Some tests start a real `segl` process on a free loopback port. The mount tests (`tests/test_mount.py`) also start nginx in front of it, from a temporary copy of the `deploy/nginx/` files (`tests/harness.py`), and so does the display-name limit's test (`tests/test_names.py`). A test server's word file is `Guest` and `Staff`. On a host without nginx or openssl they skip, and the summary line says why. With `SEGL_REQUIRE_NGINX=1` they fail instead. The dev container and CI set it. The release script's tests use fakes for the network, `gh`, and `git push`, and real `git` in a temporary repository. One test builds the wheel with `uv build` to confirm it carries `versions.toml` and the SQL migrations, so it needs the network the first time. The repository and slot tests each use a SQLite file in pytest's temporary folder. ruff's settings are in `pyproject.toml`: 100-character lines, Markdown left alone, and `scripts/` kept to Python 3.11 syntax because the host's `python3` runs them.
+`uv run pytest` covers `tests/` and `tools/md2html`. The page tests (`tests/test_web.py`) use a small stand-in for `web/dist`, so pytest needs no web build. One of them holds the stand-in to the real build when `web/dist` exists, and skips when it does not. Some tests start a real `segl` process on a free loopback port. The mount tests (`tests/test_mount.py`) also start nginx in front of it, from a temporary copy of the `deploy/nginx/` files (`tests/harness.py`), and so does the display-name limit's test (`tests/test_names.py`). A test server's word file is `Guest` and `Staff`. On a host without nginx or openssl they skip, and the summary line says why. With `SEGL_REQUIRE_NGINX=1` they fail instead. The dev container and CI set it. The release script's tests use fakes for the network, `gh`, and `git push`, and real `git` in a temporary repository. One test builds the wheel with `uv build` to confirm it carries `versions.toml` and the SQL migrations, so it needs the network the first time. The repository and slot tests each use a SQLite file in pytest's temporary folder. The room tests (`tests/test_room.py`) need no socket: a test's browser is a list of the messages the room delivered. The socket tests (`tests/test_collab.py`) use the FastAPI test client entered as a context manager, so that every socket of a test shares one event loop as in the server, then a real `segl` process, and then nginx in front of one, with the `websockets` client. `tests/reconcile_cases.json` is one table of which copy of an element is kept. pytest, Vitest, and a browser test all read it. ruff's settings are in `pyproject.toml`: 100-character lines, Markdown left alone, and `scripts/` kept to Python 3.11 syntax because the host's `python3` runs them.
 
 The dev container runs the same suite while it builds, from the repository root:
 
@@ -92,7 +96,7 @@ npm --prefix web run build             # web/dist, which Python serves
 npm --prefix web run e2e               # Playwright, against Python serving that build
 ```
 
-`npm --prefix web run format` rewrites the files Prettier would complain about. Vitest covers the modules that need no browser: how the page finds segl's root, slot parsing and the last slot, display names, the canvas adapter's reading of a stored scene, and the build scripts. `tests/display_name_cases.json` is one table of typed names and what segl shows for each. Vitest and pytest both read it, so the browser's title case and the server's cannot drift apart. A test (`tests/test_pins.py`) holds `web/package.json`, `web/package-lock.json`, and `web/.node-version` to `versions.toml`.
+`npm --prefix web run format` rewrites the files Prettier would complain about. Vitest covers the modules that need no browser: how the page finds segl's root, slot parsing and the last slot, display names, slot titles, the canvas adapter's reading of a stored scene, the collaboration session (against a socket and a canvas the test supplies, with a clock it moves), the messages of the socket, and the build scripts. `tests/display_name_cases.json` is one table of typed names and what segl shows for each. Vitest and pytest both read it, so the browser's title case and the server's cannot drift apart. A test (`tests/test_pins.py`) holds `web/package.json`, `web/package-lock.json`, and `web/.node-version` to `versions.toml`.
 
 CI runs the same commands (`.github/workflows/ci.yml`). It installs nginx and Chromium, sets `SEGL_REQUIRE_NGINX=1`, and builds `web/` before pytest. The dev container runs them too, except the browser tests, which join in T11.
 
@@ -105,13 +109,13 @@ uv run segl                 # Python on 127.0.0.1:8888, development defaults, da
 npm --prefix web run dev    # Vite on 127.0.0.1:5173, with hot reload
 ```
 
-Open `http://127.0.0.1:5173/s/1`. Vite proxies `/api` and `/collab` (the WebSocket) to Python with `changeOrigin: false`, so the Origin check still matches. `SEGL_API_URL` names a Python on another address. The dev server serves the editor's canvas fonts from the npm package at `/fonts/`, where the build puts a copy.
+Open `http://127.0.0.1:5173/s/1`. Vite proxies `/api` and `/collab` (the WebSocket) to Python with `changeOrigin: false`, so the Origin check still matches. Two browser windows on that address collaborate as they do in production. `SEGL_API_URL` names a Python on another address. The dev server serves the editor's canvas fonts from the npm package at `/fonts/`, where the build puts a copy.
 
 The dev server serves the page itself, at the host root, with no `SEGL_CONFIG`. The app then takes the host root as segl's root and asks `api/v1/config` whether an edit token is needed (`ARCHITECTURE.md`). Mounting under a path such as `/board/` is tested through nginx and the production build, not the dev server (`TEST-PLAN.md` T-013).
 
 Python serves the production build as well. After `npm --prefix web run build`, `uv run segl` serves it at `http://127.0.0.1:8888/s/1`, from `web/dist` (`web_dir` in `DEPLOY.md`). Without a build it says `no web application in web/dist` and serves the API alone, which is all the dev server needs. Python reads the build when it starts, so restart it after building again.
 
-Everything that touches Excalidraw is in `web/src/canvas/`. The rest of the application imports that folder and never the package. The application version in the segl bar comes from `versions.toml` at build time (`web/scripts/app-version.ts`).
+Everything that touches Excalidraw is in `web/src/canvas/`. The rest of the application imports that folder and never the package. The collaboration code in `web/src/collab/` knows the canvas only as `SceneEditor`, four methods that `web/src/canvas/editor.ts` implements. In development React constructs the editor twice and mounts one, so `Canvas.tsx` waits for the editor's first change before it hands the editor on. The application version in the segl bar comes from `versions.toml` at build time (`web/scripts/app-version.ts`).
 
 ## Documentation site
 

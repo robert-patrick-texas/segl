@@ -19,7 +19,17 @@
  */
 import { expect } from '@playwright/test';
 import { readProjectVersion } from '../scripts/app-version.ts';
-import { expectEditor, mountOf, openSlot, sceneDocument, test } from './pages.ts';
+import {
+	drawRectangle,
+	elementIds,
+	elementOf,
+	expectEditor,
+	mountOf,
+	openSlot,
+	sceneDocument,
+	SLOTS,
+	test
+} from './pages.ts';
 
 const VERSION = readProjectVersion(new URL('../../versions.toml', import.meta.url));
 
@@ -63,21 +73,21 @@ test('the notice says the workspace is shared', async ({ page }) => {
 	);
 });
 
-test('the empty scene loads, and the canvas tools work', async ({ page }) => {
-	await openSlot(page, 's/2');
+test('a slot nobody has drawn on loads empty', async ({ page }) => {
+	await openSlot(page, `s/${SLOTS.empty}`);
+
 	expect((await sceneDocument(page)).elements).toEqual([]);
+});
 
-	await page.locator('[data-testid="toolbar-rectangle"]').click({ force: true });
-	const canvas = (await page.locator('.excalidraw canvas.interactive').boundingBox())!;
-	const x = canvas.x + canvas.width / 2;
-	const y = canvas.y + canvas.height / 2;
-	await page.mouse.move(x - 80, y - 50);
-	await page.mouse.down();
-	await page.mouse.move(x + 80, y + 50, { steps: 5 });
-	await page.mouse.up();
+test('the canvas tools work', async ({ page }) => {
+	// Not an empty slot: the room keeps what this test drew the last time.
+	await openSlot(page, `s/${SLOTS.tools}`);
+	const before = await elementIds(page);
 
-	const { elements } = await sceneDocument(page);
-	expect(elements.map((element) => element.type)).toEqual(['rectangle']);
+	const id = await drawRectangle(page);
+
+	expect(before).not.toContain(id);
+	expect(await elementOf(page, id)).toMatchObject({ type: 'rectangle', isDeleted: false });
 });
 
 test('the root opens slot 1 first, and afterwards the last slot', async ({ page, baseURL }) => {

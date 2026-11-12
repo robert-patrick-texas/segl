@@ -14,15 +14,20 @@
 
 /**
  * The segl bar. It sits above the canvas, outside it, and holds the slot
- * buttons, the shared title, room for the presence count (T06), this
- * browser's display name (S-009), and the notice that the workspace is shared
- * (S-016).
+ * buttons, the shared title (S-003), who is on the slot (S-010), the state of
+ * the connection (S-013), this browser's display name (S-009), and the notice
+ * that the workspace is shared (S-016).
  */
 import { NavLink } from 'react-router';
+import type { Participant } from '../collab/protocol.ts';
+import type { ConnectionStatus } from '../collab/session.ts';
 import { SLOT_NUMBERS } from '../slots.ts';
 import './bar.css';
 import { NameControl } from './NameControl.tsx';
 import { sharedNotice } from './notice.ts';
+import { PresenceControl } from './PresenceControl.tsx';
+import { statusLabel } from './status.ts';
+import { TitleControl } from './TitleControl.tsx';
 
 export interface SeglBarProps {
 	slot: number;
@@ -34,6 +39,16 @@ export interface SeglBarProps {
 	displayName: string | null;
 	/** Store a name the person typed. Returns it as stored, or null when it is not usable. */
 	onRename: (text: string) => string | null;
+	/** The connection to the slot's room. */
+	status: ConnectionStatus;
+	/** Every connection on the slot, this one included. Empty when not live. */
+	participants: readonly Participant[];
+	/** This browser's own connection. */
+	self: string | null;
+	/** False for a browser that may look and not edit. */
+	canEdit: boolean;
+	/** Store a new title for this slot on the server. */
+	onRetitle: (title: string) => Promise<void>;
 }
 
 export function SeglBar({
@@ -42,7 +57,12 @@ export function SeglBar({
 	editRequired,
 	version,
 	displayName,
-	onRename
+	onRename,
+	status,
+	participants,
+	self,
+	canEdit,
+	onRetitle
 }: SeglBarProps) {
 	return (
 		<header className="segl-bar">
@@ -63,9 +83,17 @@ export function SeglBar({
 					);
 				})}
 			</nav>
-			<h1 className="segl-bar__title">{titles.get(slot) ?? ''}</h1>
-			{/* The presence count and its list go here in T06. */}
-			<div className="segl-bar__presence" data-testid="presence" />
+			{/* Keyed by the slot, so a field left open does not follow to the next one. */}
+			<TitleControl
+				key={slot}
+				title={titles.get(slot) ?? ''}
+				editable={canEdit}
+				onRetitle={onRetitle}
+			/>
+			<PresenceControl key={`people-${slot}`} participants={participants} self={self} />
+			<span className="segl-bar__status" data-state={status} role="status">
+				{statusLabel(status)}
+			</span>
 			<div className="segl-bar__you">
 				{/* The button's own label says the same to a screen reader. */}
 				<span aria-hidden="true">You:</span>
