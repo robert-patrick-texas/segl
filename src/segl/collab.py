@@ -29,6 +29,7 @@ gets the whole scene again when it reconnects.
 import asyncio
 import contextlib
 import json
+import math
 from collections import deque
 from typing import Any
 
@@ -209,13 +210,24 @@ def _not_json(constant: str) -> None:
     raise ValueError(constant)
 
 
+def _finite(number: str) -> float:
+    # A number too large for a float, such as 1e999, is JSON. Python reads it
+    # as infinity, and would then write `Infinity`, which is not: the other
+    # browsers could not parse the message, nor any browser the stored scene.
+    value = float(number)
+    if not math.isfinite(value):
+        raise ValueError(number)
+    return value
+
+
 def parse_message(text: str) -> object:
     """Return a message's JSON.
 
     Raises:
-        ValueError: When the text is not JSON as a browser reads it.
+        ValueError: When the text is not JSON as a browser reads it, or holds
+            a number the server could not write back as JSON.
     """
-    return json.loads(text, parse_constant=_not_json)
+    return json.loads(text, parse_constant=_not_json, parse_float=_finite)
 
 
 async def _read(websocket: WebSocket) -> object:

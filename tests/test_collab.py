@@ -49,6 +49,7 @@ from segl.app import create_app
 from segl.assets import AssetStore
 from segl.collab import Rooms, _Outbox, parse_message
 from segl.repository import Repository, Slot
+from segl.room import encode
 
 TOKEN = "correct-horse-battery"
 INVALID_SLOT = {"error": "invalid_slot", "message": "Slots are numbered 1 to 9."}
@@ -238,7 +239,16 @@ def test_a_socket_is_not_in_the_room_before_it_says_hello(client: TestClient) ->
         assert len(hello(silent)[0]["participants"]) == 2
 
 
-@pytest.mark.parametrize("frame", ["{", "", "NaN", '{"type": "presence", "cursor": {"x": NaN}}'])
+@pytest.mark.parametrize(
+    "frame",
+    [
+        "{",
+        "",
+        "NaN",
+        '{"type": "presence", "cursor": {"x": NaN}}',
+        '{"type": "presence", "cursor": {"x": 1e999, "y": 0}}',
+    ],
+)
 def test_text_that_is_not_json_is_answered_with_an_error(client: TestClient, frame: str) -> None:
     with client.websocket_connect("/collab?slot=1") as socket:
         hello(socket)
@@ -265,6 +275,50 @@ def test_a_number_json_does_not_have_is_not_read(constant: str) -> None:
     # Python's parser would take it, and a browser sent it back could not parse it.
     with pytest.raises(ValueError, match=constant.lstrip("-")):
         parse_message(f'{{"type": "elements", "elements": [{{"x": {constant}}}]}}')
+
+
+@pytest.mark.parametrize("number", ["1e999", "-1e999", "1E400", "2.5e+309", "[[-1e999]]"])
+def test_a_number_too_large_to_write_back_is_not_read(number: str) -> None:
+    # It is JSON, and Python reads it as infinity, which it would write as `Infinity`.
+    with pytest.raises(ValueError, match=r"[eE]"):
+        parse_message(f'{{"type": "elements", "elements": [{{"x": {number}}}]}}')
+
+
+def test_the_largest_numbers_json_can_carry_are_read() -> None:
+    whole = 10**400
+    message = parse_message(
+        f'{{"x": 1.7976931348623157e308, "y": -1e308, "z": {whole}, "w": 1e-999}}'
+    )
+
+    assert message == {"x": 1.7976931348623157e308, "y": -1e308, "z": whole, "w": 0.0}
+    # Each is written back as JSON a browser reads.
+    parse_message(encode({"again": message}))
+
+
+def test_an_element_with_a_number_too_large_reaches_nobody_and_is_not_stored(
+    client: TestClient,
+) -> None:
+    # Before, the other browser was sent `Infinity`, the sender was told
+    # `saved`, and the scene route answered with text no browser can parse.
+    drawn = '{"id": "a", "version": 1, "versionNonce": 1, "x": 1e999}'
+    with (
+        client.websocket_connect("/collab?slot=3") as one,
+        client.websocket_connect("/collab?slot=3") as two,
+    ):
+        hello(one), hello(two)
+        received(one)
+
+        one.send_text(f'{{"type": "elements", "epoch": 1, "elements": [{drawn}], "seq": 1}}')
+
+        assert received(one)["error"] == "bad_message"
+        # The connection is still there, and the other heard nothing of the element.
+        one.send_json({"type": "rename", "displayName": "ada"})
+        assert received(one)["displayName"] == "Ada"
+        assert received(two)["type"] == "presence"
+    answer = client.get("/api/v1/slots/3/scene")
+    assert "Infinity" not in answer.text
+    assert parse_message(answer.text)["scene"]["elements"] == []  # ty: ignore[not-subscriptable]
+    assert client.get("/api/v1/slots/3/revisions").json() == {"revisions": []}
 
 
 def test_a_long_message_is_parsed_and_applied(client: TestClient) -> None:

@@ -209,7 +209,7 @@ Limits:
 - The elements of one slot, as JSON, may come to `max_scene_bytes` together. A batch that would go over is `scene_too_large`. One that makes the scene smaller is always taken.
 - The server pings every connection every 20 seconds (uvicorn's default) and closes one that does not answer.
 - A browser that stops reading is not waited for. When 1024 messages, or 16 MiB, are waiting for it, the server closes its connection with code 1013. It reconnects and is sent the whole scene.
-- The server answers nothing but JSON: a message with `NaN` or `Infinity` in it is `bad_message`.
+- The server answers nothing but JSON: a message with `NaN` or `Infinity` in it is `bad_message`. So is one with a number too large for the server to hold, such as `1e999`: it is JSON, and Python would read it as infinity and write `Infinity` to the other browsers and into the stored scene.
 
 ## Pages and the build's files
 

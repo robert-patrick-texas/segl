@@ -88,3 +88,7 @@ The project is specified, licensed, and public on GitHub. A Python service reads
 - `Repository.replace_head` takes `files=`, for the files an import brings. `Room.put` puts elements and files in place of a room's scene, and `Room.replace` reads a stored scene and calls it. `Saver.put` is the import beside `Saver.replace`.
 - The test harness's client speaks TLS 1.2 to the test nginx. Under TLS 1.3 its WebSocket client sometimes lost its request on a busy machine, which failed a test through nginx about once in a thousand handshakes, and twice in CI.
 - The license header moved from the agent rules to `CONTRIBUTING.md`. The rule to comment out superseded code was removed.
+
+### Fixed
+
+- A hand-made `elements` message with a number too large to hold, such as `1e999`, is `bad_message`. It used to be taken: Python read it as infinity, the other browsers were sent `Infinity`, which is not JSON, and the slot's stored scene could then not be loaded by any browser. No browser sends such a number.
