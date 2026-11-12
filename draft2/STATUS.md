@@ -730,3 +730,9 @@ This file is the source of truth for what is done and what to do next. Update it
   - S-008 and T-008 still describe the token, which is what the code does today. T10b rewords them, adds S-018 and the test-plan rows after T-018, and takes the new rows into T11's and T13's ranges.
   - The checks and the CI run are those of the entry above.
   - Next action T10b.
+- 2026-11-12: T10b changed before it is built, at the user's request: the `#e=` link of T10 goes. The user's words: "if a site is limiting edit to access codes, an editor should provide an access code".
+  - The entry above listed "the `#e=` link of T10 stays and carries a pass" among the choices the task text made. That one is now the other way. The rest of that list stands, and the user has not spoken to it.
+  - `draft2/TASKS.md`: T10b takes out the reading and stripping of the fragment, the `hashchange` listener, and the state for a token still to be proven, stores a pass as soon as the access route issues it, and replaces the link tests with one that shows an address ending in `#e=` is an address like any other. D2-032 and D2-033 in `docs/DECISIONS.md` each carry a dated amendment.
+  - No code changed. The link is still in the tree and still tested, because until T10b it is the only way a browser gets the token. The documents that describe it are right about the tree as it is, and T10b changes them with the code.
+  - `python3 scripts/build_docs.py` found 0 broken links.
+  - Next action remains T10b.
