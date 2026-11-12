@@ -1,0 +1,83 @@
+# Versions here mirror versions.toml, the only version list (D2-020).
+# tests/test_pins.py fails when the two differ.
+
+[build-system]
+requires = ["hatchling==1.33.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "segl"
+version = "0.0.0"
+description = "Shared network drawing boards: nine collaborative Excalidraw slots behind one Python service."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.15,<3.16"
+authors = [{ name = "segl contributors" }]
+dependencies = [
+    "fastapi==0.162.5",
+    # Plain uvicorn, not [standard], as in vakr and Sunstone.
+    "uvicorn==0.54.0",
+]
+
+[project.urls]
+Homepage = "https://robert-patrick-texas.github.io/segl/"
+Source = "https://github.com/robert-patrick-texas/segl"
+
+[project.scripts]
+segl = "segl.cli:main"
+
+[dependency-groups]
+dev = [
+    # Transport of the FastAPI/Starlette TestClient. Starlette deprecates plain
+    # httpx there and asks for httpx2, which vakr and Sunstone also use.
+    "httpx2==2.16.0",
+    "pytest==9.2.0",
+    "ruff==0.17.4",
+    "ty==0.0.101",
+]
+# tools/md2html's packages, so pytest and ty can resolve them. md2html keeps
+# its own inline metadata for `uv run`.
+docs = [
+    "markdown-it-py==4.3.0",
+    "mdit-py-plugins==0.7.0",
+]
+
+[tool.uv]
+default-groups = ["dev", "docs"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/segl"]
+
+# The installed package carries a copy of versions.toml (docs/DEPLOY.md).
+[tool.hatch.build.targets.wheel.force-include]
+"versions.toml" = "segl/versions.toml"
+
+[tool.hatch.build.targets.sdist]
+include = ["src/segl", "tests", "versions.toml", "LICENSE", "NOTICE", "README.md"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py315"
+# ruff would also format Python blocks inside Markdown. The documents are
+# prose, and draft1/ is frozen, so they are left alone.
+extend-exclude = ["_site", "*.md"]
+
+# The scripts run under the host's python3, 3.11 or newer (docs/DEVELOPMENT.md),
+# so they keep syntax that version accepts.
+[tool.ruff.per-file-target-version]
+"scripts/*.py" = "py311"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.ty.environment]
+python-version = "3.15"
+# md2html's modules import their siblings by bare name.
+extra-paths = ["tools/md2html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "tools"]
+# md2html's modules import their siblings the way the script does at runtime.
+pythonpath = ["tools/md2html"]
+addopts = ["-ra", "--strict-markers", "--import-mode=importlib"]

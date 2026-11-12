@@ -4,7 +4,7 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
-The project is specified, licensed, and public on GitHub, and application code has not started. This entry records that baseline for the first release notes.
+The project is specified, licensed, and public on GitHub. Application code has started with a Python skeleton that serves a health route, checked by CI and a dev container.
 
 ### New
 
@@ -14,6 +14,10 @@ The project is specified, licensed, and public on GitHub, and application code h
 - nginx files in `deploy/nginx/`. They hold an upstream and WebSocket map, proxy settings (forwarded client address, a body limit above segl's own, timeouts, gzip), a `/board/` mount, and two example sites.
 - `docs/DEVELOPMENT.md` lists the development host's tools, the checks, and the dev loop.
 - The documentation site at <https://robert-patrick-texas.github.io/segl/>: every Markdown file as a page, with an index of all pages that opens with a link to the repository. `scripts/build_docs.py` builds it with `tools/md2html`, copied from vakr. Pictures go in `images/`. A broken link, anchor, or image stops the publish (D2-024).
+- The Python project: package `segl` under `src/segl`, built with hatchling, with FastAPI and uvicorn. `uv run segl` serves `GET /api/v1/health` on `bind` (default `127.0.0.1:8000`), and `segl --version` prints the application version from `versions.toml`, a copy of which the wheel carries.
+- The checks: `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`, and `uv run ty check`. Tests hold `pyproject.toml`, `.python-version`, and md2html's inline metadata to `versions.toml`, and check every source file for the license header.
+- CI (`.github/workflows/ci.yml`) runs those checks on pushes to `main` and on pull requests.
+- The dev container, `deploy/Containerfile`: Ubuntu 26.04 and uv, running the suite with uv's Python.
 
 ### Changed
 
@@ -25,4 +29,5 @@ The project is specified, licensed, and public on GitHub, and application code h
 - Development containers may run under rootful Docker (D2-015, S-017).
 - The WebSocket carries title changes and newly placed images. Uploaded files are served at `/api/v1/assets/{hash}`. `trusted_proxies` decides whose `X-Forwarded-For` segl believes.
 - The default display names no longer include Bush, Clinton, Obama, Trump, or Biden.
+- The test client's transport is httpx2, not httpx, which Starlette deprecates there. `versions.toml` gains `[python.build]` for the build backend.
 - The license header moved from the agent rules to `CONTRIBUTING.md`. The rule to comment out superseded code was removed.

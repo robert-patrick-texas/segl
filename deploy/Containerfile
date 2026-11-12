@@ -1,0 +1,36 @@
+# The segl dev container (docs/DEPLOY.md, "Dev container"). It runs the test
+# suite with uv's pinned Python, not the system's. Build it from the
+# repository root:
+#
+#     docker build -f deploy/Containerfile .
+#     podman build -f deploy/Containerfile .
+#
+# Rootful Docker, rootless Docker, and rootless Podman all build it (D2-015).
+# Later tasks add nginx (T02), Node (T04), and the Playwright browser (T11).
+
+# uv 0.13.7, pinned by image digest, as Sunstone's images pin it.
+FROM ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490 AS uv
+
+FROM docker.io/library/ubuntu:26.04
+# uv downloads CPython and packages over HTTPS. Nothing else is needed yet.
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=uv /uv /uvx /usr/local/bin/
+
+# The suite runs as the image's unprivileged account, not as root.
+RUN install -d -o ubuntu -g ubuntu /work
+USER ubuntu
+WORKDIR /work
+ENV UV_LINK_MODE=copy \
+    UV_PYTHON_PREFERENCE=only-managed \
+    UV_COMPILE_BYTECODE=0
+
+# Python and the locked packages first, so a source change reuses this layer.
+COPY --chown=ubuntu:ubuntu .python-version pyproject.toml uv.lock versions.toml ./
+RUN uv sync --locked --no-install-project
+
+COPY --chown=ubuntu:ubuntu . .
+RUN uv sync --locked && uv run pytest
+
+CMD ["uv", "run", "pytest"]

@@ -9,9 +9,10 @@ a sidebar of nested ``<details>`` groups: root pages first, then each
 directory in name order, with the groups that contain the current page open
 and that page marked ``aria-current="page"``. Links are page-relative, so the
 site works from any base path. It also renders the "GitHub" link for the top
-bar and, with ``--repo-in-index``, the repository entry that opens the index. ``md2html.py`` places both into ``template.html``, whose CSS makes the
-sidebar sticky on wide screens and a no-JavaScript toggle on phones. Like the
-rest of md2html it imports nothing from the project that vendors it.
+bar and, with ``--repo-in-index``, the repository entry that opens the index.
+``md2html.py`` places both into ``template.html``, whose CSS makes the sidebar
+sticky on wide screens and a no-JavaScript toggle on phones. Like the rest of
+md2html it imports nothing from the project that vendors it.
 
 Dependencies:
     md2html_render: Provides the ``Page`` record whose path and title are

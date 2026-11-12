@@ -18,7 +18,7 @@ These versions were verified on the development host, Ubuntu 26.04.1 LTS on amd6
 | nginx | 1.28.3 | Trying the `deploy/nginx/` files on the host. The dev container installs its own for the mount tests. | T02 |
 | dpkg-deb | 1.23.7 | Building the `.deb`. | T12 |
 
-Python-side tools come from `uv.lock`, not the host: ruff, ty, pytest, and httpx (T01). Web-side tools come from `web/package-lock.json`: Vite, TypeScript, Vitest, Playwright, and Prettier (T04).
+Python-side tools come from `uv.lock`, not the host: ruff, ty, pytest, and httpx2 (T01). httpx2 is the transport of the FastAPI test client. Starlette deprecates plain httpx there. Web-side tools come from `web/package-lock.json`: Vite, TypeScript, Vitest, Playwright, and Prettier (T04).
 
 Do not use pip, poetry, pnpm, yarn, a virtualenv made by hand, or a Playwright installed system-wide.
 
@@ -43,6 +43,14 @@ uv run pytest
 uv run ruff check .
 uv run ruff format --check .
 uv run ty check
+```
+
+`uv run pytest` covers `tests/` and `tools/md2html`. One test builds the wheel with `uv build` to confirm it carries `versions.toml`, so it needs the network the first time. ruff's settings are in `pyproject.toml`: 100-character lines, Markdown left alone, and `scripts/` kept to Python 3.11 syntax because the host's `python3` runs them.
+
+The dev container runs the same suite while it builds, from the repository root:
+
+```bash
+docker build -f deploy/Containerfile .    # or: podman build -f deploy/Containerfile .
 ```
 
 Web, from T04:
@@ -84,12 +92,7 @@ It also copies `images/` into the site whole, and fails on a raw HTML `<img>` wh
 
 `.github/workflows/pages.yml` runs the same script on every push to `main` and deploys `_site/`. A broken link stops the deploy.
 
-`tools/md2html` stays portable. It imports nothing from segl and hard-codes nothing about it, so it can go back to vakr unchanged. Until T01 adds its tests to the project's pytest run, run them with:
-
-```bash
-uv run --with pytest==9.2.0 --with markdown-it-py==4.3.0 --with mdit-py-plugins==0.7.0 \
-    pytest tools/md2html
-```
+`tools/md2html` stays portable. It imports nothing from segl and hard-codes nothing about it, so it can go back to vakr unchanged. `uv run pytest` runs its tests with the rest of the suite. Its two packages are the `docs` dependency group, at the `[python.docs]` pins in `versions.toml`, and its inline script metadata mirrors them.
 
 ## Images
 

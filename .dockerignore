@@ -1,0 +1,18 @@
+# Kept out of the build context of deploy/Containerfile. Docker and Podman
+# both read this file.
+.git/
+.venv/
+_site/
+var/
+dist/
+build/
+node_modules/
+web/dist/
+test-results/
+playwright-report/
+**/__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.sqlite
+segl.toml
+*.local.toml

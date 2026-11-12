@@ -16,9 +16,20 @@ python = "3.15.2"
 node = ""
 
 [python.dependencies]
+fastapi = "0.162.5"
+uvicorn = "0.54.0"
 
 [python.dev]
+httpx2 = "2.16.0"
+pytest = "9.2.0"
+ruff = "0.17.4"
+ty = "0.0.101"
 
+# The build backend, [build-system] requires in pyproject.toml.
+[python.build]
+hatchling = "1.33.0"
+
+# Also the `docs` dependency group in pyproject.toml.
 # The documentation site's converter, tools/md2html (copied from vakr).
 # Its inline script metadata (PEP 723) mirrors these pins.
 [python.docs]

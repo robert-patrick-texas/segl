@@ -59,7 +59,7 @@ def direct_rows(doc: dict) -> list[tuple[str, str, str, str]]:
         block = doc.get(ecosystem, {})
         if not isinstance(block, dict):
             continue
-        for bucket in ("dependencies", "dev", "docs"):
+        for bucket in ("dependencies", "dev", "build", "docs"):
             entries = block.get(bucket, {})
             if not isinstance(entries, dict):
                 continue
@@ -252,8 +252,7 @@ def uv_cpython_versions() -> list[tuple[int, ...]] | None:
     if completed.returncode != 0:
         return None
     found = {
-        tuple(int(part) for part in match)
-        for match in STABLE_CPYTHON.findall(completed.stdout)
+        tuple(int(part) for part in match) for match in STABLE_CPYTHON.findall(completed.stdout)
     }
     return sorted(found) or None
 
@@ -335,9 +334,7 @@ def cmd_cut(publish: bool) -> int:
     summary, topics = parse_unreleased(CHANGELOG.read_text(encoding="utf-8"))
     sentences = summary_sentence_count(summary)
     if sentences < 1 or sentences > 3:
-        raise SystemExit(
-            "Unreleased needs a one to three sentence summary before it can be cut"
-        )
+        raise SystemExit("Unreleased needs a one to three sentence summary before it can be cut")
     if not any(topics.values()):
         raise SystemExit("Unreleased has no New, Changed, Fixed, or Additional Notes bullets")
     if not (ROOT / "pyproject.toml").is_file():

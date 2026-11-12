@@ -20,6 +20,8 @@ head_flush_seconds = 0.2
 
 There is no base-path setting. segl serves at its root, and nginx strips the path it mounts segl under (`ARCHITECTURE.md`, mount and navigation). `trusted_proxies` lists the addresses whose `X-Forwarded-For` header segl believes. Keep it to the nginx host.
 
+`bind` is `host:port`. Write an IPv6 host in brackets, as in `[::1]:8000`. When the file `--config` names does not exist, segl starts with the defaults.
+
 Without `--config`, segl runs with development defaults: the values above, except `database = "var/segl.sqlite"`, `assets_dir = "var/assets"`, and `display_names = "deploy/display-names.txt"`, relative to the working directory. Git ignores `var/`. A local `segl.toml`, also ignored, can override any of them. Tests point `database`, `assets_dir`, and `display_names` at temporary paths and may shorten the flush interval.
 
 The example file ships with `edit_token = ""`. Operators who set a token restrict the file to mode `0640`, owner `root`, group `segl`.
@@ -90,7 +92,7 @@ T00 checked these files with nginx 1.28.3 on 2026-11-11. `nginx -t` passed for b
 
 ## Dev container
 
-`deploy/Containerfile` is based on Ubuntu 26.04 and installs uv, Node for the web build, nginx for the mount tests, and the browser Playwright needs. It does not install the production `.deb` layout. Tests run with `uv sync` and `uv run` inside the container, using the project's pinned Python. Rootful Docker, rootless Docker, or rootless Podman can build and run it (D2-015). T01 creates the file. T11 is the first task that must pass the full browser suite inside it. The host tools are in `DEVELOPMENT.md`.
+`deploy/Containerfile` is based on Ubuntu 26.04 and installs uv, Node for the web build, nginx for the mount tests, and the browser Playwright needs. It does not install the production `.deb` layout. Tests run with `uv sync` and `uv run` inside the container, using the project's pinned Python. Rootful Docker, rootless Docker, or rootless Podman can build and run it (D2-015). T01 created the file with uv alone, pinned by image digest, and its build runs `uv run pytest` as the image's unprivileged `ubuntu` account. T02 adds nginx, T04 Node, and T11 the browser. T11 is the first task that must pass the full browser suite inside it. The host tools are in `DEVELOPMENT.md`.
 
 ## Production container
 

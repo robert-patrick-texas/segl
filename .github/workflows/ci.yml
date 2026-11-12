@@ -1,0 +1,44 @@
+# The checks every change runs, on pushes to main and on pull requests. They
+# are the commands in docs/DEVELOPMENT.md, "Checks". This workflow publishes
+# nothing.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # setup-uv publishes no floating major tag; pinned to a commit, as
+      # Sunstone's and vakr's workflows do.
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: Install the locked environment (Python from .python-version)
+        run: uv sync --locked
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format
+        run: uv run ruff format --check .
+
+      - name: Types
+        run: uv run ty check
+
+      - name: Tests
+        run: uv run pytest
