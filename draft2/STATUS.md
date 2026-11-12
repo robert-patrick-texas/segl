@@ -4,10 +4,10 @@ This file is the source of truth for what is done and what to do next. Update it
 
 - Updated: 2026-11-12
 - Phase: P0 collaborative slots
-- Next task: T05
-- Completed: T00, T00b, T01, T01b, T02, T03, T04
+- Next task: T06
+- Completed: T00, T00b, T01, T01b, T02, T03, T04, T05
 - Blocked: no
-- Application code: Python service (`src/segl`) with settings, SQLite storage for the nine slots, the health, config, and slot read routes, and the pages of the web build. Browser application (`web/`) with the segl bar and the Excalidraw canvas for each slot. Nothing drawn is saved or shared yet
+- Application code: Python service (`src/segl`) with settings, SQLite storage for the nine slots, the health, config, and slot read routes, and the pages of the web build. Display names: the word file, the allocation route, and its limit per client address. Browser application (`web/`) with the segl bar, this browser's display name in it, and the Excalidraw canvas for each slot. Nothing drawn is saved or shared yet
 
 ## Log
 
@@ -204,3 +204,49 @@ This file is the source of truth for what is done and what to do next. Update it
   - CI run 43182009744 succeeded with 318 pytest, 71 Vitest, and 42 browser tests passed. Pages run 43182009715 succeeded.
   - Not done: the browser tests were not run on the host for this change, only in CI, and the dev container was not rebuilt.
   - Next action remains T05.
+- 2026-11-12: T05 done, in commits `13efb6a` (the task) and `65a8f9a` (one more browser test). Evidence, on `65a8f9a` unless a line says otherwise:
+  - Acceptance, on the host with Node 26.13.1, nginx 1.28.3, and Chromium from the `mcr.microsoft.com/playwright:v1.65.0-noble` container through `PW_WS_ENDPOINT`:
+    - `uv run pytest` gave 393 passed and none skipped. The 75 new tests are all in `tests/test_names.py`, counted with `pytest --collect-only`.
+    - T-014 against the temporary word file `Guest` / `Staff`: three calls to `POST /api/v1/display-name` returned `Guest1`, `Staff2`, `Guest3`, and a new application over the same database continued with `Guest3` after two.
+    - T-014's rate-limit case, through nginx with the `deploy/nginx/` files in front of a real `python -m segl --config` process: 31 calls to `/board/api/v1/display-name`, each sending a different `X-Forwarded-For`, got 200 thirty times and then `429` with `rate_limited` and a `Retry-After` from 1 to 60. None set a cookie, and none of the sent addresses reached segl's log. The same address was refused at the host-root site too. A call from another address then got `Guest31`, so the refusals took no number.
+    - Without nginx: a real process that trusts `127.0.0.1` gave 31 names to 31 different `X-Forwarded-For` values, and one with `trusted_proxies = []` refused the 31st.
+    - The packaged file: `deploy/display-names.txt` has 190 entries, all unique and all matching `^[A-Za-z]{1,10}$`, and segl's loader reads the same 190 in the same order. With it, the first three names are `Alpha1`, `Bravo2`, `Charlie3`.
+    - The browser keeps a label across reload: `npm --prefix web run e2e` gave 72 passed, 24 tests in each of `direct`, `root`, and `board`. The 30 new ones are the ten tests of `web/e2e/names.spec.ts`. A new browser got a label matching `Guest` or `Staff` plus a number, the same label was there after a reload, on another slot, and through segl's root, `localStorage` held it under `segl:{basePath}:displayName`, and the page made one request for a name in all of that.
+    - A rename of `john smith` showed `John Smith`, was stored, and was still there after a reload, with no request for a name.
+    - `uv run ruff check .` and `uv run ty check` printed `All checks passed!`. `uv run ruff format --check .` printed `42 files already formatted`.
+    - `npm --prefix web run check` passed. `npm --prefix web test` gave 125 passed in 8 files, 54 of them new in `web/src/names.test.ts`. `npm --prefix web run format:check` passed.
+  - CI run 43187501214 succeeded on Node 26.13.1 with 393 pytest, 125 Vitest, and 72 browser tests passed. Pages run 43187501080 succeeded. On `13efb6a`, CI run 43186486361 had 69 browser tests passed. `python3 scripts/build_docs.py` found 0 broken links.
+  - `docker build --progress=plain -f deploy/Containerfile .` (rootful Docker), on the tree of `13efb6a`, ran 125 Vitest tests, Prettier, the build, and 393 pytest tests, all passed. `65a8f9a` adds only a browser test, which the container does not run.
+  - A real run on a scratch port with the packaged list: `POST /api/v1/display-name` answered `{"displayName":"Alpha1"}` with `cache-control: no-store` and no `Set-Cookie`, and on a new database the page in the container's Chromium showed `You: Alpha1` in the bar. Screenshots showed the label at 1280 px, the field with `1 to 40 characters` after a name of spaces, and `John Smith` after a rename at 390 px.
+  - `uv run segl --config` with a word file of only a comment printed `segl: the display-name file ... has no words; it needs one word on a line`. With `Mc Kinley` on line 2 it printed `line 2: 'Mc Kinley' is not a word of 1 to 10 ASCII letters`. With no file it printed `cannot read the display-name file`. Each exited 1 and listened on nothing.
+  - 34 deliberate breakages each failed a test. Among them: the limit never refusing, refused calls counted, a name taken before the limit is checked, one count for every address, every address trusted, nginx appending the client's `X-Forwarded-For`, word lines not checked, an empty file accepted, the command not catching the word-file error, a repeated word in the packaged list, `str.title` as the title case, a 41-character limit in Python, UTF-16 units counted in the browser, the page asking although a label is stored, two callers not sharing one request, a rename not stored, an unchanged label title-cased, no second try after a refusal, Escape keeping the typed name, and the `storage` listener removed. The last one, the browser tests starting without a stored name, failed 15 of 72: 12 that expect the stored name, and 3 new-visitor tests that pass otherwise, in the two projects that run after the first.
+  - Three more breakages changed nothing a test could see. Two were covered twice: with the hook's own read of `localStorage` removed, `assignName` still finds the stored label. The third was a guard that could never run, which was removed. Looking into it added the browser test for a browser that refuses storage.
+  - Differences from the task text, and choices it left open:
+    - A refused call is not counted. `docs/SECURITY.md` said "successful or attempted". A call counts once it is admitted, whether or not the allocation then succeeds, and the limit is a sliding 60 seconds. Counting refusals would lock out a page that retries.
+    - The refusal is `429` with `rate_limited` and `Retry-After`, a new code in `docs/API.md`. A name is `{ "displayName" }` with `Cache-Control: no-store`.
+    - The word file is read once, in `create_app`, so a changed file takes a restart. A missing file, a line that is not a word, and a file without words each stop segl with exit status 1. `docs/ARCHITECTURE.md` named only the empty list. Spaces around a word, CRLF line endings, and a byte order mark are accepted, and a repeated word is kept.
+    - `draft2/display-names.txt` is still there, unchanged, beside the copy. `docs/ARCHITECTURE.md` now names `deploy/display-names.txt` as the packaged list.
+    - The server's title case, `title_case_name` in `src/segl/names.py`, is written and tested now, though no route calls it until T06. It and `titleCaseName` in `web/src/names.ts` are held to one table, `tests/display_name_cases.json`, which pytest and Vitest both read.
+    - Where the uppercase of a word's first character is more than one character, only the first stays uppercase: `ßeta` is `Sseta`. With `SSeta`, a second pass gave `Sseta`, so the browser and the server would have disagreed.
+    - The 40-character limit is checked after the title case and counts characters, not UTF-16 units. A name that is not 1 to 40 characters is refused, and the field stays open and says `1 to 40 characters`.
+    - In the bar the label is a button after `You:`. Enter, or leaving the field, keeps the typed name, and Escape keeps the old one. A field closed without a change renames nothing, so `McKinley7` is not turned into `Mckinley7`.
+    - A browser the server refuses, or cannot reach, shows `Set your name`, stays usable, and asks again after the `Retry-After` time, or after 30 seconds for any other failure. A name typed in the meantime stays and ends the asking.
+    - Another tab of the same browser shows a renamed label at once, through the `storage` event. `65a8f9a` added the browser test for it.
+    - The browser tests start with `Tester` in `localStorage` (`test` in `web/e2e/pages.ts`), because all of them come from `127.0.0.1` and the limit is 30 a minute. The tests about a new visitor opt out. One run took 18 names, read from the test server's counter.
+    - `tests/harness.py` now has `running_mount` and `Mount`, moved from `tests/test_mount.py`, and the `tools` and `certificate` fixtures are in `tests/conftest.py`. `make_settings()` points `display_names` at the packaged list, and a test server's word file is `Guest` / `Staff`.
+  - For T06:
+    - `useDisplayName` in `web/src/App.tsx` holds the label. Send `displayName.name` in `hello`, and do not call `allocateDisplayName` anywhere else. The name can be `null` when the socket opens, after a refusal.
+    - A rename has to go out on the socket from two places: `rename()` in the hook, and the `storage` event, which is how another tab's rename arrives.
+    - The `rename` message calls `title_case_name`, which returns `None` for a name that is not 1 to 40 characters.
+    - `POST /api/v1/display-name` has no `Origin` check yet. T06's check for mutations should cover it.
+    - A browser context made with `browser.newContext()` is not given the stored name and takes one from the server. Two-context tests should store one in each context, to stay under 30 names a run.
+  - Not done or not exercised:
+    - The broadcast half of T-014 (T06).
+    - Rename and allocation on the Vite dev server were not tried. The browser tests use the production build.
+    - A real 60-second wait for the limit to reopen was not run. The window is tested with a clock the test moves.
+    - An IPv6 client is counted by its full address, so one `/64` can take 30 names per address.
+    - Python and JavaScript agree on the 27 cases in the table. Their whitespace sets differ for a few control characters (`U+001C` to `U+001F`, `U+0085`, `U+FEFF`), which the table leaves out.
+    - The narrow layout was looked at once more at 390 px, in a screenshot. No test covers it.
+    - Rootless Docker and Podman were not tried. `scripts/release.py check --gate` was not run in this task.
+  - Still not listed in `versions.toml` or checked: the uv 0.13.7 and Node 26.13.1 image digests in `deploy/Containerfile`.
+  - Next action T06.

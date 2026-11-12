@@ -170,7 +170,7 @@ Acceptance:
 
 ## T05 — Display names
 
-- Status: pending
+- Status: done
 - Requires: T04
 - Requirements: S-009
 - Read: `docs/ARCHITECTURE.md` (display names), `docs/SECURITY.md` (client address), `draft2/display-names.txt`
