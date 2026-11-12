@@ -270,6 +270,20 @@ test('Escape keeps the old name, and so does a name that is not usable', async (
 	expect(await storedName(page, baseURL)).toBe('Grace Hopper');
 });
 
+test('a rename in one tab shows in another tab of the same browser', async ({ page, context }) => {
+	await openSlot(page, 's/1');
+	const other = await context.newPage();
+	await openSlot(other, 's/2');
+	await expect(nameButton(other)).toHaveText(STORED_NAME);
+
+	await nameButton(page).click();
+	await nameField(page).fill('katherine johnson');
+	await nameField(page).press('Enter');
+
+	await expect(nameButton(page)).toHaveText('Katherine Johnson');
+	await expect(nameButton(other)).toHaveText('Katherine Johnson');
+});
+
 test.describe('a label from the word file', () => {
 	test.use({ storedName: 'McKinley7' });
 
