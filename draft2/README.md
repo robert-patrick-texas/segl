@@ -1,3 +1,5 @@
+<img width="1671" height="941" alt="SEGL: Draw the network. Sail together. Four navigators, one a figure of green light, chart a glowing network on a shared map aboard a longship under the northern lights" src="../images/segl-four-navigators-chart-the-network.png" />
+
 # segl draft2 — agent workbook
 
 **Status:** Workbook for the next implementation task. The product manual is [`docs/`](../docs/README.md).
