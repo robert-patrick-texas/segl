@@ -4,8 +4,8 @@
 
 # The address segl listens on, host:port. Keep it on loopback and let nginx
 # face the network. Keep the upstream in /etc/nginx/conf.d/segl.conf in step.
-# An IPv6 host goes in brackets: "[::1]:8000".
-bind = "127.0.0.1:8000"
+# An IPv6 host goes in brackets: "[::1]:8888".
+bind = "127.0.0.1:8888"
 
 # The addresses, or networks such as "10.0.0.0/8", whose X-Forwarded-For and
 # X-Forwarded-Proto headers segl believes. Keep it to the nginx host.

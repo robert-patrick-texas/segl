@@ -30,7 +30,7 @@ import { defineConfig } from 'vitest/config';
 import { readProjectVersion } from './scripts/app-version.ts';
 import { editorFonts } from './scripts/editor-fonts.ts';
 
-const backend = process.env['SEGL_API_URL'] ?? 'http://127.0.0.1:8000';
+const backend = process.env['SEGL_API_URL'] ?? 'http://127.0.0.1:8888';
 const version = readProjectVersion(new URL('../versions.toml', import.meta.url));
 
 export default defineConfig({

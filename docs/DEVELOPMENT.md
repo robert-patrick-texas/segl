@@ -99,7 +99,7 @@ CI runs the same commands (`.github/workflows/ci.yml`). It installs nginx and Ch
 Two processes, each in its own terminal:
 
 ```bash
-uv run segl                 # Python on 127.0.0.1:8000, development defaults, data in var/
+uv run segl                 # Python on 127.0.0.1:8888, development defaults, data in var/
 npm --prefix web run dev    # Vite on 127.0.0.1:5173, with hot reload
 ```
 
@@ -107,7 +107,7 @@ Open `http://127.0.0.1:5173/s/1`. Vite proxies `/api` and `/collab` (the WebSock
 
 The dev server serves the page itself, at the host root, with no `SEGL_CONFIG`. The app then takes the host root as segl's root and asks `api/v1/config` whether an edit token is needed (`ARCHITECTURE.md`). Mounting under a path such as `/board/` is tested through nginx and the production build, not the dev server (`TEST-PLAN.md` T-013).
 
-Python serves the production build as well. After `npm --prefix web run build`, `uv run segl` serves it at `http://127.0.0.1:8000/s/1`, from `web/dist` (`web_dir` in `DEPLOY.md`). Without a build it says `no web application in web/dist` and serves the API alone, which is all the dev server needs. Python reads the build when it starts, so restart it after building again.
+Python serves the production build as well. After `npm --prefix web run build`, `uv run segl` serves it at `http://127.0.0.1:8888/s/1`, from `web/dist` (`web_dir` in `DEPLOY.md`). Without a build it says `no web application in web/dist` and serves the API alone, which is all the dev server needs. Python reads the build when it starts, so restart it after building again.
 
 Everything that touches Excalidraw is in `web/src/canvas/`. The rest of the application imports that folder and never the package. The application version in the segl bar comes from `versions.toml` at build time (`web/scripts/app-version.ts`).
 

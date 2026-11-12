@@ -57,7 +57,7 @@ segl's own redirects are relative. It sends none today: the framework's trailing
 ## Request path
 
 1. The browser requests `https://dev.example.com/board/s/1`.
-2. nginx terminates TLS, strips `/board`, and proxies `/s/1` to `127.0.0.1:8000`, with the client's address in `X-Forwarded-For`.
+2. nginx terminates TLS, strips `/board`, and proxies `/s/1` to `127.0.0.1:8888`, with the client's address in `X-Forwarded-For`.
 3. Python returns `index.html` with `../` asset URLs and `SEGL_CONFIG`.
 4. The app stores last-slot `1`, loads the head scene from `api/v1/slots/1/scene` under its root, and mounts Excalidraw.
 5. If `displayName` is missing, the app asks the server for the next label and stores it.

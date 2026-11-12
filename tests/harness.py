@@ -44,7 +44,7 @@ from typing import Any
 
 import pytest
 
-from segl.config import Settings, load_settings
+from segl.config import DEFAULT_BIND, Settings, load_settings
 
 ROOT = Path(__file__).resolve().parents[1]
 NGINX_FILES = ROOT / "deploy" / "nginx"
@@ -321,7 +321,9 @@ def install_nginx(
     """
     for name in ("conf.d", "snippets", "sites-enabled", "tmp"):
         (prefix / name).mkdir(parents=True, exist_ok=True)
-    upstream = {"server 127.0.0.1:8000;": f"server 127.0.0.1:{upstream_port};"}
+    # The shipped upstream is segl's default bind. A default that moves without
+    # the nginx file fails here.
+    upstream = {f"server {DEFAULT_BIND};": f"server 127.0.0.1:{upstream_port};"}
     (prefix / "conf.d" / "segl.conf").write_text(_swap("segl-http.conf", upstream), "utf-8")
     for name in ("segl-proxy.conf", "segl-board.conf"):
         shutil.copyfile(NGINX_FILES / name, prefix / "snippets" / name)

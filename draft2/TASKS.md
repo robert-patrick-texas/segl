@@ -60,7 +60,7 @@ Depend on FastAPI and uvicorn. Dev-depend on pytest, httpx2 (the test client's t
 
 Add a console script `segl` whose `--version` prints the application version from `versions.toml`. The installed package carries a copy of `versions.toml` that the build puts inside it. A checkout reads the file at the repository root. Tests cover both lookups.
 
-The process serves `GET /api/v1/health` → `{ "status": "ok" }` on the configured bind address, default `127.0.0.1:8000`. Load a TOML path from `--config` if the flag is present. For this task a missing file still serves health.
+The process serves `GET /api/v1/health` → `{ "status": "ok" }` on the configured bind address, default `127.0.0.1:8888`. Load a TOML path from `--config` if the flag is present. For this task a missing file still serves health.
 
 Add a test that every first-party source file under `src/`, `tests/`, and `scripts/`, and under `web/src/` once it exists, starts with the license header in `CONTRIBUTING.md`. New modules carry that header.
 

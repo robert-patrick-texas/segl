@@ -38,7 +38,7 @@ EXAMPLE = ROOT / "deploy" / "segl.toml.example"
 
 PRODUCTION = Settings(
     host="127.0.0.1",
-    port=8000,
+    port=8888,
     trusted_proxies=("127.0.0.1", "::1"),
     edit_token="",
     database=Path("/opt/segl/var/segl.sqlite"),
@@ -166,12 +166,12 @@ def test_the_edit_token_is_not_in_the_settings_repr(tmp_path: Path) -> None:
 
 
 def test_an_ipv6_bind_uses_brackets() -> None:
-    assert parse_bind("[::1]:8000") == ("::1", 8000)
-    assert replace(PRODUCTION, host="::1").bind == "[::1]:8000"
+    assert parse_bind("[::1]:8888") == ("::1", 8888)
+    assert replace(PRODUCTION, host="::1").bind == "[::1]:8888"
 
 
 @pytest.mark.parametrize(
-    "value", ["127.0.0.1", ":8000", "host:port", "h:0", "h:65536", "::1:80", 8000]
+    "value", ["127.0.0.1", ":8888", "host:port", "h:0", "h:65536", "::1:80", 8888]
 )
 def test_an_unusable_bind_is_refused(value: object) -> None:
     with pytest.raises(ConfigError):
@@ -274,7 +274,7 @@ def test_the_command_serves_with_a_missing_config_file(
     assert cli.main(["--config", str(tmp_path / "absent.toml")]) == 0
     assert served == {
         "host": "127.0.0.1",
-        "port": 8000,
+        "port": 8888,
         "proxy_headers": True,
         "forwarded_allow_ips": ["127.0.0.1", "::1"],
     }

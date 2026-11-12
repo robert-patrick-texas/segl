@@ -85,8 +85,8 @@ describe('what comes from the root', () => {
 
 	test('the WebSocket follows the page: wss under https, ws under http', () => {
 		expect(collabUrl(board, 3).href).toBe('wss://dev.example.com/board/collab?slot=3');
-		const plain = resolveConfig({ root: '../', editRequired: false }, 'http://127.0.0.1:8000/s/3');
-		expect(collabUrl(plain, 3).href).toBe('ws://127.0.0.1:8000/collab?slot=3');
+		const plain = resolveConfig({ root: '../', editRequired: false }, 'http://127.0.0.1:8888/s/3');
+		expect(collabUrl(plain, 3).href).toBe('ws://127.0.0.1:8888/collab?slot=3');
 	});
 
 	test('the router basename has no trailing slash, except at a host root', () => {

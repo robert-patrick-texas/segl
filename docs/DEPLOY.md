@@ -5,7 +5,7 @@
 `/opt/segl/etc/segl.toml` on the server. `deploy/segl.toml.example` is that file as the `.deb` installs it, with a comment on each key:
 
 ```toml
-bind = "127.0.0.1:8000"
+bind = "127.0.0.1:8888"
 trusted_proxies = ["127.0.0.1", "::1"]
 edit_token = ""
 database = "/opt/segl/var/segl.sqlite"
@@ -25,7 +25,7 @@ There is no base-path setting. segl serves at its root, and nginx strips the pat
 
 `web_dir` is the folder that holds the built web application: `index.html`, Vite's `assets/`, the editor's `fonts/`, and the favicon. segl reads it once, when it starts, so a new build takes a restart. When the folder has no `index.html`, segl serves the API and no page, and says so on its first line of output. An `index.html` that is not a build of `web/` stops it with exit status 1.
 
-`bind` is `host:port`. Write an IPv6 host in brackets, as in `[::1]:8000`. When the file `--config` names does not exist, segl starts with the defaults above.
+`bind` is `host:port`. Write an IPv6 host in brackets, as in `[::1]:8888`. When the file `--config` names does not exist, segl starts with the defaults above.
 
 segl checks the file when it starts. A key it does not know, such as a misspelled `edit_token` or the removed `base_path`, or a value it cannot use, stops it with exit status 2 and a message that names the key. The message never repeats the token. The sizes and `history_limit` are whole numbers, 1 or more. The two intervals are seconds above 0.
 
@@ -67,7 +67,7 @@ TimeoutStopSec=20
 
 | File | Install as | Context | Contents |
 |---|---|---|---|
-| `segl-http.conf` | `/etc/nginx/conf.d/segl.conf` | `http` | The `segl` upstream (`127.0.0.1:8000`, with keepalive) and the `$segl_connection` WebSocket map. Changes nothing on its own. |
+| `segl-http.conf` | `/etc/nginx/conf.d/segl.conf` | `http` | The `segl` upstream (`127.0.0.1:8888`, with keepalive) and the `$segl_connection` WebSocket map. Changes nothing on its own. |
 | `segl-proxy.conf` | `/etc/nginx/snippets/segl-proxy.conf` | `location` | Proxy settings: strip the location's prefix, forwarded headers, WebSocket upgrade, body limit, timeouts, and gzip. |
 | `segl-board.conf` | `/etc/nginx/snippets/segl-board.conf` | `server` | The `/board` to `/board/` redirect, and `location ^~ /board/` including `segl-proxy.conf`. |
 | `site-board.example.conf` | `/etc/nginx/sites-available/` | | A complete TLS site with segl at `/board/`. |

@@ -26,7 +26,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
-DEFAULT_BIND = "127.0.0.1:8000"
+DEFAULT_BIND = "127.0.0.1:8888"
 
 # Every key, with the value deploy/segl.toml.example ships.
 DEFAULTS: Mapping[str, object] = {
@@ -93,7 +93,7 @@ class Settings:
 
 
 def parse_bind(value: object) -> tuple[str, int]:
-    """Split ``host:port`` into its parts. An IPv6 host is written ``[::1]:8000``.
+    """Split ``host:port`` into its parts. An IPv6 host is written ``[::1]:8888``.
 
     Raises:
         ConfigError: When the value is not a host and a port from 1 to 65535.
@@ -104,7 +104,7 @@ def parse_bind(value: object) -> tuple[str, int]:
     if host.startswith("[") and host.endswith("]"):
         host = host[1:-1]
     elif ":" in host:
-        raise ConfigError(f"bind {value!r}: write an IPv6 host in brackets, as in '[::1]:8000'")
+        raise ConfigError(f"bind {value!r}: write an IPv6 host in brackets, as in '[::1]:8888'")
     if not separator or not host or not port_text.isascii() or not port_text.isdigit():
         raise ConfigError(f"bind {value!r} is not host:port")
     port = int(port_text)
