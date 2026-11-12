@@ -1,3 +1,5 @@
+<img width="1672" height="941" alt="SEGL: Map the network. Draw the future. A longship crew and two figures of light chart a glowing network together on a shared map, under a sail drawn with the same network" src="images/segl-sailing-the-living-network.png" />
+
 # segl
 
 Self-hosted collaborative whiteboard for network-operations meetings. The first release is nine shared Excalidraw slots on one Ubuntu server: nginx terminates TLS, and one Python process serves the TypeScript application, the API, and the live board. nginx can give segl a host name of its own or a path on an existing site, such as `https://dev.example.com/board/s/1` for slot 1.
