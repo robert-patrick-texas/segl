@@ -4,10 +4,10 @@ This file is the source of truth for what is done and what to do next. Update it
 
 - Updated: 2026-11-12
 - Phase: P0 collaborative slots
-- Next task: T04
-- Completed: T00, T00b, T01, T01b, T02, T03
+- Next task: T05
+- Completed: T00, T00b, T01, T01b, T02, T03, T04
 - Blocked: no
-- Application code: Python service (`src/segl`) with settings, SQLite storage for the nine slots, and the health, config, and slot read routes
+- Application code: Python service (`src/segl`) with settings, SQLite storage for the nine slots, the health, config, and slot read routes, and the pages of the web build. Browser application (`web/`) with the segl bar and the Excalidraw canvas for each slot. Nothing drawn is saved or shared yet
 
 ## Log
 
@@ -154,3 +154,45 @@ This file is the source of truth for what is done and what to do next. Update it
   - `README.md` still says application code has not started and names T01 as the next step. It was not changed in this task.
   - Still not listed in `versions.toml` or checked: the uv 0.13.7 image digest in `deploy/Containerfile`.
   - Next action T04.
+- 2026-11-12: T04 done. Evidence, all on commit `e34ee44`:
+  - Acceptance, on the host with Node 26.13.1, nginx 1.28.3, and Chromium from the `mcr.microsoft.com/playwright:v1.65.0-noble` container through `PW_WS_ENDPOINT`:
+    - `npm --prefix web run e2e` gave 42 passed: 14 tests, each against Python directly (`direct`), behind nginx at a host root (`root`), and behind nginx at `/board/` (`board`), all on the production build.
+    - A slot renders in each: the bar with slot links 1 to 9, the title `Workspace 1`, `segl 0.0.0`, and the editor below the bar.
+    - `mount.spec.ts` (the page half of T-013, and T-010) refused every request to another origin. It placed a text element, and the canvas font came from `fonts/` under the mount with status 200. No request was attempted outside the origin or outside `/board/`, none got an error status, and no response set a cookie.
+    - The empty scene loads with no elements, a rectangle can be drawn with the mouse, and the notice reads `Shared workspace. Anyone who can open this page can see it and edit it.`
+    - `npm --prefix web run check` passed. `npm --prefix web test` gave 71 passed in 7 files. `npm --prefix web run format:check` passed.
+    - `uv run ruff check .` and `uv run ty check` printed `All checks passed!`. `uv run ruff format --check .` printed `40 files already formatted`.
+  - `uv run pytest` gave 318 passed and none skipped. The 59 new tests are 44 in `tests/test_web.py`, 7 in `tests/test_pins.py`, 4 in `tests/test_repository.py`, 2 in `tests/test_e2e_nginx.py`, and 2 in `tests/test_config.py`, counted with `pytest --collect-only` on this commit and on `39b1c6b`.
+  - CI run 43177105905 succeeded on Node 26.13.1 with 318 pytest, 71 Vitest, and 42 browser tests passed, using Chromium installed by `npx playwright install --with-deps chromium`. Pages run 43177105813 succeeded. `python3 scripts/build_docs.py` found 0 broken links.
+  - `docker build --progress=plain -f deploy/Containerfile .` (rootful Docker) printed `v26.13.1` and `11.20.0`, then ran 71 Vitest tests, Prettier, the build, and 318 pytest tests, all passed. The image needed `libatomic1` for Node. That build was of the tree before the suite order, the journal entry, and the documentation build's exclusions changed; the container was not rebuilt after them.
+  - The fixture: `SEGL_UPDATE_FIXTURE=1 npm run e2e -- fixture.spec.ts --project direct` wrote `src/segl/empty_scene.json` from the running editor: `type`, `version` 2, `source` `segl`, no elements, and four `appState` keys.
+  - The migration, on a database made by the T03 commit: `3d41422` served `{"elements": []}` for slot 1 and `404` for `/s/1`. After a save to slot 2 with that commit's repository, this commit served the empty scene for slots 1 and 9, still at epoch 1 with label `System`, and slot 2 unchanged with label `Alpha1`. After SIGTERM only `segl.sqlite` was left.
+  - A real run: `/s/1` answered 200 with `cache-control: no-cache`, no `Set-Cookie`, and `SEGL_CONFIG = {"root": "../", "editRequired": false}`. `/` had `"root": "./"`. In a folder with no build, `uv run segl` printed `segl: no web application in web/dist (build it with `npm --prefix web run build`); serving the API only` and `/` was a `404`.
+  - The dev loop: `npm run dev` with `SEGL_API_URL` pointing at a segl that had an edit token. Through Vite, `/api/v1/config` gave `{"editRequired":true}`, the page had no `SEGL_CONFIG`, and `/fonts/Virgil/Virgil-Regular.woff2` was 56156 bytes of `font/woff2`. In the container's Chromium the editor painted on `/s/2`, the notice read `Editing needs the edit token.`, `/` went back to `/s/2`, and there were no page errors and no requests to another host.
+  - 37 deliberate breakages each failed a test. Among them: a slot page keeping `./` URLs or told its root is `./`, the token written into a page, static files following symbolic links, the placeholder migration removed or widened to saved heads, the fonts not copied, the editor not pointed at segl, a build with an absolute base, the API asked at the host root, the router without the mount, a wrong slot not sent to slot 1, the notice hidden, the bar over the canvas, a changed fixture, and `package.json` or `.node-version` drifting from `versions.toml`.
+  - `python3 scripts/release.py check --gate` listed Node and the thirteen web packages from the real registries. Prettier 3.10.1 had been published after the pin was written, and the first real `upgrade` held it: the suite ran `uv run pytest` before `npm install`, and the new lockfile test failed. With the suite reordered, `upgrade` ran the whole suite twice, browser tests included, and moved Prettier to 3.10.1. The gate then passed. `journal/2026-11-12-the-first-real-upgrade.md` has the story.
+  - `python3 scripts/release.py notes` printed `| Project lines of code | 8494 |` as the first table row.
+  - Versions chosen, each the newest stable release on 2026-11-12: Node 26.13.1 (LTS), `@excalidraw/excalidraw` 0.18.1, React 19.3.1, `react-router` 8.5.1 (`react-router-dom` stopped at 7), TypeScript 7.0.2, Vite 8.3.8, Vitest 5.1.0, `@playwright/test` 1.65.0, and Prettier 3.10.1.
+  - Choices the task left open:
+    - `web_dir` is a new TOML key. Nothing in `docs/DEPLOY.md` said how Python finds `web/dist`. An unknown key still stops startup, so an older `segl.toml` is unaffected and a newer one needs this segl.
+    - `/s`, `/s/`, and any one segment after `/s/` get the page, so the app can send a wrong slot to slot 1. A deeper path is a `404`.
+    - A stored scene is the Excalidraw JSON document the editor serializes for storage, and its `source` is `segl`, not the page's origin (D2-025). The fixture lives in `src/segl/`, because bootstrap reads it, and the tests read the same file.
+    - The reconcile rule in D2-025 is the package's: on equal versions the lower `versionNonce` wins. `docs/ARCHITECTURE.md` said the greater one unless the package had a helper. It has one.
+    - `window.SEGL_CANVAS.document()` is a read-only handle the canvas adapter publishes, in production too. The browser tests read the scene through it, and T06 and T11 can.
+    - The browser tests reach each nginx by address, one instance to a site example. Playwright 1.65's `run-server` drops launch arguments without `--unsafe`, so mapping the site names in the browser did not work in the container.
+    - The application version reaches the bar at build time, read from `versions.toml` by `web/scripts/app-version.ts`. `web/package.json` has no `version` of its own.
+    - The bar's title and the slot links' labels come from `GET api/v1/slots`. With an edit token, the notice says editing needs it. T10 owns the rest of that flow.
+    - The release suite's order is now: sync both environments, Python checks, web checks and build, pytest, browser tests.
+    - CI runs the browser tests. The task named only the web checks.
+    - The documentation build leaves out `web/test-results/`, where a failed browser test writes Markdown.
+  - Host changes: Node 26.13.1 was unpacked to `~/.local/opt/node-v26.13.1-linux-x64` beside 24.22.1, checksum verified. The `node` and `npm` links in `~/.local/bin` still point at 24.22.1, which Sunstone needs, so segl's web commands need the 26 folder first on `PATH`.
+  - Not done or not exercised:
+    - `NOTICE` has Excalidraw's license. The font files the build copies stay under their own licenses, and the npm package ships no license texts for them. The other packages bundled into `web/dist` (React, React Router, and Excalidraw's dependencies) have no attribution file yet. T12, which first distributes the build, has to settle both, as Sunstone's `bundledPackages()` does.
+    - Chromium's system libraries are missing on the host, so the browser tests ran there only through the container. CI ran them with a local Chromium.
+    - The dev container does not run the browser tests (T11).
+    - Vite's `/collab` proxy has nothing to carry until T06. A page with `editRequired` true was checked in pytest and in the dev loop, not in the browser tests.
+    - The narrow layout was looked at once, at 390 px, in a screenshot: the bar wraps to four lines. No test covers it.
+    - A page route answers `HEAD` with `405`. Without a build, `/` gets the generic `not_found` message.
+    - Rootless Docker and Podman were not tried.
+  - Still not listed in `versions.toml` or checked: the uv 0.13.7 image digest and, new in this task, the Node 26.13.1 image digest in `deploy/Containerfile`. `upgrade` moves `web/.node-version` and not that line.
+  - Next action T05.

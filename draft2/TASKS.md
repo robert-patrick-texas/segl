@@ -141,22 +141,22 @@ Acceptance: a test boots a temp database, reads nine titles `Workspace 1`–`Wor
 
 ## T04 — Excalidraw shell
 
-- Status: next
+- Status: done
 - Requires: T03
 - Requirements: S-001, S-003, S-006, S-014, S-016
 - Read: `docs/ARCHITECTURE.md` (mount and navigation), `docs/DECISIONS.md` D2-004, D2-007, and D2-023, `docs/DEVELOPMENT.md`
 
 Create `web/` with Vite, React, TypeScript, and React Router, using npm (D2-023). Put exact versions in `web/package.json`, commit `web/package-lock.json`, set `engine-strict=true` in `web/.npmrc`, and name the newest Node LTS release in `web/.node-version`. Record Node and every direct web dependency in `versions.toml`. Pin `@excalidraw/excalidraw` at its newest stable release and add its notice to `NOTICE`. Record the reconcile choice in `docs/DECISIONS.md`. Isolate imports in `web/src/canvas/`. The about line, or an equivalent status in the segl bar, shows the application version read from `versions.toml`.
 
-Add the npm scripts `build`, `check` (`tsc --noEmit`), `test` (Vitest), `format:check` (Prettier), and `e2e` (Playwright). Add the web checks to CI.
+Add the npm scripts `build`, `check` (`tsc --noEmit`), `test` (Vitest), `format:check` (Prettier), and `e2e` (Playwright). Add the web checks, the build, and the browser tests to CI, and the web checks and the build to the dev container. The release suite in `scripts/release_upgrade.py` runs them too.
 
 The segl bar sits outside the canvas. It holds slot buttons 1–9, the shared title, room for the later presence count, and the notice that the workspace is shared. Visiting segl's root honors the `localStorage` last slot. `s/N` saves the last slot and loads that head. Invalid slot URLs go to slot 1.
 
-Build with Vite `base: './'`. In production mode Python serves `web/dist`. It serves `index.html` for `/` and `/s/{n}` with asset URLs relative to that page, and injects `window.SEGL_CONFIG` with `root` and `editRequired` (`docs/ARCHITECTURE.md`). The app derives `basePath`, API URLs, the WebSocket URL, the router basename, and `EXCALIDRAW_ASSET_PATH` from `root`. Document the dev loop in `docs/DEVELOPMENT.md`. The Vite dev server proxies `/api` and `/collab` to Python with `changeOrigin: false`.
+Build with Vite `base: './'`. Python serves the build in `web_dir`, a setting whose value is `web/dist` in a checkout and `/opt/segl/app/web/dist` in production. It serves `index.html` for `/` and `/s/{n}` with asset URLs relative to that page, and injects `window.SEGL_CONFIG` with `root` and `editRequired` (`docs/ARCHITECTURE.md`). Without a build it serves the API alone. The app derives `basePath`, API URLs, the WebSocket URL, the router basename, and `EXCALIDRAW_ASSET_PATH` from `root`. Document the dev loop in `docs/DEVELOPMENT.md`. The Vite dev server proxies `/api` and `/collab` to Python with `changeOrigin: false`.
 
-Set up `@playwright/test` with a `webServer` that runs `uv run segl --config <temporary TOML>` serving the production build. Put nginx in front of it with the `deploy/nginx/` files as T02's harness does, and support `PW_WS_ENDPOINT` (`docs/DEVELOPMENT.md`).
+Set up `@playwright/test` with a `webServer` that runs `uv run segl --config <temporary TOML>` serving the production build. Put nginx in front of it with the `deploy/nginx/` files as T02's harness does (`tests/e2e_nginx.py`), one nginx for each site example, each on its own loopback port, and support `PW_WS_ENDPOINT` (`docs/DEVELOPMENT.md`). Every spec runs against Python directly, at a host root behind nginx, and at `/board/`.
 
-Capture the editor's real empty `initialData`, store it as the bootstrap fixture, and migrate existing empty heads to it if their JSON is the T03 placeholder.
+Capture the editor's real empty `initialData`, store it as the bootstrap fixture (`src/segl/empty_scene.json`), and migrate existing empty heads to it if their JSON is the T03 placeholder. A browser test holds the fixture to the editor.
 
 Bundle fonts and other editor assets so T-010 can pass with outbound network disabled. Record how in `docs/DECISIONS.md`.
 
