@@ -1,0 +1,104 @@
+# Architecture
+
+How the MVP processes run together. Contracts are in `API.md` and `DATA-MODEL.md`. Host paths and units are in `DEPLOY.md`.
+
+## Processes
+
+| Piece | Role |
+|---|---|
+| Browser | React application. Excalidraw is the canvas. A segl bar handles slots, title, presence, history, and the shared-workspace notice. |
+| nginx | TLS termination and reverse proxy. Forwards the request URI unchanged, including a site prefix such as `/whiteboard`. |
+| `segl` Python process | FastAPI on `127.0.0.1`. Serves the built web assets, REST, and the WebSocket. Owns SQLite and the display-name file. |
+| SQLite | Head scene, revisions, name counter. One file, WAL mode. |
+| Display-name file | Plain text list on disk. Sites replace the file to change future labels. |
+
+Node runs in the build environment and in the dev container's frontend build. systemd does not start Node.
+
+In-memory room state (who is connected, cursors, dirty heads waiting to flush) lives in the one Python process. A restart drops presence and reloads each slot from its head row.
+
+## Mount and navigation
+
+`base_path` is `/` or a prefix with a leading slash and no trailing slash (`/whiteboard`). Every route the browser uses hangs off that prefix:
+
+- `{base}/` redirects to the last slot in `localStorage`, or `{base}/s/1` when none is stored.
+- `{base}/s/1` … `{base}/s/9` are the slots. Any other `/s/...` value redirects to slot 1.
+- `{base}/api/v1/...` is HTTP.
+- `{base}/collab` is the WebSocket.
+- Built assets are under `{base}/`.
+
+`localStorage` keys include the base path so two mounts on one origin stay separate:
+
+- `segl:{basePath}:lastSlot`
+- `segl:{basePath}:displayName`
+- `segl:{basePath}:editToken`
+- `segl:{basePath}:clientId`
+
+The page learns `basePath` from the injected config, not from a build-time constant:
+
+```html
+<script>window.SEGL_CONFIG = { "basePath": "/whiteboard", "editRequired": false };</script>
+```
+
+`editRequired` is true when `edit_token` is non-empty. The token value is never injected.
+
+The React Router basename is `basePath`. The WebSocket URL is relative to the page (`{base}/collab?slot=N`) so TLS follows the page.
+
+## Request path
+
+1. The browser requests `https://example.com/whiteboard/s/1`.
+2. nginx terminates TLS and proxies the full URI to `127.0.0.1`.
+3. Python returns `index.html` with `SEGL_CONFIG`.
+4. The app stores last-slot `1`, loads the head scene, and mounts Excalidraw.
+5. If `displayName` is missing, the app asks the server for the next label and stores it.
+6. The app opens the WebSocket and sends `hello` with `clientId`, the display name, and the edit token when the browser has one.
+7. The server joins the connection to the in-memory room for slot 1 and sends the current head epoch plus the current participant list.
+8. An edit in the canvas sends the changed elements. The server reconciles them into the room scene, broadcasts the winners, and schedules a head flush.
+9. Other browsers on slot 1 apply those elements. Slot 2 is a different room and a different SQLite head.
+
+## Collaboration
+
+segl owns the wire protocol. The canvas adapter is the only module that imports Excalidraw.
+
+- Element messages carry the element records the editor produces (`id`, `version`, and the deletion flag the pinned package uses).
+- The server keeps the element with the greater `version`. On a tie, it keeps the greater `versionNonce` unless the pinned package exports a reconcile helper, in which case the server-side unit test and the client both follow that helper.
+- Deleted elements stay in the scene as tombstones so an older copy cannot resurrect them.
+- A full-scene replace happens on join (load the head) and when the epoch changes (restore or import).
+- Each head has an integer `epoch`, starting at 1. Ordinary element messages must name the current epoch. A stale epoch gets the current scene back so the client can reconcile, and the stale elements are not applied.
+- Restore and JSON import increment the epoch, replace the scene, append a revision, and broadcast the new scene to the room.
+- Cursors and the participant list are presence. They are not written to SQLite and they are not part of the scene.
+- The client shows one of: connecting, live, saving, saved, disconnected. `saved` means the head flush that includes that edit has finished.
+- On reconnect the client sends any elements it still holds that the server may have missed, then applies the server reconcile result. It does not replace the server head with a blind full-scene upload.
+- While the socket is down the canvas stays usable. Those edits are queued and reconciled when the socket returns.
+
+The acknowledged-save boundary is the head flush. A crash can lose edits that were broadcast to peers but not flushed. Peers that are still open resend on reconnect. The flush interval default is 200 ms, and a flush also runs when the last client leaves the slot and on process shutdown. History rows are a coarser sample of that head (default 1 second, plus last-leave, restore, and import), capped at 50 per slot.
+
+## Edit gate
+
+Viewing, cursors, and receiving elements require no token.
+
+When `edit_token` is empty, every connection may mutate the scene, the title, the history (restore), and uploaded files.
+
+When `edit_token` is set:
+
+- Mutations include the token from `localStorage` (HTTP header `X-Segl-Edit-Token`, and the same value inside the WebSocket `hello` / later mutation messages).
+- A missing or wrong token joins as view-only. The server drops scene, title, restore, and asset mutations. Presence and rename still work.
+- The comparison is constant-time. Logs record the slot and the byte size, not the token and not the scene body.
+- A shared link may carry the token in the URL fragment `#e=...`. The page writes it to `localStorage` and removes the fragment with `history.replaceState`. The fragment is not sent on the HTTP request.
+
+The editor runs in its view mode when this client is view-only. The segl bar always states that the slot is a shared unauthenticated workspace. A view-only client also states that editing is locked.
+
+## Display names
+
+The packaged list is `draft2/display-names.txt`. T05 copies it to `deploy/display-names.txt` and the `.deb` installs it at `/opt/segl/etc/display-names.txt`. A site may replace that file. Lines that are blank or start with `#` are ignored. Every remaining line is 1–10 ASCII letters. Startup fails if the filtered list is empty.
+
+The counter is one row in SQLite. It starts at 1 and survives restarts. Assignment is a single transaction: read `next_value`, increment it, commit, then choose `word = lines[(value - 1) % len(lines)]` and return `f"{word}{value}"`. The first three packaged assignments are `Alpha1`, `Bravo2`, `Charlie3`.
+
+The browser calls assignment only when it has no stored label, then stores the result. A person may replace the label. The client and the server title-case a manual name: split on whitespace, uppercase the first character of each word, lowercase the rest (`john smith` becomes `John Smith`, and `NASA` becomes `Nasa`). Automatic names skip that transform so file spellings such as `McKinley` stay as written. Manual names are 1–40 characters after trimming. Duplicate manual names are allowed. The menu count is connections, so two tabs can show the same label twice.
+
+## Data the MVP stores
+
+SQLite holds slots, the head scene, revisions, and the name counter. The scene document is whatever the pinned editor needs in order to restore elements and embedded images, up to `max_scene_bytes`. If the editor's image model is binary files outside the scene JSON, those bytes go under `assets_dir` named by SHA-256. Either way, an image placed on the canvas is still there after a process restart and a browser reload. Details are in `DATA-MODEL.md`.
+
+## What is intentionally absent
+
+No second collaboration process, no Redis, no PostgreSQL, no cookie session, no user accounts, no board create/delete, no inventory tables, and no route under `/{team}/{project}/{board}`. The repository interface is the seam those later stores will implement. Slot handlers do not call a protected-data function, because that function does not exist in this phase.

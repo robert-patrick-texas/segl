@@ -1,0 +1,35 @@
+# Canonical versions for segl.
+# Application code reads this file to display or check a version.
+# The release script reads it, updates it, and copies the result into
+# the release notes. Transitive dependencies stay in the lockfiles.
+
+[project]
+name = "segl"
+version = "0.0.0"
+license = "Apache-2.0"
+
+[runtime]
+python = "3.15"
+# Node builds the frontend. Empty until the web package exists.
+node = ""
+
+[python.dependencies]
+
+[python.dev]
+
+[web.dependencies]
+
+[web.dev]
+
+# Filled by scripts/release.py when a newer release fails tests.
+# Example:
+# [held.fastapi]
+# version = "0.115.6"
+# skipped = "0.116.0"
+# reason = "tests failed"
+# since = "2026-11-11"
+[held]
+
+[publish]
+github = true
+pypi = false

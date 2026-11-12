@@ -1,0 +1,18 @@
+# Track draft1/, draft2/, docs/, and journal/. They belong in the public repository.
+# Ignore secrets and build output only.
+
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+node_modules/
+web/dist/
+*.sqlite
+segl.toml
+*.local.toml
+.DS_Store

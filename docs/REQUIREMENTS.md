@@ -1,0 +1,38 @@
+# Requirements
+
+Priority **M** is required for the MVP gate. **L** is recorded so it is not built early. Draft1 ids are noted where the meaning changed.
+
+## P0 — nine-slot collaborative whiteboard
+
+| ID | Pri | Requirement | Acceptance |
+|---|---|---|---|
+| S-001 | M | Embedded Excalidraw | The slot page shows the upstream editor inside the segl bar. Canvas tools remain usable. |
+| S-002 | M | Live collaboration | Two browsers on the same slot see each other's element edits and cursors. |
+| S-003 | M | Nine persistent slots | Slots 1–9 exist after first startup. Each has its own scene and title. Users cannot create or delete slots. |
+| S-004 | M | Restart recovery | After the process is killed once the UI says saved, the head scene returns on reload. |
+| S-005 | M | History | The latest 50 revisions per slot can be listed and restored. Restore updates every connected browser and can itself be restored. |
+| S-006 | M | Base path | The same build works at `/s/1` and at `/whiteboard/s/1` when `base_path` matches. |
+| S-007 | M | No cookies | No MVP response sets `Set-Cookie`. Preferences and the edit token live in `localStorage`. |
+| S-008 | M | Optional edit token | With an empty token, every viewer can edit. With a token set, viewers still follow live, and scene, title, restore, and asset writes require the token. |
+| S-009 | M | Display labels | A new browser receives `WordN` from the name file and the server counter, keeps it, and can rename it with title case. |
+| S-010 | M | Presence list | The menu count equals current WebSocket connections on this slot. Activating it lists their labels. |
+| S-011 | M | JSON round-trip | A scene exported to Excalidraw JSON and imported back restores the drawing, bumps the epoch, and writes a revision. |
+| S-012 | M | Embedded image | An image on the canvas survives process restart and a new browser load. |
+| S-013 | M | Connection state | The UI shows connecting, live, saving, saved, and disconnected. Reconnect reconciles without a blind overwrite. |
+| S-014 | M | Self-hosted runtime | With outbound network blocked, a loaded slot still renders the editor and previously saved scene. Fonts and assets are local. |
+| S-015 | M | Ubuntu install | A `.deb` installs uv-pinned CPython and the app under `/opt/segl`. systemd runs it. nginx proxies TLS to it. |
+| S-016 | M | Shared notice | Every slot shows that the workspace is shared and open. View-only clients also show that editing is locked. |
+| S-017 | M | Dev container | The rootless dev container runs the automated test suite, including the two-browser cases. |
+
+## Later — do not implement in P0
+
+| ID | Requirement |
+|---|---|
+| L-001 | Network symbol palette, typed links, and observed-versus-planned styling (draft1 N-001–N-006). |
+| L-002 | CSV, JSON, and TOML inventory import. Slot APIs never read that data. |
+| L-003 | PostgreSQL repository implementation, when a deployment outgrows SQLite. |
+| L-004 | Login with a bearer token in `localStorage`, and protected boards at `/{team}/{project}/{board-slug}`. |
+| L-005 | Production container image as a second install method beside the `.deb`. |
+| L-006 | Enterprise SSO, encryption-at-rest policy, and external adapters (Nautobot, NetBox, Checkmk). |
+
+Draft1 W-005 (arbitrary board CRUD) and W-008 (authentication required before any access) are not MVP requirements. D2-005 and D2-009 replace them.
