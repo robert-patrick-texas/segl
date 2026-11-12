@@ -6,7 +6,7 @@ Self-hosted collaborative whiteboard for network-operations meetings. The first 
 
 Slots 1–9 need no account. An optional site-wide edit token can limit who changes a board. Preferences stay in the browser's local storage. Later named workspaces, behind a login, are where network inventory will live. The open slots do not read that data.
 
-**Status:** specification. Application code not started. T00, the repository and pre-build decisions, is done. The next build step is T01 in [`draft2/STATUS.md`](draft2/STATUS.md). The manual is [`docs/README.md`](docs/README.md).
+**Status:** in development, and not usable yet. The Python service exists: it reads its settings, keeps the nine slots in SQLite, and serves them over HTTP, tested through nginx at `/board/` and at a host root. The browser application, live collaboration, and the `.deb` do not exist yet. [`draft2/STATUS.md`](draft2/STATUS.md) names the next build step and logs each finished one. The manual is [`docs/README.md`](docs/README.md).
 
 **License:** [Apache License 2.0](LICENSE). Excalidraw remains under its own license.
 
