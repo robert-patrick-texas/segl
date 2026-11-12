@@ -244,7 +244,7 @@ Acceptance: T-009. ruff, ty, and the web checks pass.
 
 ## T10 — Edit-token browser flow, cookie and Origin sweep
 
-- Status: pending
+- Status: done
 - Requires: T09
 - Requirements: S-007, S-008, S-016
 - Read: `docs/SECURITY.md`, `docs/ARCHITECTURE.md` (edit gate)
