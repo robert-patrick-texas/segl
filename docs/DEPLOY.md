@@ -117,6 +117,7 @@ What the proxy settings do:
 - `proxy_read_timeout 120s` is well above segl's 20-second WebSocket ping.
 - `gzip` covers CSS, JavaScript, JSON, and SVG. Ubuntu's `nginx.conf` turns gzip off.
 - There is no `add_header`. One in a location would discard the server block's headers, HSTS included.
+- The two site examples set the TLS versions and ciphers, turn session tickets off, and send HSTS, `nosniff`, a referrer policy, and a frame rule from the server block. They are a strong place to start, and the site's to keep or change: ports, TLS, and headers are nginx's, not segl's (`SECURITY.md`, hardening nginx).
 - `segl-board.conf` has commented `allow`/`deny` and `auth_basic` lines for a site that wants to narrow who reaches the slots. Neither uses cookies.
 
 To mount segl at another path, change `/board` in the three places in `segl-board.conf`. segl needs no change. TLS certificates are the site's. The examples include Ubuntu's `snippets/snakeoil.conf` as a placeholder.

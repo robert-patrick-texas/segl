@@ -68,6 +68,7 @@ The project is specified, licensed, and public on GitHub. A Python service reads
 
 ### Changed
 
+- The packaged nginx site examples are hardened: TLS 1.2 and 1.3 only, forward-secret AEAD ciphers under 1.2, no session tickets, no nginx version, and `X-Content-Type-Options`, `Referrer-Policy`, and `X-Frame-Options` beside HSTS, on nginx's own answers too. `docs/SECURITY.md` has a section on hardening nginx, which says that ports, TLS, and headers are the site's, and that the MVP is for an internal network. `tests/test_mount.py` holds the examples to it, each in an nginx of its own for the TLS settings.
 - `edit_token` is 1 to 256 printable ASCII characters with no space at either end, or empty for none. segl stops with exit status 2 for any other value. A browser sends the token in a request header, which carries nothing else whole, so such a token never worked from a page: drawing went through, and every title, restore, import, and upload failed.
 - The Python pin is exactly 3.15.2 and follows the newest stable CPython uv offers. GitHub Releases are the publish destination. PyPI stays off until there is a demoable build.
 - The contributor manual lives in `docs/`. `draft1/` and `draft2/` stay in the repository: frozen history, and the agent workbook.

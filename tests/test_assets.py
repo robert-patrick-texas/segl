@@ -489,7 +489,8 @@ def test_an_image_is_uploaded_and_fetched_through_nginx_at_board_and_at_a_host_r
             fetched = mount.get(site, f"{prefix}/api/v1/assets/{name}")
             assert (fetched.status, fetched.body) == (200, body)
             assert fetched.headers["Content-Type"] == "application/octet-stream"
-            assert fetched.headers["X-Content-Type-Options"] == "nosniff"
+            # Once: the site example sends it for every answer, and drops segl's own.
+            assert fetched.headers.get_all("X-Content-Type-Options") == ["nosniff"]
             assert "Set-Cookie" not in fetched.headers
 
             # A megabyte passes nginx, which allows 52 MiB, and segl takes it.

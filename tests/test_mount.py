@@ -22,6 +22,8 @@ The tests need nginx and openssl. Without them they skip and say why. With
 ``SEGL_REQUIRE_NGINX`` set, as in the dev container and CI, they fail instead.
 """
 
+import socket
+import ssl
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -174,6 +176,126 @@ def test_the_sites_own_header_survives_the_proxy(mount: Mount) -> None:
     reply = mount.get(BOARD_SITE, "/board/api/v1/health")
 
     assert reply.headers["Strict-Transport-Security"] == "max-age=31536000"
+
+
+# The hardening the packaged site examples carry (docs/SECURITY.md). It is the
+# site's to keep or to change: segl does not depend on any of it.
+
+SITE_HEADERS = {
+    "Strict-Transport-Security": "max-age=31536000",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "same-origin",
+    "X-Frame-Options": "SAMEORIGIN",
+}
+
+
+@pytest.mark.parametrize(
+    ("site", "path", "status"),
+    [
+        # What segl answers, a refusal of its own among it.
+        (BOARD_SITE, "/board/api/v1/health", 200),
+        (BOARD_SITE, "/board/api/v1/slots/10", 404),
+        (ROOT_SITE, "/api/v1/health", 200),
+        (ROOT_SITE, "/api/v1/nope", 404),
+        # What nginx answers itself: its redirect, and a path it has nothing for.
+        (BOARD_SITE, "/board", 301),
+        (BOARD_SITE, "/api/v1/health", 404),
+    ],
+)
+def test_every_answer_through_a_site_example_has_the_sites_headers(
+    mount: Mount, site: str, path: str, status: int
+) -> None:
+    reply = mount.get(site, path)
+
+    assert reply.status == status
+    for name, value in SITE_HEADERS.items():
+        assert reply.headers.get_all(name) == [value], name
+    # nginx, and not which one.
+    assert reply.headers["Server"] == "nginx"
+
+
+@pytest.fixture(params=[BOARD_SITE, ROOT_SITE])
+def alone(
+    request: pytest.FixtureRequest,
+    tools: NginxTools,
+    certificate: tuple[Path, Path],
+    tmp_path: Path,
+) -> Iterator[tuple[str, int]]:
+    """One site example in an nginx of its own: the site's name and its HTTPS port.
+
+    Two sites on one listener share the TLS settings of the one nginx reads
+    first, its protocols and its session tickets among them. So what each
+    example sets for TLS can only be seen with that example alone. Nothing
+    answers behind it: these tests stop at the handshake.
+    """
+    site: str = request.param
+    port = harness.free_port()
+    prefix = harness.install_nginx(
+        tmp_path / "alone",
+        sites=(site,),
+        upstream_port=harness.free_port(),
+        http_port=harness.free_port(),
+        https_port=port,
+        certificate=certificate[0],
+        key=certificate[1],
+    )
+    with harness.running_nginx(tools, prefix, port):
+        yield site, port
+
+
+def handshake(
+    port: int, certificate: Path, site: str, *, newest: bool = False, ciphers: str | None = None
+) -> ssl.SSLSocket:
+    """Open a TLS connection: TLS 1.2 unless ``newest``, offering only ``ciphers`` if given."""
+    context = ssl.create_default_context(cafile=str(certificate))
+    if not newest:
+        context.maximum_version = ssl.TLSVersion.TLSv1_2
+    if ciphers is not None:
+        context.set_ciphers(ciphers)
+    plain = socket.create_connection(("127.0.0.1", port), timeout=10)
+    try:
+        return context.wrap_socket(plain, server_hostname=site)
+    except BaseException:
+        plain.close()
+        raise
+
+
+def test_a_site_example_takes_only_forward_secret_aead_ciphers_under_tls_1_2(
+    alone: tuple[str, int], certificate: tuple[Path, Path]
+) -> None:
+    site, port = alone
+
+    with handshake(port, certificate[0], site, ciphers="ECDHE-ECDSA-AES256-GCM-SHA384") as taken:
+        assert taken.version() == "TLSv1.2"
+        cipher = taken.cipher()
+        assert cipher is not None
+        assert cipher[0] == "ECDHE-ECDSA-AES256-GCM-SHA384"
+
+    # A CBC cipher, which nginx's own default list would take.
+    with pytest.raises(ssl.SSLError):
+        handshake(port, certificate[0], site, ciphers="ECDHE-ECDSA-AES128-SHA256")
+
+
+def test_a_site_example_gives_no_session_ticket(
+    alone: tuple[str, int], certificate: tuple[Path, Path]
+) -> None:
+    # nginx would hold a ticket's key until it restarts.
+    site, port = alone
+
+    with handshake(port, certificate[0], site) as taken:
+        assert taken.session is not None
+        assert not taken.session.has_ticket
+
+
+def test_a_site_example_offers_tls_1_3_and_1_2(
+    alone: tuple[str, int], certificate: tuple[Path, Path]
+) -> None:
+    site, port = alone
+
+    with handshake(port, certificate[0], site, newest=True) as newest:
+        assert newest.version() == "TLSv1.3"
+    with handshake(port, certificate[0], site) as older:
+        assert older.version() == "TLSv1.2"
 
 
 def test_a_missing_nginx_is_a_skip_that_says_why(monkeypatch: pytest.MonkeyPatch) -> None:

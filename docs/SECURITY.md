@@ -2,6 +2,8 @@
 
 The network perimeter is the access boundary for reading a slot. nginx listens on the addresses the site chooses. The Python process listens on `127.0.0.1` only. Slots are shared whiteboards: anyone who can open the URL can watch live, and can edit when no edit token is configured. They are not a place for protected network inventory. That data has no tables and no routes in this phase.
 
+This MVP is for an internal network. Do not put it on the open internet except as a prototype or a demo with no real-world data. Nobody is authenticated in this phase: the edit token, and the access codes that replace it in T10b (D2-033), keep honest people from changing a board by mistake, and they do not tell one person from another.
+
 ## Required controls
 
 - TLS at nginx for any shared deployment. The application generates relative URLs so it does not terminate TLS itself.
@@ -29,8 +31,54 @@ The network perimeter is the access boundary for reading a slot. nginx listens o
 - Runtime does not call a SaaS API. Fonts and the editor bundle are served by this process.
 - CSV and JSON formula injection matters later, at L-002. There is no inventory import in P0. Scene JSON, drawn or imported, is stored and returned as data, not rendered as HTML.
 
+## Hardening nginx
+
+TLS, the ports that answer, and the headers a browser is sent with every page are nginx's, outside the application. They are in the hands of the site's server administrators and the site's policy. segl listens on loopback, speaks plain HTTP to nginx, and depends on none of what follows. The packaged site examples, `deploy/nginx/site-board.example.conf` and `site-root.example.conf`, carry a strong configuration to start from:
+
+```nginx
+# Plain HTTP only sends the browser on to HTTPS.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name dev.example.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name dev.example.com;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:segl_tls:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+    server_tokens off;
+
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    proxy_hide_header X-Content-Type-Options;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "same-origin" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+
+    include snippets/segl-board.conf;
+}
+```
+
+- **Ports.** Whether the site answers on port 80 at all, and on which port it serves HTTPS, is the site's choice. The example answers plain HTTP only to send the browser on to HTTPS. A site that wants nothing on port 80 removes that block.
+- **HSTS.** `Strict-Transport-Security` tells a browser that has been to the site once to ask for HTTPS only, for a year. It is also what stands behind segl's Origin check. The check compares the host and the port and not the scheme, so it takes a page served over plain http under the site's own name for the site's page. A browser that has been to the site once does not load such a page while the header's year lasts. Add `includeSubDomains` when every name under the site's is served over HTTPS.
+- **TLS.** TLS 1.2 and 1.3 only. Under 1.2, only ciphers with forward secrecy and authenticated encryption. No session tickets, whose key nginx would keep until it restarts. A site with a TLS policy of its own puts that in place of these lines.
+- **Headers.** `nosniff` holds a file to the type the server gave it. segl sends that header itself with an uploaded file, so `proxy_hide_header` drops segl's copy and the browser gets the site's, once. `Referrer-Policy: same-origin` tells no other site which page a link was followed from. `X-Frame-Options: SAMEORIGIN` keeps another site from showing segl's pages in a frame of its own: remove it to embed a board in another site's page. `server_tokens off` leaves the nginx version out of its answers. They are set in the server block, with `always`, so nginx's own error pages carry them too. `segl-proxy.conf` adds no header, because one in a location would discard all of these.
+- **Who can reach it.** `segl-board.conf` has commented lines for `allow` and `deny` by network, and for a password. A firewall in front of nginx does the same. T10b adds `internal_networks` to segl itself, as a second check behind both (D2-033).
+- **Not in the example.** A `Content-Security-Policy` is not set. None has been tried against the embedded editor, and one that is too tight would break it. OCSP stapling and the certificate are the site's.
+
+`tests/test_mount.py` runs nginx with these files and holds them to what this section says: the four headers on what segl answers and on what nginx answers itself, no nginx version, a refusal of a cipher outside the list, no session ticket, and both TLS versions.
+
 ## Deferred with the later phases
 
-Login, bearer tokens, protected workspaces, inventory credentials, encryption at rest, and SSO are L-004 and L-006. Do not add stub user tables or a login route in P0.
+Login, bearer tokens, protected workspaces, inventory credentials, encryption at rest, and SSO are L-004 and L-006. Do not add stub user tables or a login route in P0. The access page of T10b is not a login: it takes a code, knows no user, and keeps no account (D2-033). Real user authentication follows later, with RADIUS as one option and SAML or other methods after it.
 
 A pilot that passes these controls is still an open shared whiteboard. Operators who need to keep a diagram private either rely on network controls or set `edit_token` and treat the URL as untrusted for writes. Viewers of a token-protected slot can still see the drawing.
