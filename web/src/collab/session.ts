@@ -23,8 +23,14 @@
  * element the server holds. Whatever the canvas holds that beats that copy is
  * what has to be sent: after an edit, and after a reconnect, when the canvas
  * still holds everything drawn while the socket was down.
+ *
+ * It numbers what it sends, and the server answers `saved` with the number of
+ * the newest message that is on its disk. Until then the status is `saving`.
+ * The files of images go beside the elements: `FileSync` uploads and fetches
+ * the bytes, and the session tells the server which file id they are.
  */
 import { knownFrom, note, pendingElements, type Known, type WireElement } from './elements.ts';
+import { FileSync, type FileEditor, type FileRef, type FileTransport } from './files.ts';
 import {
 	parseServerMessage,
 	type ClientMessage,
@@ -33,8 +39,16 @@ import {
 	type ServerMessage
 } from './protocol.ts';
 
-/** `saving` and `saved` join these in T07. */
-export type ConnectionStatus = 'connecting' | 'live' | 'disconnected';
+/**
+ * What the bar shows (S-013). `live` is a connection with nothing to save
+ * yet. `saving` is an edit, or an image's file, that the server has not yet
+ * called saved. `saved` is everything this browser sent being on the
+ * server's disk.
+ */
+export type ConnectionStatus = 'connecting' | 'live' | 'saving' | 'saved' | 'disconnected';
+
+/** The socket alone: the three of those that are not about saving. */
+type Link = 'connecting' | 'live' | 'disconnected';
 
 /** Another connection on the slot, as the canvas draws it. */
 export interface Peer extends Participant {
@@ -42,7 +56,7 @@ export interface Peer extends Participant {
 }
 
 /** What the session needs of the canvas. `web/src/canvas/editor.ts` implements it. */
-export interface SceneEditor {
+export interface SceneEditor extends FileEditor {
 	/** Every element the canvas holds that is worth sending, deleted ones included. */
 	elements(): readonly WireElement[];
 	/** Merge elements from the server into the canvas, keeping the newer copy of each. */
@@ -94,6 +108,10 @@ export interface SessionOptions {
 	/** The epoch of the scene the canvas was loaded with. */
 	epoch: number;
 	editor: SceneEditor;
+	/** How the files of images reach the server and come back. */
+	transport: FileTransport;
+	/** The file list that came with the scene the canvas was loaded with. */
+	files?: readonly FileRef[];
 	/** Read when a socket opens, so a reconnect sends the label of that moment. */
 	hello(): Hello;
 	onState(state: SessionState): void;
@@ -118,7 +136,9 @@ function openWebSocket(url: string): SocketLike {
 
 export class CollabSession {
 	private readonly options: SessionOptions;
+	private readonly files: FileSync;
 	private state: SessionState = INITIAL_STATE;
+	private link: Link = 'connecting';
 	private socket: SocketLike | null = null;
 	private stopped = false;
 	/** True from `welcome` until the socket closes. */
@@ -126,6 +146,14 @@ export class CollabSession {
 	private failures = 0;
 	private epoch: number;
 	private known: Known = new Map();
+	/** The number of the newest message sent that the server answers with `saved`. */
+	private seq = 0;
+	/** The newest of those numbers the server has called saved. */
+	private savedSeq = 0;
+	/** The canvas holds an edit that has still to be sent. */
+	private unsent = false;
+	/** The server has called something saved on this connection. */
+	private savedHere = false;
 	private readonly peers = new Map<string, Peer>();
 	private retryTimer: Timer | undefined;
 	private sendTimer: Timer | undefined;
@@ -136,6 +164,19 @@ export class CollabSession {
 	constructor(options: SessionOptions) {
 		this.options = options;
 		this.epoch = options.epoch;
+		this.files = new FileSync({
+			editor: options.editor,
+			transport: options.transport,
+			// Only once the server has said so: an upload needs the edit token.
+			mayUpload: () => this.state.viewOnly === false,
+			onChange: () => {
+				this.announce();
+				this.setState();
+			}
+		});
+		// The canvas was loaded over HTTP, and its images wait for their files
+		// whether or not the socket ever opens.
+		this.files.learn(options.files ?? []);
 	}
 
 	/** Open the socket. The session reconnects by itself until `stop`. */
@@ -145,6 +186,7 @@ export class CollabSession {
 
 	stop(): void {
 		this.stopped = true;
+		this.files.stop();
 		this.clearTimers();
 		clearTimeout(this.retryTimer);
 		const socket = this.socket;
@@ -155,7 +197,19 @@ export class CollabSession {
 
 	/** The canvas changed. What the server has not seen goes out shortly. */
 	localChange(): void {
-		if (!this.mayEdit() || this.sendTimer !== undefined) return;
+		if (this.stopped) return;
+		// An image may have been placed, or one may have arrived without its file.
+		this.files.sync();
+		if (!this.mayEdit()) return;
+		if (!this.unsent) {
+			// Said at once, not when the timer fires: until this edit is on the
+			// server's disk, the bar must not go on saying `saved`.
+			const pending = pendingElements(this.options.editor.elements(), this.known);
+			if (pending.length === 0) return;
+			this.unsent = true;
+			this.setState();
+		}
+		if (this.sendTimer !== undefined) return;
 		this.sendTimer = setTimeout(() => {
 			this.sendTimer = undefined;
 			this.sendPending();
@@ -189,7 +243,8 @@ export class CollabSession {
 		const socket = this.socket;
 		this.leave();
 		socket.close();
-		this.setState({ status: 'connecting', connectionId: null, participants: [] });
+		this.link = 'connecting';
+		this.setState({ connectionId: null, participants: [] });
 		this.open();
 	}
 
@@ -227,7 +282,8 @@ export class CollabSession {
 
 	private dropped(): void {
 		this.leave();
-		this.setState({ status: 'disconnected', connectionId: null, participants: [] });
+		this.link = 'disconnected';
+		this.setState({ connectionId: null, participants: [] });
 		const delay = RETRY_DELAYS_MS[Math.min(this.failures, RETRY_DELAYS_MS.length - 1)];
 		this.failures += 1;
 		this.retryTimer = setTimeout(() => this.open(), delay);
@@ -249,12 +305,43 @@ export class CollabSession {
 		}
 	}
 
-	private sendPending(): void {
+	/**
+	 * Send the elements the server has not seen. With `ask`, send even when
+	 * there are none: the empty batch is a question, which the server answers
+	 * with `saved` once everything it holds is on its disk.
+	 */
+	private sendPending(ask = false): void {
 		if (!this.mayEdit()) return;
 		const pending = pendingElements(this.options.editor.elements(), this.known);
-		if (pending.length === 0) return;
-		this.send({ type: 'elements', epoch: this.epoch, elements: pending });
-		note(this.known, pending);
+		this.unsent = false;
+		if (pending.length > 0 || ask) {
+			this.seq += 1;
+			this.send({ type: 'elements', epoch: this.epoch, elements: pending, seq: this.seq });
+			note(this.known, pending);
+		}
+		this.setState();
+	}
+
+	/** Tell the server which file ids the uploaded bytes are. */
+	private announce(): void {
+		if (!this.mayEdit()) return;
+		const refs = this.files.unannounced();
+		if (refs.length === 0) return;
+		this.seq += 1;
+		this.send({ type: 'files', epoch: this.epoch, files: refs, seq: this.seq });
+		this.files.announced(refs);
+	}
+
+	/** Whether this browser holds something the server has not called saved. */
+	private unsaved(): boolean {
+		return this.unsent || this.seq > this.savedSeq || this.files.busy();
+	}
+
+	private status(): ConnectionStatus {
+		if (this.link !== 'live') return this.link;
+		if (this.state.viewOnly !== false) return 'live';
+		if (this.unsaved()) return 'saving';
+		return this.savedHere ? 'saved' : 'live';
 	}
 
 	private sendCursor(): void {
@@ -272,13 +359,14 @@ export class CollabSession {
 		switch (message.type) {
 			case 'welcome':
 				this.live = true;
+				this.link = 'live';
+				this.savedHere = false;
 				this.failures = 0;
 				this.peers.clear();
 				for (const person of message.participants) {
 					this.peers.set(person.connectionId, { ...person, cursor: null });
 				}
 				this.setState({
-					status: 'live',
 					connectionId: message.connectionId,
 					viewOnly: message.viewOnly,
 					title: message.title,
@@ -291,7 +379,17 @@ export class CollabSession {
 				}
 				break;
 			case 'scene':
-				if (this.live) this.takeScene(message.epoch, message.elements);
+				if (this.live) this.takeScene(message.epoch, message.elements, message.files);
+				break;
+			case 'files':
+				// The files other browsers added. The canvas fetches what it lacks.
+				if (this.live && message.epoch === this.epoch) this.files.learn(message.files);
+				break;
+			case 'saved':
+				if (!this.live) break;
+				this.savedSeq = Math.max(this.savedSeq, message.seq);
+				this.savedHere = true;
+				this.setState();
 				break;
 			case 'elements':
 				// From another epoch: the scene of the new one is on its way.
@@ -324,26 +422,43 @@ export class CollabSession {
 				break;
 			case 'error':
 				// The server dropped an edit: this browser is a viewer after all.
-				if (message.error === 'view_only') this.setState({ viewOnly: true });
-				else console.warn(`segl: ${message.error}: ${message.message}`);
+				if (message.error === 'view_only') {
+					this.setState({ viewOnly: true });
+					break;
+				}
+				console.warn(`segl: ${message.error}: ${message.message}`);
+				// The bytes of a file this browser named are not on the server.
+				if (message.error === 'unknown_file') this.files.lost();
 				break;
 		}
 	}
 
-	private takeScene(epoch: number, elements: readonly WireElement[]): void {
+	private takeScene(
+		epoch: number,
+		elements: readonly WireElement[],
+		files: readonly FileRef[]
+	): void {
 		if (epoch === this.epoch) {
 			// The same scene, further on. Nothing this browser holds is thrown away.
 			this.options.editor.reconcile(elements);
 		} else {
-			// Another scene: a restore or an import happened.
+			// Another scene: a restore or an import happened. What was sent for
+			// the old one has nothing left to wait for.
 			this.options.editor.replace(elements);
 			this.epoch = epoch;
+			this.savedSeq = this.seq;
 		}
 		this.known = knownFrom(elements);
 		// Now, not shortly: these are the edits made while the socket was down.
 		clearTimeout(this.sendTimer);
 		this.sendTimer = undefined;
-		this.sendPending();
+		// A message the last socket never heard `saved` for is asked about again.
+		this.sendPending(this.seq > this.savedSeq);
+		// The server's list for this scene. What this browser uploaded and the
+		// list lacks is named again, and what the canvas lacks is fetched.
+		this.files.reset(files);
+		this.announce();
+		this.setState();
 	}
 
 	private participants(): Participant[] {
@@ -360,8 +475,14 @@ export class CollabSession {
 		);
 	}
 
-	private setState(change: Partial<SessionState>): void {
-		this.state = { ...this.state, ...change };
+	/** Apply a change, work out the status, and tell the page if anything is new. */
+	private setState(change: Partial<Omit<SessionState, 'status'>> = {}): void {
+		const before = this.state;
+		// First without the status: it depends on `viewOnly`, which may be changing.
+		this.state = { ...before, ...change };
+		const status = this.status();
+		if (Object.keys(change).length === 0 && status === before.status) return;
+		this.state = { ...this.state, status };
 		this.options.onState(this.state);
 	}
 }

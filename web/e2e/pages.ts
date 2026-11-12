@@ -16,6 +16,7 @@
  * What the specs share: where a project is mounted, a browser that already
  * has a display name, and how to read the canvas.
  */
+import { crc32, deflateSync } from 'node:zlib';
 import {
 	test as base,
 	expect,
@@ -62,7 +63,9 @@ export const SLOTS = {
 	/** The canvas tools, and the mount test's text. */
 	tools: 2,
 	presence: 3,
+	/** The title test draws nothing, so the images have the canvas to themselves. */
 	title: 4,
+	images: 4,
 	drawing: 5,
 	deleting: 6,
 	reconnect: 7,
@@ -137,15 +140,32 @@ export async function expectEditor(page: Page): Promise<void> {
 	await page.waitForFunction(() => window.SEGL_CANVAS !== undefined);
 }
 
-/** What the bar says about the connection: `Connecting…`, `Live`, or `Disconnected`. */
+/**
+ * What the bar says about the connection: `Connecting…`, `Live`, `Saving…`,
+ * `Saved`, or `Disconnected`.
+ */
 export function connectionStatus(page: Page): Locator {
 	return page.locator('header.segl-bar .segl-bar__status');
+}
+
+/**
+ * Wait until this page is in the slot's room. The bar then says `Live`, or
+ * already `Saving…` or `Saved` when the page had something to send.
+ */
+export async function expectLive(page: Page): Promise<void> {
+	await expect(connectionStatus(page)).toHaveAttribute('data-state', /^(live|saving|saved)$/);
+}
+
+/** Wait until the server has called everything this page sent saved. */
+export async function expectSaved(page: Page): Promise<void> {
+	await expect(connectionStatus(page)).toHaveText('Saved');
+	await expect(connectionStatus(page)).toHaveAttribute('data-state', 'saved');
 }
 
 /** Open a slot and wait until this page is in the slot's room. */
 export async function joinSlot(page: Page, slot: number): Promise<void> {
 	await openSlot(page, `s/${slot}`);
-	await expect(connectionStatus(page)).toHaveText('Live');
+	await expectLive(page);
 }
 
 /**
@@ -157,7 +177,7 @@ export async function switchSlot(page: Page, slot: number, title: string): Promi
 	await page.getByRole('link', { name: `Slot ${slot}:` }).click();
 	await expect(page.getByRole('heading', { level: 1 })).toHaveText(title);
 	await expectEditor(page);
-	await expect(connectionStatus(page)).toHaveText('Live');
+	await expectLive(page);
 }
 
 /** The number in the presence control. */
@@ -244,4 +264,125 @@ export interface CanvasPeer {
 export async function canvasPeers(page: Page): Promise<CanvasPeer[]> {
 	await page.waitForFunction(() => window.SEGL_CANVAS !== undefined);
 	return JSON.parse(await page.evaluate(() => window.SEGL_CANVAS!.peers())) as CanvasPeer[];
+}
+
+/** A color as red, green, blue. */
+export type Rgb = readonly [number, number, number];
+
+/** A PNG file of one color: an image whose every pixel a test can know. */
+export function png(width: number, height: number, [red, green, blue]: Rgb): Buffer {
+	const chunk = (type: string, data: Buffer): Buffer => {
+		const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+		const whole = Buffer.alloc(body.length + 8);
+		whole.writeUInt32BE(data.length, 0);
+		body.copy(whole, 4);
+		whole.writeUInt32BE(crc32(body), body.length + 4);
+		return whole;
+	};
+	const header = Buffer.alloc(13);
+	header.writeUInt32BE(width, 0);
+	header.writeUInt32BE(height, 4);
+	// Eight bits a channel, RGB, no interlace.
+	header.set([8, 2, 0, 0, 0], 8);
+	// Each row starts with its filter, 0 for none.
+	const row = Buffer.alloc(1 + width * 3);
+	for (let x = 0; x < width; x += 1) row.set([red, green, blue], 1 + x * 3);
+	const rows = Buffer.concat(Array.from({ length: height }, () => row));
+	return Buffer.concat([
+		Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+		chunk('IHDR', header),
+		chunk('IDAT', deflateSync(rows)),
+		chunk('IEND', Buffer.alloc(0))
+	]);
+}
+
+export interface CanvasImage {
+	id: string;
+	fileId: string | null;
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+	/** The type of the image's file, or null while the canvas does not hold the file. */
+	mimeType: string | null;
+}
+
+/** The images on a page's canvas that are not deleted. */
+export async function canvasImages(page: Page): Promise<CanvasImage[]> {
+	await page.waitForFunction(() => window.SEGL_CANVAS !== undefined);
+	return JSON.parse(await page.evaluate(() => window.SEGL_CANVAS!.images())) as CanvasImage[];
+}
+
+/**
+ * Place an image by dropping a file on the canvas, `x` and `y` from its top
+ * left corner, as a person drags one in from a folder. Returns the image once
+ * the editor holds it with its file.
+ */
+export async function dropImage(
+	page: Page,
+	file: Buffer,
+	x: number,
+	y: number
+): Promise<CanvasImage> {
+	const before = new Set((await canvasImages(page)).map((image) => image.id));
+	const canvas = page.locator('.excalidraw canvas.interactive');
+	const box = (await canvas.boundingBox())!;
+	const dataTransfer = await page.evaluateHandle((base64) => {
+		const binary = atob(base64);
+		const bytes = new Uint8Array(binary.length);
+		for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+		const transfer = new DataTransfer();
+		transfer.items.add(new File([bytes], 'picture.png', { type: 'image/png' }));
+		return transfer;
+	}, file.toString('base64'));
+	await canvas.dispatchEvent('drop', { dataTransfer, clientX: box.x + x, clientY: box.y + y });
+	let placed: CanvasImage | undefined;
+	await expect
+		.poll(
+			async () => {
+				placed = (await canvasImages(page)).find((image) => !before.has(image.id));
+				return placed?.mimeType ?? null;
+			},
+			{ message: 'the dropped image is on the canvas with its file' }
+		)
+		.toBe('image/png');
+	return placed!;
+}
+
+/** One image on a page's canvas, or undefined when it is not there. */
+export async function imageOf(page: Page, id: string): Promise<CanvasImage | undefined> {
+	return (await canvasImages(page)).find((image) => image.id === id);
+}
+
+/**
+ * The color the canvas shows in the middle of an image, as the page painted
+ * it. The canvas is not scrolled or zoomed in these tests, so the image is
+ * where its element says. An image without its file is painted as a gray
+ * placeholder, which is no test's color.
+ */
+export async function colorOf(page: Page, image: CanvasImage): Promise<number[]> {
+	return page.evaluate(
+		([x, y]) => {
+			const canvas = document.querySelector<HTMLCanvasElement>('.excalidraw canvas.static')!;
+			const scale = canvas.width / canvas.getBoundingClientRect().width;
+			const pixel = canvas
+				.getContext('2d')!
+				.getImageData(Math.round(x * scale), Math.round(y * scale), 1, 1);
+			return Array.from(pixel.data.slice(0, 3));
+		},
+		[image.x + image.width / 2, image.y + image.height / 2] as const
+	);
+}
+
+/** Wait until a page paints an image in its own color. */
+export async function expectPainted(page: Page, id: string, color: Rgb): Promise<void> {
+	await expect
+		.poll(
+			async () => {
+				const image = await imageOf(page, id);
+				return image === undefined ? null : await colorOf(page, image);
+			},
+			{ message: `image ${id} is painted` }
+		)
+		.toEqual([...color]);
 }

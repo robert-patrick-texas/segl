@@ -205,12 +205,14 @@ Acceptance: T-001, T-002, T-003, T-008, T-015, T-016, the reconnect half of T-00
 
 ## T07 — Durability, history rows, images
 
-- Status: pending
+- Status: done
 - Requires: T06
 - Requirements: S-004, S-005 (storage, not the panel), S-012, S-013
 - Read: `docs/DATA-MODEL.md` (flush rules), `docs/API.md` (uploaded files, `files` message)
 
 Flush the head, append revisions, honor the caps and intervals from config (tests use short intervals), and flush on last disconnect and on SIGTERM. Emit `saved`. Persist an embedded image using the editor's file model: upload the bytes to `POST /api/v1/slots/{n}/assets`, announce them with a `files` message, record the file list with the head, and serve `GET /api/v1/assets/{hash}`.
+
+The editor keeps an image's bytes outside the scene, under a file id, so the bytes are files under `assets_dir` and the file list is a table of its own, `slot_file` (D2-028). `saved` answers a `seq` number the browser gives its messages, a stored head keeps its deleted elements, and a slot's elements are limited to `max_scene_bytes` (D2-029). T-006 and the restart of T-007 run against a segl the test starts and kills itself, in pytest and in the `restart` project of the browser tests. T08 adds the routes that list and restore the revisions this task writes.
 
 Acceptance: T-005, T-006, T-007, and a unit test that the 51st revision drops the oldest. The UI shows saving and then saved. ruff, ty, and the web checks pass.
 

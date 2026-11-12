@@ -36,6 +36,7 @@ import ssl
 import subprocess
 import sys
 import time
+import tomllib
 from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -250,12 +251,20 @@ class SeglServer:
     port: int
     config: Path
     log_file: Path
+    process: subprocess.Popen[bytes]
 
     def get(self, path: str, headers: Mapping[str, str] | None = None) -> Reply:
         return fetch(self.port, path, headers=headers)
 
-    def post(self, path: str, headers: Mapping[str, str] | None = None) -> Reply:
-        return fetch(self.port, path, method="POST", headers=headers)
+    def post(
+        self, path: str, headers: Mapping[str, str] | None = None, body: bytes | None = None
+    ) -> Reply:
+        return fetch(self.port, path, method="POST", headers=headers, body=body)
+
+    def kill(self) -> None:
+        """End the process with SIGKILL: no flush, no close, as a crash or a lost host."""
+        self.process.kill()
+        self.process.wait()
 
     def patch(self, path: str, body: object, headers: Mapping[str, str] | None = None) -> Reply:
         """Send ``body`` as JSON."""
@@ -286,7 +295,8 @@ def running_segl(folder: Path, config: str = "") -> Generator[SeglServer]:
 
     The data paths point inside ``folder``. ``config`` is further TOML, and
     may replace them. The display-name file is ``Guest`` and ``Staff``, unless
-    the folder already has a ``display-names.txt``.
+    the folder already has a ``display-names.txt``. A second run in the same
+    folder is a restart: it has the database and the uploaded files of the first.
     """
     folder.mkdir(parents=True, exist_ok=True)
     names = folder / "display-names.txt"
@@ -294,20 +304,24 @@ def running_segl(folder: Path, config: str = "") -> Generator[SeglServer]:
         names.write_text(TEST_DISPLAY_NAMES, encoding="utf-8")
     port = free_port()
     config_file = folder / "segl.toml"
-    config_file.write_text(
-        f'bind = "127.0.0.1:{port}"\n'
-        f'database = "{folder / "segl.sqlite"}"\n'
-        f'assets_dir = "{folder / "assets"}"\n'
-        f'display_names = "{names}"\n' + config,
-        encoding="utf-8",
-    )
-    server = SeglServer(port=port, config=config_file, log_file=folder / "segl.log")
-    with server.log_file.open("wb") as log:
+    defaults = {
+        "bind": f"127.0.0.1:{port}",
+        "database": folder / "segl.sqlite",
+        "assets_dir": folder / "assets",
+        "display_names": names,
+    }
+    # TOML takes a key once, so a key the test sets is left out here.
+    given = tomllib.loads(config)
+    lines = [f'{key} = "{value}"\n' for key, value in defaults.items() if key not in given]
+    config_file.write_text("".join(lines) + config, encoding="utf-8")
+    log_file = folder / "segl.log"
+    with log_file.open("wb") as log:
         process = subprocess.Popen(
             [sys.executable, "-m", "segl", "--config", str(config_file)],
             stdout=log,
             stderr=subprocess.STDOUT,
         )
+    server = SeglServer(port=port, config=config_file, log_file=log_file, process=process)
     try:
         _wait_until(lambda: server.get("/api/v1/health"), process, "segl", server.log_file)
         yield server
@@ -442,8 +456,22 @@ class Mount:
     def get(self, site: str, path: str, headers: Mapping[str, str] | None = None) -> Reply:
         return fetch(self.https_port, path, site=site, tls=self.tls, headers=headers)
 
-    def post(self, site: str, path: str, headers: Mapping[str, str] | None = None) -> Reply:
-        return fetch(self.https_port, path, method="POST", site=site, tls=self.tls, headers=headers)
+    def post(
+        self,
+        site: str,
+        path: str,
+        headers: Mapping[str, str] | None = None,
+        body: bytes | None = None,
+    ) -> Reply:
+        return fetch(
+            self.https_port,
+            path,
+            method="POST",
+            site=site,
+            tls=self.tls,
+            headers=headers,
+            body=body,
+        )
 
     def patch(
         self, site: str, path: str, body: object, headers: Mapping[str, str] | None = None

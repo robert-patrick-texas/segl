@@ -151,6 +151,35 @@ class Replacement:
 
 
 @dataclass(frozen=True)
+class SlotFile:
+    """Which bytes one of a slot's file ids means.
+
+    ``file_id`` is the editor's id for an image's file, which an image element
+    names. ``hash`` is the SHA-256 of the bytes, their name under ``assets_dir``.
+    """
+
+    file_id: str
+    hash: str
+    media_type: str
+
+
+@dataclass(frozen=True)
+class Flush:
+    """What ``flush_head`` did.
+
+    ``saved_at`` is when the head was last written: now, or the time it
+    already had when the scene was unchanged. ``revision`` is the history row
+    the flush added, or None. ``recorded`` says whether the newest history row
+    now holds the head's scene.
+    """
+
+    saved_at: str
+    written: bool
+    revision: int | None
+    recorded: bool
+
+
+@dataclass(frozen=True)
 class Migration:
     """One numbered SQL file."""
 
@@ -217,6 +246,11 @@ def apply_migrations(connection: sqlite3.Connection, migrations: Sequence[Migrat
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _stamp(moment: datetime) -> str:
+    """Return a UTC time as stored: to the millisecond, ending in ``Z``."""
+    return moment.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _open(path: Path) -> sqlite3.Connection:
@@ -400,6 +434,82 @@ class Repository:
             self._require_epoch(db, n, epoch)
             return self._insert_revision(db, n, epoch, scene_json, author_label, now)
 
+    def flush_head(
+        self,
+        n: int,
+        epoch: int,
+        scene_json: str,
+        editor_label: str,
+        *,
+        history_seconds: float,
+        files: Sequence[SlotFile] = (),
+    ) -> Flush:
+        """Write what a room holds, in one transaction (docs/DATA-MODEL.md, flush rules).
+
+        The head is written unless it already holds this scene. ``files`` are
+        added to the slot's files, and a file id the slot already has keeps
+        the bytes it had. A history row is added when the newest one does not
+        hold this scene and is at least ``history_seconds`` old. With 0 its
+        age does not matter, which is the flush after the last connection
+        left. A slot with no history gets its first row from the first flush
+        that changes the head.
+
+        Raises:
+            InvalidSlot: When ``n`` is not 1 to 9.
+            EpochMismatch: When ``epoch`` is not the slot's epoch. Nothing is written.
+        """
+        _check_slot(n)
+        moment = self._clock().astimezone(UTC)
+        now = _stamp(moment)
+        with self._transaction() as db:
+            self._require_epoch(db, n, epoch)
+            same, saved_at = db.execute(
+                "SELECT scene_json = ?, saved_at FROM slot_head WHERE slot = ?", (scene_json, n)
+            ).fetchone()
+            written = not same
+            if written:
+                self._write_head(db, n, epoch, scene_json, editor_label, now)
+                saved_at = now
+            for file in files:
+                db.execute(
+                    "INSERT INTO slot_file (slot, file_id, hash, media_type, created_at) "
+                    "VALUES (?, ?, ?, ?, ?) ON CONFLICT (slot, file_id) DO NOTHING",
+                    (n, file.file_id, file.hash, file.media_type, now),
+                )
+            newest = db.execute(
+                "SELECT scene_json = ?, created_at FROM revision WHERE slot = ? "
+                "ORDER BY revision DESC LIMIT 1",
+                (scene_json, n),
+            ).fetchone()
+            revision = None
+            if newest is None:
+                # Nothing has been recorded. The scene a slot starts with is
+                # not history, so the first row waits for the first change.
+                due = written
+            else:
+                age = (moment - datetime.fromisoformat(newest[1])).total_seconds()
+                # A clock that went backwards does not stop the history.
+                due = not newest[0] and (age >= history_seconds or age < 0)
+            if due:
+                revision = self._insert_revision(db, n, epoch, scene_json, editor_label, now)
+            # Nothing is owed to a slot whose first change is still to come.
+            recorded = due or newest is None or bool(newest[0])
+        return Flush(saved_at=saved_at, written=written, revision=revision, recorded=recorded)
+
+    def list_files(self, n: int) -> list[SlotFile]:
+        """Return every file a slot's scenes have named, oldest first.
+
+        Raises:
+            InvalidSlot: When ``n`` is not 1 to 9.
+        """
+        _check_slot(n)
+        with self._reading() as db:
+            rows = db.execute(
+                "SELECT file_id, hash, media_type FROM slot_file WHERE slot = ? ORDER BY rowid",
+                (n,),
+            ).fetchall()
+        return [SlotFile(*row) for row in rows]
+
     def replace_head(self, n: int, scene_json: str, editor_label: str) -> Replacement:
         """Start a new epoch with this scene: the write behind restore and import.
 
@@ -471,8 +581,7 @@ class Repository:
 
     def _now(self) -> str:
         """Return the time as stored: UTC to the millisecond, ending in ``Z``."""
-        moment = self._clock().astimezone(UTC)
-        return moment.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        return _stamp(self._clock().astimezone(UTC))
 
     @contextmanager
     def _reading(self) -> Generator[sqlite3.Connection]:

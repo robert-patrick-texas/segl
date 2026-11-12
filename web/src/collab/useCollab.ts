@@ -16,15 +16,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { collabUrl, storageKey, type AppConfig } from '../config.ts';
 import { browserStorage } from '../slots.ts';
+import type { FileRef } from './files.ts';
 import { readClientId, readEditToken } from './identity.ts';
 import type { Cursor } from './protocol.ts';
 import { CollabSession, INITIAL_STATE, type SceneEditor, type SessionState } from './session.ts';
+import { httpTransport } from './transport.ts';
 
 export interface CollabOptions {
 	config: AppConfig;
 	slot: number;
 	/** The epoch of the scene the canvas was loaded with, or null until it has loaded. */
 	epoch: number | null;
+	/** The file list that came with that scene. Kept the same until the next load. */
+	files: readonly FileRef[];
 	/** This browser's display name, or null while it has none. */
 	name: string | null;
 }
@@ -43,7 +47,7 @@ export interface Collab {
  * that, and between slots, the state is the initial one: connecting, nobody
  * here.
  */
-export function useCollab({ config, slot, epoch, name }: CollabOptions): Collab {
+export function useCollab({ config, slot, epoch, files, name }: CollabOptions): Collab {
 	const [editor, setEditor] = useState<SceneEditor | null>(null);
 	// Kept with its slot, so that a state from the slot just left is never shown.
 	const [held, setHeld] = useState<{ slot: number; state: SessionState } | null>(null);
@@ -58,16 +62,19 @@ export function useCollab({ config, slot, epoch, name }: CollabOptions): Collab 
 	useEffect(() => {
 		if (editor === null || epoch === null) return;
 		const storage = browserStorage();
+		const editToken = () => readEditToken(storage, storageKey(config, 'editToken'));
 		const started = new CollabSession({
 			url: collabUrl(config, slot).href,
 			epoch,
 			editor,
+			transport: httpTransport(config, slot, editToken),
+			files,
 			hello: () => {
 				sentName.current = latestName.current;
 				return {
 					clientId: readClientId(storage, storageKey(config, 'clientId')),
 					displayName: latestName.current,
-					editToken: readEditToken(storage, storageKey(config, 'editToken'))
+					editToken: editToken()
 				};
 			},
 			onState: (state) => setHeld({ slot, state })
@@ -79,7 +86,7 @@ export function useCollab({ config, slot, epoch, name }: CollabOptions): Collab 
 			session.current = null;
 			setHeld(null);
 		};
-	}, [config, slot, epoch, editor]);
+	}, [config, slot, epoch, files, editor]);
 
 	// The label changed after `hello` was sent with another, or with none.
 	useEffect(() => {

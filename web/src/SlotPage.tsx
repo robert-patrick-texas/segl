@@ -19,6 +19,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { fetchScene, fetchSlots, renameSlot, type SlotScene } from './api.ts';
 import { SeglBar } from './bar/SeglBar.tsx';
+import type { FileRef } from './collab/files.ts';
 import { readEditToken } from './collab/identity.ts';
 import { useCollab } from './collab/useCollab.ts';
 import { storageKey, type AppConfig } from './config.ts';
@@ -30,6 +31,7 @@ import type { DisplayName } from './useDisplayName.ts';
 const Canvas = lazy(() => import('./canvas/Canvas.tsx'));
 
 const NO_TITLES: ReadonlyMap<number, string> = new Map();
+const NO_FILES: readonly FileRef[] = [];
 
 export interface SlotPageProps {
 	config: AppConfig;
@@ -48,6 +50,7 @@ export function SlotPage({ config, slot, displayName }: SlotPageProps) {
 		config,
 		slot,
 		epoch: scene === null ? null : scene.epoch,
+		files: scene === null ? NO_FILES : scene.files,
 		name: displayName.name
 	});
 	// Until the server has said, a browser may edit unless a token is needed.

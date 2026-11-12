@@ -20,12 +20,18 @@ import json
 from typing import Any
 
 import pytest
+from harness import EMPTY_SCENE
 
+from segl.repository import load_empty_scene
 from segl.room import (
+    MAX_FILES_IN_MESSAGE,
     Connection,
     Hello,
     Room,
+    encode,
     may_edit,
+    named_files,
+    parse_files,
     parse_hello,
     stored_name,
 )
@@ -57,11 +63,19 @@ class Browser:
         messages, self.received = self.received, []
         return messages
 
-    def send(self, message: object) -> None:
-        self.room.receive(self.connection, message)
+    def send(self, message: object, uploaded: tuple[str, ...] = ()) -> None:
+        self.room.receive(self.connection, message, uploaded)
 
-    def draw(self, *elements: dict[str, Any], epoch: int = 1) -> None:
-        self.send({"type": "elements", "epoch": epoch, "elements": list(elements)})
+    def draw(self, *elements: dict[str, Any], epoch: int = 1, seq: object = None) -> None:
+        message = {"type": "elements", "epoch": epoch, "elements": list(elements)}
+        self.send(message if seq is None else {**message, "seq": seq})
+
+    def name_files(self, *files: dict[str, str], stored: bool = True, seq: object = None) -> None:
+        """Say which bytes these file ids mean. ``stored`` is whether they were uploaded."""
+        message: dict[str, Any] = {"type": "files", "epoch": 1, "files": list(files)}
+        if seq is not None:
+            message["seq"] = seq
+        self.send(message, tuple(each["hash"] for each in files) if stored else ())
 
     def leave(self) -> None:
         self.room.leave(self.connection)
@@ -297,7 +311,7 @@ def test_a_malformed_message_is_answered_with_an_error_and_changes_nothing(
     assert one.connection.cursor is None
 
 
-@pytest.mark.parametrize("kind", ["files", "restore", "ELEMENTS", ""])
+@pytest.mark.parametrize("kind", ["saved", "restore", "ELEMENTS", ""])
 def test_an_unknown_type_is_answered_with_an_error(room: Room, kind: str) -> None:
     browser = Browser(room)
     browser.take()
@@ -533,3 +547,536 @@ def test_the_label_in_hello_is_kept_as_written(sent: object, kept: str | None) -
 )
 def test_the_edit_gate(configured: str, given: str | None, allowed: bool) -> None:
     assert may_edit(configured, given) is allowed
+
+
+# What the saver needs of a room (docs/DATA-MODEL.md, "Flush and revision rules").
+
+
+class Listener:
+    """Counts what a room tells its saver."""
+
+    def __init__(self, room: Room) -> None:
+        self.changes = 0
+        self.empties = 0
+        room.on_change = self.changed
+        room.on_empty = self.emptied
+
+    def changed(self) -> None:
+        self.changes += 1
+
+    def emptied(self) -> None:
+        self.empties += 1
+
+
+def test_an_accepted_edit_makes_the_room_dirty_and_says_so(room: Room) -> None:
+    listener = Listener(room)
+    browser = Browser(room, "Bravo2")
+    assert (room.dirty, room.unsettled, listener.changes) == (False, False, 0)
+
+    browser.draw(element("a", 1))
+
+    assert (room.dirty, room.unsettled, listener.changes) == (True, True, 1)
+    assert room.editor_label == "Bravo2"
+
+
+def test_an_edit_that_changes_nothing_leaves_the_room_clean(room: Room) -> None:
+    one, two = Browser(room, "Alpha1"), Browser(room, "Bravo2")
+    one.draw(element("a", 5))
+    room.snapshot()
+    listener = Listener(room)
+
+    two.draw(element("a", 4))
+    two.draw(element("a", 5))
+    two.send({"type": "presence", "cursor": {"x": 1, "y": 2}})
+    two.send({"type": "rename", "displayName": "cy"})
+
+    assert (room.dirty, listener.changes) == (False, 0)
+    # The label is the one behind the newest change that was kept.
+    assert room.editor_label == "Alpha1"
+
+
+def test_the_label_is_the_name_at_the_time_of_the_edit(room: Room) -> None:
+    browser = Browser(room, "Bravo2")
+    browser.draw(element("a", 1))
+    browser.send({"type": "rename", "displayName": "cy"})
+
+    assert room.snapshot().editor_label == "Bravo2"
+    browser.draw(element("a", 2))
+    assert room.snapshot().editor_label == "Cy"
+
+
+def test_an_edit_by_a_connection_without_a_label_has_none(room: Room) -> None:
+    Browser(room, "Bravo2").draw(element("a", 1))
+    Browser(room, None).draw(element("a", 2))
+
+    assert room.snapshot().editor_label is None
+
+
+def test_a_snapshot_is_the_whole_scene_and_leaves_the_room_clean(room: Room) -> None:
+    browser = Browser(room)
+    browser.draw(element("b", 1, index="a1"), element("a", 1, index="a0"))
+    browser.draw(element("b", 2, index="a1", isDeleted=True))
+
+    taken = room.snapshot()
+
+    # In drawing order, with the deleted element: a restart must not forget a deletion.
+    assert taken.elements == [
+        element("a", 1, index="a0"),
+        element("b", 2, index="a1", isDeleted=True),
+    ]
+    assert (taken.epoch, taken.files) == (1, [])
+    assert (room.dirty, room.unsettled) == (False, False)
+    # What is drawn afterwards is not in a snapshot already taken.
+    browser.draw(element("c", 1, index="a2"))
+    assert len(taken.elements) == 2
+    assert room.dirty
+
+
+def test_a_snapshot_that_was_not_written_is_taken_back(room: Room) -> None:
+    browser = Browser(room)
+    browser.name_files(FILE)
+    browser.draw(element("a", 1))
+    taken = room.snapshot()
+    browser.name_files(OTHER_FILE)
+
+    room.restore(taken)
+
+    assert room.dirty
+    # Both files are still to be written, the older first.
+    assert room.snapshot().files == [FILE, OTHER_FILE]
+    assert room.snapshot().files == []
+
+
+def test_a_room_nobody_changed_is_stored_as_the_head_it_came_from() -> None:
+    """So that a flush of it writes nothing: the JSON is unchanged."""
+    stored = load_empty_scene()
+
+    room = Room.from_head(1, "Workspace 1", 1, stored)
+
+    assert room.snapshot().scene_json() == stored
+    assert room.document == EMPTY_SCENE
+
+
+def test_the_stored_scene_is_the_heads_document_with_the_rooms_elements() -> None:
+    head = {"type": "excalidraw", "version": 2, "elements": [], "appState": {"gridSize": 20}}
+    room = Room.from_head(1, "Workspace 1", 1, json.dumps(head))
+    Browser(room).draw(element("a", 1, text="café 😀"))
+
+    stored = room.snapshot().scene_json()
+
+    assert json.loads(stored) == {
+        **head,
+        "elements": [element("a", 1, text="café 😀")],
+    }
+    # ASCII, and compact.
+    assert stored.isascii()
+    assert ": " not in stored
+
+
+def test_half_a_surrogate_pair_in_an_element_can_be_stored(room: Room) -> None:
+    # JSON can carry it, and a browser can send it. SQLite takes the escape.
+    Browser(room).draw(element("a", 1, text="bad \ud800 text"))
+
+    stored = room.snapshot().scene_json()
+
+    assert "\\ud800" in stored
+    stored.encode("utf-8")
+
+
+@pytest.mark.parametrize("scene", ["[]", "null", '"text"', "7"])
+def test_a_stored_scene_that_is_not_a_document_gives_a_room_that_can_be_stored(scene: str) -> None:
+    room = Room.from_head(1, "Workspace 1", 1, scene)
+    Browser(room).draw(element("a", 1))
+
+    assert json.loads(room.snapshot().scene_json()) == {"elements": [element("a", 1)]}
+
+
+def test_the_room_says_when_its_last_connection_left(room: Room) -> None:
+    listener = Listener(room)
+    one, two = Browser(room), Browser(room)
+
+    one.leave()
+    assert listener.empties == 0
+    two.leave()
+    assert listener.empties == 1
+    two.leave()
+    assert listener.empties == 1
+
+
+# `saved`: a browser numbers its messages, and is told which are on the disk.
+
+
+def test_a_numbered_message_is_answered_with_saved_after_the_flush(room: Room) -> None:
+    listener = Listener(room)
+    one, two = Browser(room), Browser(room)
+    one.take(), two.take()
+
+    one.draw(element("a", 1), seq=4)
+    assert one.take() == []
+    assert listener.changes == 2
+
+    # What the saver does once the head is written.
+    room.snapshot()
+    waiting = room.take_waiting()
+    assert not room.unsettled
+    room.saved(waiting, "2026-11-12T09:00:01.000Z")
+
+    assert one.take() == [
+        {"type": "saved", "epoch": 1, "savedAt": "2026-11-12T09:00:01.000Z", "seq": 4}
+    ]
+    # The other connection drew nothing, and is told nothing.
+    assert [message["type"] for message in two.take()] == ["elements"]
+    assert room.take_waiting() == []
+
+
+def test_saved_names_the_newest_message_of_each_connection(room: Room) -> None:
+    one, two = Browser(room), Browser(room)
+    one.draw(element("a", 1), seq=1)
+    one.draw(element("a", 2), seq=2)
+    two.draw(element("b", 1), seq=7)
+    one.take(), two.take()
+
+    room.saved(room.take_waiting(), "t")
+
+    assert [message["seq"] for message in one.take()] == [2]
+    assert [message["seq"] for message in two.take()] == [7]
+
+
+def test_a_message_without_a_number_is_not_answered(room: Room) -> None:
+    browser = Browser(room)
+    browser.draw(element("a", 1))
+
+    assert room.dirty
+    assert room.take_waiting() == []
+
+
+def test_a_numbered_message_that_changed_nothing_is_still_answered(room: Room) -> None:
+    """A browser that reconnects asks, with an empty batch, whether it is saved."""
+    listener = Listener(room)
+    browser = Browser(room)
+    browser.take()
+
+    browser.draw(seq=3)
+
+    assert (room.dirty, room.unsettled, listener.changes) == (False, True, 1)
+    room.saved(room.take_waiting(), "t")
+    assert browser.take() == [{"type": "saved", "epoch": 1, "savedAt": "t", "seq": 3}]
+
+
+@pytest.mark.parametrize("seq", [True, -1, 1.5, "1", [1], 2**53])
+def test_a_number_that_is_not_a_count_is_not_answered(room: Room, seq: object) -> None:
+    browser = Browser(room)
+
+    browser.draw(element("a", 1), seq=seq)
+
+    # The edit itself was taken.
+    assert room.dirty
+    assert room.take_waiting() == []
+
+
+def test_a_message_that_was_refused_is_not_answered(room: Room) -> None:
+    editor, viewer = Browser(room), Browser(room, view_only=True)
+
+    viewer.draw(element("a", 1), seq=1)
+    editor.draw(element("b", 1), {"id": "c"}, seq=2)
+    editor.draw(element("d", 1), epoch=2, seq=3)
+    editor.name_files(FILE, stored=False, seq=4)
+
+    assert room.take_waiting() == []
+    assert not room.dirty
+
+
+def test_a_connection_that_left_is_not_told(room: Room) -> None:
+    one, two = Browser(room), Browser(room)
+    one.draw(element("a", 1), seq=1)
+    two.draw(element("b", 1), seq=1)
+    waiting = room.take_waiting()
+    one.leave()
+    one.take(), two.take()
+
+    room.saved(waiting, "t")
+
+    assert one.take() == []
+    assert [message["type"] for message in two.take()] == ["saved"]
+
+
+def test_a_flush_that_failed_keeps_its_connections_waiting(room: Room) -> None:
+    one, two = Browser(room), Browser(room)
+    one.draw(element("a", 1), seq=1)
+    two.draw(element("b", 1), seq=5)
+    waiting = room.take_waiting()
+    # While the write was failing, one of them drew again.
+    one.draw(element("a", 2), seq=2)
+
+    room.keep_waiting(waiting)
+
+    assert sorted(seq for _, seq in room.take_waiting()) == [2, 5]
+
+
+# The files of images (docs/API.md, the `files` message).
+
+FILE = {"id": "f" * 40, "hash": "a" * 64, "mimeType": "image/png"}
+OTHER_FILE = {"id": "e" * 40, "hash": "b" * 64, "mimeType": "image/jpeg"}
+
+
+def image(identifier: str, file_id: str, **more: object) -> dict[str, Any]:
+    return {**element(identifier, 1, type="image", fileId=file_id), **more}
+
+
+def test_a_named_file_reaches_the_others_and_is_kept(room: Room) -> None:
+    listener = Listener(room)
+    one, two = Browser(room, "Bravo2"), Browser(room)
+    one.take(), two.take()
+
+    one.name_files(FILE)
+
+    assert two.take() == [{"type": "files", "epoch": 1, "files": [FILE]}]
+    assert one.take() == []
+    assert room.files == {FILE["id"]: FILE}
+    assert (room.dirty, listener.changes, room.editor_label) == (True, 1, "Bravo2")
+    # The flush writes it once.
+    assert room.snapshot().files == [FILE]
+    assert room.snapshot().files == []
+
+
+def test_a_new_connection_is_sent_the_files_its_scene_names(room: Room) -> None:
+    browser = Browser(room)
+    browser.name_files(FILE, OTHER_FILE)
+    browser.draw(image("picture", FILE["id"]))
+
+    scene = Browser(room).take()[1]
+
+    assert scene["elements"] == [image("picture", FILE["id"])]
+    # Not the file no element names: its image was never placed, or is long gone.
+    assert scene["files"] == [FILE]
+
+
+def test_a_deleted_image_still_names_its_file(room: Room) -> None:
+    browser = Browser(room)
+    browser.name_files(FILE)
+    browser.draw(image("picture", FILE["id"], isDeleted=True))
+
+    assert Browser(room).take()[1]["files"] == [FILE]
+
+
+def test_a_room_starts_with_the_slots_file_list() -> None:
+    stored = json.dumps({"elements": [image("picture", FILE["id"])]})
+
+    room = Room.from_head(2, "Workspace 2", 1, stored, files=[FILE, OTHER_FILE])
+
+    assert Browser(room).take()[1]["files"] == [FILE]
+    assert room.snapshot().files == []
+
+
+def test_a_file_id_keeps_the_bytes_it_was_first_given(room: Room) -> None:
+    one, two = Browser(room), Browser(room)
+    one.name_files(FILE)
+    room.snapshot()
+    one.take(), two.take()
+    listener = Listener(room)
+
+    two.name_files({**FILE, "hash": "c" * 64}, seq=1)
+
+    assert room.files == {FILE["id"]: FILE}
+    assert one.take() == []
+    assert (room.dirty, room.snapshot().files) == (False, [])
+    # It is answered: what the slot holds for that id is saved.
+    assert [seq for _, seq in room.take_waiting()] == [1]
+    assert listener.changes == 1
+
+
+def test_only_the_new_files_of_a_message_are_sent_on(room: Room) -> None:
+    one, two = Browser(room), Browser(room)
+    one.name_files(FILE)
+    one.take(), two.take()
+
+    two.name_files(FILE, OTHER_FILE)
+
+    assert one.take() == [{"type": "files", "epoch": 1, "files": [OTHER_FILE]}]
+
+
+def test_a_file_whose_bytes_were_not_uploaded_is_refused(room: Room) -> None:
+    one, two = Browser(room), Browser(room)
+    one.take(), two.take()
+
+    # One of the two was uploaded. The message is taken whole or not at all.
+    one.send({"type": "files", "epoch": 1, "files": [FILE, OTHER_FILE]}, (FILE["hash"],))
+
+    (error,) = one.take()
+    assert (error["type"], error["error"]) == ("error", "unknown_file")
+    assert two.take() == []
+    assert (room.files, room.dirty) == ({}, False)
+
+
+def test_a_viewer_cannot_name_a_file(room: Room) -> None:
+    viewer, editor = Browser(room, view_only=True), Browser(room)
+    viewer.take(), editor.take()
+
+    viewer.name_files(FILE)
+
+    (error,) = viewer.take()
+    assert error["error"] == "view_only"
+    assert editor.take() == []
+    assert room.files == {}
+
+
+def test_files_from_another_epoch_get_the_scene_back(room: Room) -> None:
+    browser = Browser(room)
+    browser.take()
+
+    browser.send({"type": "files", "epoch": 2, "files": [FILE]}, (FILE["hash"],))
+
+    (scene,) = browser.take()
+    assert (scene["type"], scene["epoch"]) == ("scene", 1)
+    assert room.files == {}
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        None,
+        [],
+        {},
+        "files",
+        [FILE["id"]],
+        [{}],
+        [{**FILE, "id": ""}],
+        [{**FILE, "id": "x" * 65}],
+        [{**FILE, "id": "../etc/passwd"}],
+        [{**FILE, "id": 7}],
+        [{**FILE, "hash": "A" * 64}],
+        [{**FILE, "hash": "a" * 63}],
+        [{**FILE, "hash": "../" + "a" * 61}],
+        [{**FILE, "hash": None}],
+        [{**FILE, "mimeType": "text/html"}],
+        [{**FILE, "mimeType": "application/octet-stream"}],
+        [{**FILE, "mimeType": ["image/png"]}],
+        [FILE] * (MAX_FILES_IN_MESSAGE + 1),
+    ],
+)
+def test_a_files_message_of_the_wrong_shape_is_refused(room: Room, files: object) -> None:
+    assert parse_files(files) is None
+    browser = Browser(room)
+    browser.take()
+
+    browser.send({"type": "files", "epoch": 1, "files": files}, (FILE["hash"],))
+
+    (error,) = browser.take()
+    assert error["error"] == "bad_message"
+    assert (room.files, room.dirty) == ({}, False)
+
+
+def test_a_files_message_needs_an_epoch(room: Room) -> None:
+    browser = Browser(room)
+    browser.take()
+
+    for epoch in (None, True, "1", 1.0):
+        browser.send({"type": "files", "epoch": epoch, "files": [FILE]}, (FILE["hash"],))
+
+    assert [message["error"] for message in browser.take()] == ["bad_message"] * 4
+
+
+def test_a_file_entry_keeps_only_the_three_fields() -> None:
+    sent = {**FILE, "dataURL": "data:image/png;base64,AAAA", "created": 1}
+
+    assert parse_files([sent]) == [FILE]
+
+
+def test_named_files_reads_only_text_file_ids() -> None:
+    elements = [
+        image("a", FILE["id"]),
+        element("b", 1, fileId=None),
+        element("c", 1, fileId={"not": "an id"}),
+        element("d", 1, fileId=["x"]),
+        "not an element",
+    ]
+
+    assert named_files([FILE, OTHER_FILE], elements) == [FILE]
+
+
+# The size of a slot's scene (max_scene_bytes).
+
+
+def size_of(*elements: dict[str, Any]) -> int:
+    return sum(len(encode(each)) for each in elements)
+
+
+def test_the_room_knows_the_size_of_its_scene(room: Room) -> None:
+    browser = Browser(room)
+    first, second = element("a", 1, text="x" * 100), element("b", 1)
+
+    browser.draw(first, second)
+    assert room.size == size_of(first, second)
+
+    # A newer copy takes the place of the older one in the count.
+    smaller = element("a", 2, text="")
+    browser.draw(smaller)
+    assert room.size == size_of(smaller, second)
+
+
+def test_a_room_from_a_head_knows_the_size_of_what_it_loaded() -> None:
+    stored = [element("a", 1, text="x" * 100), element("b", 3, index="a0")]
+
+    room = Room.from_head(1, "Workspace 1", 1, json.dumps({"elements": stored}))
+
+    assert room.size == size_of(*stored)
+
+
+def test_a_batch_that_would_make_the_scene_too_large_is_refused_whole() -> None:
+    room = Room(1, "Workspace 1", 1, [], max_scene_bytes=400)
+    one, two = Browser(room), Browser(room)
+    one.draw(element("a", 1, text="x" * 200))
+    room.snapshot()
+    one.take(), two.take()
+    listener = Listener(room)
+
+    one.draw(element("b", 1), element("c", 1, text="x" * 200), seq=9)
+
+    (error,) = one.take()
+    assert (error["type"], error["error"]) == ("error", "scene_too_large")
+    assert "400" in error["message"]
+    # Nothing of the batch was kept, nobody was told, and it is not called saved.
+    assert sorted(room.elements) == ["a"]
+    assert two.take() == []
+    assert (room.dirty, room.take_waiting(), listener.changes) == (False, [], 0)
+    assert room.size == size_of(element("a", 1, text="x" * 200))
+
+
+def test_a_scene_at_its_limit_still_takes_an_element_that_fits() -> None:
+    first = element("a", 1, text="x" * 200)
+    second = element("b", 1)
+    room = Room(1, "Workspace 1", 1, [], max_scene_bytes=size_of(first, second))
+    browser = Browser(room)
+
+    browser.draw(first)
+    browser.draw(second)
+    browser.draw(element("c", 1))
+
+    assert sorted(room.elements) == ["a", "b"]
+    assert room.size == size_of(first, second)
+
+
+def test_a_full_slot_can_be_emptied() -> None:
+    """A stored scene over the limit, as after the limit was lowered."""
+    large = element("a", 1, text="x" * 500, isDeleted=False)
+    room = Room.from_head(
+        1, "Workspace 1", 1, json.dumps({"elements": [large]}), max_scene_bytes=100
+    )
+    browser = Browser(room)
+    browser.take()
+
+    browser.draw(element("b", 1))
+    assert browser.take()[0]["error"] == "scene_too_large"
+
+    # Smaller copies are taken although the scene is still over the limit.
+    smaller = element("a", 2, text="x" * 300, isDeleted=True)
+    browser.draw(smaller)
+    assert browser.take() == []
+    assert room.elements["a"] == smaller
+    assert room.size == size_of(smaller)
+
+
+def test_without_a_limit_a_scene_may_grow(room: Room) -> None:
+    Browser(room).draw(element("a", 1, text="x" * 100_000))
+
+    assert room.size > 100_000

@@ -24,6 +24,7 @@ import pytest
 from harness import DISPLAY_NAMES_FILE
 
 from segl import app, cli
+from segl.assets import AssetStore
 from segl.config import (
     DEFAULT_BIND,
     DEFAULTS,
@@ -272,14 +273,20 @@ def test_the_command_serves_with_a_missing_config_file(
         read.append(path)
         return ("Guest",)
 
+    def fake_prepare(store: AssetStore) -> None:
+        prepared.append(store.folder)
+
+    prepared: list[Path] = []
     monkeypatch.setattr(cli.uvicorn, "run", fake_run)
     # The production database path is not this test's to create, and neither
-    # is the production display-name file.
+    # are the production display-name file and the folder for uploaded files.
     monkeypatch.setattr(OpenedDatabase, "opened", [])
     monkeypatch.setattr(cli, "Repository", OpenedDatabase)
     monkeypatch.setattr(app, "load_display_names", fake_words)
+    monkeypatch.setattr(AssetStore, "prepare", fake_prepare)
 
     assert cli.main(["--config", str(tmp_path / "absent.toml")]) == 0
+    assert prepared == [Path("/opt/segl/var/assets")]
     assert served == {
         "host": "127.0.0.1",
         "port": 8888,
@@ -299,7 +306,11 @@ def test_the_command_passes_the_trusted_proxies_to_uvicorn(
     served: dict[str, object] = {}
     monkeypatch.setattr(cli.uvicorn, "run", lambda app, **options: served.update(options))
     monkeypatch.setattr(cli, "Repository", OpenedDatabase)
-    config = write(tmp_path, f'trusted_proxies = []\ndisplay_names = "{DISPLAY_NAMES_FILE}"\n')
+    config = write(
+        tmp_path,
+        f'trusted_proxies = []\ndisplay_names = "{DISPLAY_NAMES_FILE}"\n'
+        f'assets_dir = "{tmp_path / "assets"}"\n',
+    )
 
     assert cli.main(["--config", str(config)]) == 0
     # An empty list, not None: None would make uvicorn fall back to its own default.

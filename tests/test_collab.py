@@ -46,6 +46,7 @@ from websockets.exceptions import ConnectionClosed, InvalidStatus
 
 from segl import collab
 from segl.app import create_app
+from segl.assets import AssetStore
 from segl.collab import Rooms, _Outbox, parse_message
 from segl.repository import Repository, Slot
 
@@ -506,7 +507,7 @@ def test_the_last_title_stored_is_the_last_one_sent(
     monkeypatch.setattr(repository, "rename_slot", slow_first)
 
     async def scenario() -> tuple[str, list[str]]:
-        rooms = Rooms(repository)
+        rooms = Rooms(repository, make_settings(), AssetStore(Path("unused")))
         room = await rooms.room(7)
         sent: list[str] = []
         room.retitle = sent.append  # ty: ignore[invalid-assignment]
@@ -523,7 +524,7 @@ def test_the_last_title_stored_is_the_last_one_sent(
 
 def test_a_room_is_loaded_once(repository: Repository) -> None:
     async def scenario() -> set[int]:
-        rooms = Rooms(repository)
+        rooms = Rooms(repository, make_settings(), AssetStore(Path("unused")))
         return {id(room) for room in await asyncio.gather(*(rooms.room(2) for _ in range(10)))}
 
     assert len(asyncio.run(scenario())) == 1

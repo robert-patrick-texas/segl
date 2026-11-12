@@ -14,6 +14,7 @@
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { beats, type WireElement } from './elements.ts';
+import { RETRY_MS, type CanvasFile, type FileRef, type FileTransport } from './files.ts';
 import {
 	CollabSession,
 	CURSOR_INTERVAL_MS,
@@ -80,6 +81,32 @@ class FakeEditor implements SceneEditor {
 	held: WireElement[] = [];
 	peers: Peer[] = [];
 	calls: string[] = [];
+	/** The files the canvas holds, by file id. */
+	files = new Map<string, CanvasFile>();
+
+	/** Every element with a `fileId` that is not deleted is an image. */
+	images(): ReadonlyMap<string, CanvasFile | null> {
+		const named = new Map<string, CanvasFile | null>();
+		for (const each of this.held) {
+			const id = each['fileId'];
+			if (typeof id === 'string' && each['isDeleted'] !== true) {
+				named.set(id, this.files.get(id) ?? null);
+			}
+		}
+		return named;
+	}
+
+	addFiles(files: readonly CanvasFile[]): void {
+		for (const file of files) {
+			if (!this.files.has(file.id)) this.files.set(file.id, file);
+		}
+	}
+
+	/** The person placed an image: its element, and its file. */
+	place(element: WireElement, file: CanvasFile): void {
+		this.files.set(file.id, file);
+		this.draw(element);
+	}
 
 	elements(): readonly WireElement[] {
 		return this.held;
@@ -111,9 +138,38 @@ class FakeEditor implements SceneEditor {
 	}
 }
 
+/** A server for files: it keeps what is uploaded, and can be made to fail. */
+class FakeTransport implements FileTransport {
+	uploads: CanvasFile[] = [];
+	downloads: FileRef[] = [];
+	/** What the next transfers reject with, one each. */
+	failures: unknown[] = [];
+
+	async upload(file: CanvasFile): Promise<string> {
+		this.uploads.push(file);
+		if (this.failures.length > 0) throw this.failures.shift();
+		return hashOf(file.id);
+	}
+
+	async download(ref: FileRef): Promise<string> {
+		this.downloads.push(ref);
+		if (this.failures.length > 0) throw this.failures.shift();
+		return `data:${ref.mimeType};base64,${ref.hash.slice(0, 8)}`;
+	}
+}
+
+/** The hash the fake server gives a file: made from its id, 64 hex digits. */
+function hashOf(id: string): string {
+	return id
+		.replace(/[^0-9a-f]/g, '0')
+		.padEnd(64, 'a')
+		.slice(0, 64);
+}
+
 interface Harness {
 	session: CollabSession;
 	editor: FakeEditor;
+	transport: FakeTransport;
 	sockets: FakeSocket[];
 	states: SessionState[];
 	hello: Hello;
@@ -122,8 +178,9 @@ interface Harness {
 	state(): SessionState;
 }
 
-function start(epoch = 1): Harness {
+function start(epoch = 1, files: FileRef[] = []): Harness {
 	const editor = new FakeEditor();
+	const transport = new FakeTransport();
 	const sockets: FakeSocket[] = [];
 	const states: SessionState[] = [];
 	const hello: Hello = { clientId: 'client-1', displayName: 'Guest1', editToken: '' };
@@ -131,6 +188,8 @@ function start(epoch = 1): Harness {
 		url: URL,
 		epoch,
 		editor,
+		transport,
+		files,
 		hello: () => ({ ...hello }),
 		onState: (state) => states.push(state),
 		createSocket: (url) => {
@@ -143,6 +202,7 @@ function start(epoch = 1): Harness {
 	return {
 		session,
 		editor,
+		transport,
 		sockets,
 		states,
 		hello,
@@ -253,7 +313,9 @@ describe('editing', () => {
 		expect(socket.take()).toEqual([]);
 		vi.advanceTimersByTime(SEND_INTERVAL_MS);
 
-		expect(socket.take()).toEqual([{ type: 'elements', epoch: 1, elements: [element('a', 1)] }]);
+		expect(socket.take()).toEqual([
+			{ type: 'elements', epoch: 1, elements: [element('a', 1)], seq: 1 }
+		]);
 	});
 
 	test('changes close together go as one message, with the newest copy of each', () => {
@@ -269,7 +331,7 @@ describe('editing', () => {
 		vi.advanceTimersByTime(SEND_INTERVAL_MS);
 
 		expect(socket.take()).toEqual([
-			{ type: 'elements', epoch: 1, elements: [element('a', 3), element('b', 1)] }
+			{ type: 'elements', epoch: 1, elements: [element('a', 3), element('b', 1)], seq: 1 }
 		]);
 	});
 
@@ -288,7 +350,10 @@ describe('editing', () => {
 		harness.editor.draw(element('b', 2));
 		harness.session.localChange();
 		vi.advanceTimersByTime(SEND_INTERVAL_MS);
-		expect(socket.take()).toEqual([{ type: 'elements', epoch: 1, elements: [element('b', 2)] }]);
+		// Numbered on from the first message.
+		expect(socket.take()).toEqual([
+			{ type: 'elements', epoch: 1, elements: [element('b', 2)], seq: 2 }
+		]);
 	});
 
 	test("another person's elements are merged in and not echoed", () => {
@@ -314,7 +379,9 @@ describe('editing', () => {
 		vi.advanceTimersByTime(SEND_INTERVAL_MS);
 
 		expect(harness.editor.held).toEqual([element('a', 3)]);
-		expect(socket.take()).toEqual([{ type: 'elements', epoch: 1, elements: [element('a', 3)] }]);
+		expect(socket.take()).toEqual([
+			{ type: 'elements', epoch: 1, elements: [element('a', 3)], seq: 1 }
+		]);
 	});
 
 	test('nothing is sent before welcome, and what was drawn meanwhile goes after the scene', () => {
@@ -331,7 +398,7 @@ describe('editing', () => {
 		socket.receive({ type: 'scene', epoch: 1, elements: [], files: [] });
 
 		expect(socket.take()).toEqual([
-			{ type: 'elements', epoch: 1, elements: [element('early', 1)] }
+			{ type: 'elements', epoch: 1, elements: [element('early', 1)], seq: 1 }
 		]);
 	});
 
@@ -396,7 +463,9 @@ describe('a new epoch', () => {
 		harness.session.localChange();
 		vi.advanceTimersByTime(SEND_INTERVAL_MS);
 
-		expect(socket.take()).toEqual([{ type: 'elements', epoch: 2, elements: [element('a', 1)] }]);
+		expect(socket.take()).toEqual([
+			{ type: 'elements', epoch: 2, elements: [element('a', 1)], seq: 1 }
+		]);
 	});
 
 	test('elements of another epoch are left alone', () => {
@@ -518,7 +587,7 @@ describe('a dropped socket', () => {
 
 		// Not the whole scene, and not the edit the server has a newer copy of.
 		expect(socket.take()).toEqual([
-			{ type: 'elements', epoch: 1, elements: [element('offline', 1)] }
+			{ type: 'elements', epoch: 1, elements: [element('offline', 1)], seq: 1 }
 		]);
 		expect(harness.editor.calls).not.toContain('replace');
 		expect(harness.editor.held).toEqual([
@@ -540,7 +609,9 @@ describe('a dropped socket', () => {
 
 		const socket = goLive(harness, []);
 
-		expect(socket.take()).toEqual([{ type: 'elements', epoch: 1, elements: [element('lost', 1)] }]);
+		expect(socket.take()).toEqual([
+			{ type: 'elements', epoch: 1, elements: [element('lost', 1)], seq: 2 }
+		]);
 	});
 
 	test('an edit waiting to be sent when the socket drops is not sent on the dead socket', () => {
@@ -778,6 +849,536 @@ describe('stopping', () => {
 		vi.advanceTimersByTime(60_000);
 
 		expect(harness.sockets).toHaveLength(1);
+	});
+});
+
+describe('saving', () => {
+	function saved(socket: FakeSocket, seq: number): void {
+		socket.receive({ type: 'saved', epoch: 1, savedAt: '2026-11-12T09:00:00.000Z', seq });
+	}
+
+	test('an edit is saving at once, and saved when the server says its number is', () => {
+		// S-013: the UI shows saving and then saved.
+		const harness = start();
+		const socket = goLive(harness);
+		expect(harness.state().status).toBe('live');
+
+		harness.editor.draw(element('a', 1));
+		harness.session.localChange();
+
+		// Before the edit has even been sent.
+		expect(harness.state().status).toBe('saving');
+		expect(socket.take()).toEqual([]);
+		vi.advanceTimersByTime(SEND_INTERVAL_MS);
+		expect(socket.take()).toMatchObject([{ type: 'elements', seq: 1 }]);
+		expect(harness.state().status).toBe('saving');
+
+		saved(socket, 1);
+
+		expect(harness.state().status).toBe('saved');
+	});
+
+	test('a later edit is saving again until its own number is saved', () => {
+		const harness = start();
+		const socket = goLive(harness);
+		harness.editor.draw(element('a', 1));
+		harness.session.localChange();
+		vi.advanceTimersByTime(SEND_INTERVAL_MS);
+		saved(socket, 1);
+
+		harness.editor.draw(element('a', 2));
+		harness.session.localChange();
+		expect(harness.state().status).toBe('saving');
+		vi.advanceTimersByTime(SEND_INTERVAL_MS);
+
+		// The answer to the first message, again, does not cover the second.
+		saved(socket, 1);
+		expect(harness.state().status).toBe('saving');
+		saved(socket, 2);
+		expect(harness.state().status).toBe('saved');
+	});
+
+	test('an edit made while an earlier one is being saved keeps the status at saving', () => {
+		const harness = start();
+		const socket = goLive(harness);
+		harness.editor.draw(element('a', 1));
+		harness.session.localChange();
+		vi.advanceTimersByTime(SEND_INTERVAL_MS);
+
+		// Drawn, and not yet sent, when the first answer arrives.
+		harness.editor.draw(element('b', 1));
+		harness.session.localChange();
+		saved(socket, 1);
+
+		expect(harness.state().status).toBe('saving');
+		vi.advanceTimersByTime(SEND_INTERVAL_MS);
+		saved(socket, 2);
+		expect(harness.state().status).toBe('saved');
+	});
+
+	test('an answer that arrives late, for an earlier number, takes nothing back', () => {
+		const harness = start();
+		const socket = goLive(harness);
+		for (const version of [1, 2]) {
+			harness.editor.draw(element('a', version));
+			harness.session.localChange();
+			vi.advanceTimersByTime(SEND_INTERVAL_MS);
+		}
+		saved(socket, 2);
+
+		saved(socket, 1);
+
+		expect(harness.state().status).toBe('saved');
+	});
+
+	test('saved before welcome is not heard, and covers nothing sent later', () => {
+		const harness = start();
+		const socket = harness.socket();
+		socket.open();
+
+		saved(socket, 1);
+		welcome(socket);
+		socket.receive({ type: 'scene', epoch: 1, elements: [], files: [] });
+		expect(harness.state().status).toBe('live');
+		harness.editor.draw(element('a', 1));
+		harness.session.localChange();
+		vi.advanceTimersByTime(SEND_INTERVAL_MS);
+
+		// The first message of this session has number 1, and nobody has saved it.
+		expect(socket.take()).toMatchObject([{ type: 'elements', seq: 1 }]);
+		expect(harness.state().status).toBe('saving');
+	});
+
+	test('the page is told of a status once, however often it is worked out', () => {
+		const harness = start();
+		const socket = goLive(harness);
+		// Welcome made the page live. The scene after it changed nothing the bar shows.
+		expect(harness.states.map((state) => state.status)).toEqual(['live']);
+		harness.editor.draw(element('a', 1));
+		harness.session.localChange();
+		vi.advanceTimersByTime(SEND_INTERVAL_MS);
+
+		saved(socket, 1);
+		saved(socket, 1);
+
+		expect(harness.states.map((state) => state.status)).toEqual(['live', 'saving', 'saved']);
+	});
+
+	test('one answer may cover several messages', () => {
+		const harness = start();
+		const socket = goLive(harness);
+		for (const version of [1, 2, 3]) {
+			harness.editor.draw(element('a', version));
+			harness.session.localChange();
+			vi.advanceTimersByTime(SEND_INTERVAL_MS);
+		}
+
+		saved(socket, 3);
+
+		expect(harness.state().status).toBe('saved');
+	});
+
+	test('a change that leaves nothing to send is not saving, and sends nothing', () => {
+		const harness = start();
+		const socket = goLive(harness, [element('a', 1)]);
+		const states = harness.states.length;
+
+		// A selection, a scroll, a pointer over the canvas.
+		for (let count = 0; count < 3; count += 1) harness.session.localChange();
+		// Not even a timer is set for it.
+		expect(vi.getTimerCount()).toBe(0);
+		vi.advanceTimersByTime(1000);
+
+		expect(harness.states).toHaveLength(states);
+		expect(harness.state().status).toBe('live');
+		expect(socket.take()).toEqual([]);
+	});
+
+	test("someone else's edit does not make this browser saving", () => {
+		const harness = start();
+		const socket = goLive(harness);
+
+		socket.receive({ type: 'elements', epoch: 1, elements: [element('theirs', 1)] });
+		harness.session.localChange();
+		vi.advanceTimersByTime(1000);
+
+		expect(harness.state().status).toBe('live');
+		expect(socket.take()).toEqual([]);
+	});
+
+	test('saved stays until the next edit, and is not shown again after a reconnect', () => {
+		const harness = start();
+		const first = goLive(harness);
+		harness.editor.draw(element('a', 1));
+		harness.session.localChange();
+		vi.advanceTimersByTime(SEND_INTERVAL_MS);
+		saved(first, 1);
+		harness.session.localChange();
+		expect(harness.state().status).toBe('saved');
+
+		first.drop();
+		expect(harness.state().status).toBe('disconnected');
+		vi.advanceTimersByTime(RETRY_DELAYS_MS[0]!);
+		const socket = goLive(harness, [element('a', 1)]);
+
+		// Nothing was waiting, so nothing is asked, and the new socket has saved nothing.
+		expect(socket.take()).toEqual([]);
+		expect(harness.state().status).toBe('live');
+	});
+
+	test('an edit the last socket never heard saved for is asked about on the next', () => {
+		const harness = start();
+		const first = goLive(harness);
+		harness.editor.draw(element('a', 1));
+		harness.session.localChange();
+		vi.advanceTimersByTime(SEND_INTERVAL_MS);
+		first.drop();
+		vi.advanceTimersByTime(RETRY_DELAYS_MS[0]!);
+
+		// The server did get the edit. Whether it reached the disk is not known.
+		const socket = goLive(harness, [element('a', 1)]);
+
+		// An empty batch with a number: a question the server answers with `saved`.
+		expect(socket.take()).toEqual([{ type: 'elements', epoch: 1, elements: [], seq: 2 }]);
+		expect(harness.state().status).toBe('saving');
+		saved(socket, 2);
+		expect(harness.state().status).toBe('saved');
+	});
+
+	test('an answer from before the drop is not heard on the dead socket', () => {
+		const harness = start();
+		const first = goLive(harness);
+		harness.editor.draw(element('a', 1));
+		harness.session.localChange();
+		vi.advanceTimersByTime(SEND_INTERVAL_MS);
+		first.drop();
+
+		saved(first, 1);
+
+		expect(harness.state().status).toBe('disconnected');
+	});
+
+	test('a viewer is never saving', () => {
+		const harness = start();
+		const socket = goLive(harness, [], true);
+
+		harness.editor.draw(element('a', 1));
+		harness.session.localChange();
+		vi.advanceTimersByTime(1000);
+		saved(socket, 1);
+
+		expect(harness.state().status).toBe('live');
+		expect(socket.take()).toEqual([]);
+	});
+
+	test('a browser that turns out to be a viewer stops saying saving', () => {
+		const harness = start();
+		const socket = goLive(harness);
+		harness.editor.draw(element('a', 1));
+		harness.session.localChange();
+		vi.advanceTimersByTime(SEND_INTERVAL_MS);
+		expect(harness.state().status).toBe('saving');
+
+		socket.receive({ type: 'error', error: 'view_only', message: 'Editing needs the token.' });
+
+		expect(harness.state()).toMatchObject({ status: 'live', viewOnly: true });
+	});
+
+	test('a scene of another epoch ends the wait for what was sent to the old one', () => {
+		const harness = start();
+		const socket = goLive(harness);
+		harness.editor.draw(element('a', 1));
+		harness.session.localChange();
+		vi.advanceTimersByTime(SEND_INTERVAL_MS);
+		socket.take();
+		expect(harness.state().status).toBe('saving');
+
+		socket.receive({ type: 'scene', epoch: 2, elements: [element('restored', 1)], files: [] });
+
+		expect(harness.state().status).toBe('live');
+		expect(socket.take()).toEqual([]);
+	});
+
+	test('an edit the server refuses stays unsaved', () => {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const harness = start();
+		const socket = goLive(harness);
+		harness.editor.draw(element('a', 1));
+		harness.session.localChange();
+		vi.advanceTimersByTime(SEND_INTERVAL_MS);
+
+		socket.receive({
+			type: 'error',
+			error: 'scene_too_large',
+			message: "The slot's scene may be at most 52428800 bytes."
+		});
+
+		// No `saved` came for it, and the bar does not pretend one did.
+		expect(harness.state().status).toBe('saving');
+		expect(warn).toHaveBeenCalledWith(
+			"segl: scene_too_large: The slot's scene may be at most 52428800 bytes."
+		);
+	});
+});
+
+describe('images', () => {
+	const FILE_ID = 'f'.repeat(40);
+	const FILE: CanvasFile = {
+		id: FILE_ID,
+		mimeType: 'image/png',
+		dataURL: 'data:image/png;base64,AAAA'
+	};
+	const REF: FileRef = { id: FILE_ID, hash: hashOf(FILE_ID), mimeType: 'image/png' };
+	const picture = (version = 1): WireElement => ({
+		...element('picture', version),
+		fileId: FILE_ID
+	});
+
+	/** Let the transfers that have ended be heard. */
+	async function settle(): Promise<void> {
+		await vi.advanceTimersByTimeAsync(0);
+	}
+
+	test('a placed image is sent, its file is uploaded, and the server is told which it is', async () => {
+		// T-007, the browser's half.
+		const harness = start();
+		const socket = goLive(harness);
+
+		harness.editor.place(picture(), FILE);
+		harness.session.localChange();
+
+		expect(harness.state().status).toBe('saving');
+		expect(harness.transport.uploads).toEqual([FILE]);
+		await vi.advanceTimersByTimeAsync(SEND_INTERVAL_MS);
+
+		// Two messages, each with a number of its own. This upload ended before
+		// the edit's 30 ms were over, so the file was named first. Either order
+		// is taken by the server.
+		expect(socket.take()).toEqual([
+			{ type: 'files', epoch: 1, files: [REF], seq: 1 },
+			{ type: 'elements', epoch: 1, elements: [picture()], seq: 2 }
+		]);
+
+		// One of the two being saved is not the image being saved.
+		socket.receive({ type: 'saved', epoch: 1, savedAt: 't', seq: 1 });
+		expect(harness.state().status).toBe('saving');
+		socket.receive({ type: 'saved', epoch: 1, savedAt: 't', seq: 2 });
+		expect(harness.state().status).toBe('saved');
+		// And it is done once.
+		harness.session.localChange();
+		await settle();
+		expect(harness.transport.uploads).toHaveLength(1);
+		expect(socket.take()).toEqual([]);
+	});
+
+	test('while the upload is under way the status is saving, whatever else is saved', async () => {
+		const harness = start();
+		const socket = goLive(harness);
+		let finish: (hash: string) => void = () => {};
+		harness.transport.upload = (file) => {
+			harness.transport.uploads.push(file);
+			return new Promise((resolve) => {
+				finish = resolve;
+			});
+		};
+		harness.editor.place(picture(), FILE);
+		harness.session.localChange();
+		vi.advanceTimersByTime(SEND_INTERVAL_MS);
+		socket.receive({ type: 'saved', epoch: 1, savedAt: 't', seq: 1 });
+
+		expect(harness.state().status).toBe('saving');
+		expect(socket.take()).toMatchObject([{ type: 'elements' }]);
+
+		finish(REF.hash);
+		await settle();
+		expect(socket.take()).toEqual([{ type: 'files', epoch: 1, files: [REF], seq: 2 }]);
+	});
+
+	test('an image someone else placed is fetched once the server names its file', async () => {
+		const harness = start();
+		const socket = goLive(harness);
+
+		socket.receive({ type: 'elements', epoch: 1, elements: [picture()] });
+		harness.session.localChange();
+		expect(harness.transport.downloads).toEqual([]);
+		socket.receive({ type: 'files', epoch: 1, files: [REF] });
+		await settle();
+
+		expect(harness.transport.downloads).toEqual([REF]);
+		expect(harness.editor.files.get(FILE_ID)).toEqual({
+			id: FILE_ID,
+			mimeType: 'image/png',
+			dataURL: `data:image/png;base64,${REF.hash.slice(0, 8)}`
+		});
+		// Nothing of it is uploaded or sent back, and the status never moved.
+		harness.session.localChange();
+		vi.advanceTimersByTime(1000);
+		expect(harness.transport.uploads).toEqual([]);
+		expect(socket.take()).toEqual([]);
+		expect(harness.state().status).toBe('live');
+	});
+
+	test('the file list that came with the loaded scene is fetched before the socket opens', async () => {
+		const editor = new FakeEditor();
+		editor.draw(picture());
+		const transport = new FakeTransport();
+
+		const session = new CollabSession({
+			url: URL,
+			epoch: 1,
+			editor,
+			transport,
+			files: [REF],
+			hello: () => ({ clientId: 'client-1', displayName: 'Guest1', editToken: '' }),
+			onState: () => {},
+			createSocket: (url) => new FakeSocket(url)
+		});
+		await settle();
+
+		expect(transport.downloads).toEqual([REF]);
+		expect(editor.files.has(FILE_ID)).toBe(true);
+		session.stop();
+	});
+
+	test('the files of the scene the socket sends are fetched', async () => {
+		const harness = start();
+		const socket = harness.socket();
+		socket.open();
+		welcome(socket);
+
+		socket.receive({ type: 'scene', epoch: 1, elements: [picture()], files: [REF] });
+		await settle();
+
+		expect(harness.transport.downloads).toEqual([REF]);
+		expect(harness.editor.files.has(FILE_ID)).toBe(true);
+		expect(socket.take()).toEqual([]);
+	});
+
+	test('a viewer fetches files and uploads none', async () => {
+		const harness = start();
+		const socket = goLive(harness, [], true);
+		harness.editor.place(
+			{ ...element('mine', 1), fileId: 'e'.repeat(40) },
+			{ ...FILE, id: 'e'.repeat(40) }
+		);
+		socket.receive({ type: 'elements', epoch: 1, elements: [picture()] });
+		socket.receive({ type: 'files', epoch: 1, files: [REF] });
+		harness.session.localChange();
+		await settle();
+
+		expect(harness.transport.downloads).toEqual([REF]);
+		expect(harness.transport.uploads).toEqual([]);
+		expect(socket.take()).toEqual([]);
+	});
+
+	test('files of another epoch are left alone', async () => {
+		const harness = start();
+		const socket = goLive(harness, [picture()]);
+
+		socket.receive({ type: 'files', epoch: 2, files: [REF] });
+		await settle();
+
+		expect(harness.transport.downloads).toEqual([]);
+	});
+
+	test('a file uploaded while the socket was down is named once the scene is back', async () => {
+		const harness = start();
+		goLive(harness).drop();
+		harness.editor.place(picture(), FILE);
+		harness.session.localChange();
+		await settle();
+		// The upload needs no socket. Naming the file does.
+		expect(harness.transport.uploads).toEqual([FILE]);
+
+		vi.advanceTimersByTime(RETRY_DELAYS_MS[0]!);
+		const socket = goLive(harness);
+
+		expect(socket.take()).toEqual([
+			{ type: 'elements', epoch: 1, elements: [picture()], seq: 1 },
+			{ type: 'files', epoch: 1, files: [REF], seq: 2 }
+		]);
+		expect(harness.state().status).toBe('saving');
+	});
+
+	test('a file the server forgot with a restart is named again, without a second upload', async () => {
+		const harness = start();
+		const first = goLive(harness);
+		harness.editor.place(picture(), FILE);
+		harness.session.localChange();
+		await vi.advanceTimersByTimeAsync(SEND_INTERVAL_MS);
+		first.receive({ type: 'saved', epoch: 1, savedAt: 't', seq: 1 });
+		first.drop();
+		vi.advanceTimersByTime(RETRY_DELAYS_MS[0]!);
+
+		// The element reached the disk. The file list did not.
+		const socket = goLive(harness, [picture()]);
+
+		expect(socket.take()).toEqual([
+			{ type: 'elements', epoch: 1, elements: [], seq: 3 },
+			{ type: 'files', epoch: 1, files: [REF], seq: 4 }
+		]);
+		expect(harness.transport.uploads).toHaveLength(1);
+	});
+
+	test('bytes the server does not have are uploaded again, and named again', async () => {
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const harness = start();
+		const socket = goLive(harness);
+		harness.editor.place(picture(), FILE);
+		harness.session.localChange();
+		await vi.advanceTimersByTimeAsync(SEND_INTERVAL_MS);
+		socket.take();
+
+		socket.receive({ type: 'error', error: 'unknown_file', message: 'Upload first.' });
+		await settle();
+
+		expect(harness.transport.uploads).toEqual([FILE, FILE]);
+		expect(socket.take()).toEqual([{ type: 'files', epoch: 1, files: [REF], seq: 3 }]);
+		expect(harness.state().status).toBe('saving');
+	});
+
+	test('an upload that fails is tried again, and the status stays saving meanwhile', async () => {
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const harness = start();
+		const socket = goLive(harness);
+		harness.transport.failures.push(new TypeError('Failed to fetch'));
+		harness.editor.place(picture(), FILE);
+		harness.session.localChange();
+		await vi.advanceTimersByTimeAsync(SEND_INTERVAL_MS);
+		socket.receive({ type: 'saved', epoch: 1, savedAt: 't', seq: 1 });
+
+		expect(harness.state().status).toBe('saving');
+		expect(socket.take()).toMatchObject([{ type: 'elements' }]);
+
+		await vi.advanceTimersByTimeAsync(RETRY_MS);
+
+		expect(harness.transport.uploads).toEqual([FILE, FILE]);
+		expect(socket.take()).toEqual([{ type: 'files', epoch: 1, files: [REF], seq: 2 }]);
+	});
+
+	test('a stopped session hears nothing of a transfer that ends afterwards', async () => {
+		const harness = start();
+		const socket = goLive(harness);
+		harness.editor.place(picture(), FILE);
+		harness.session.localChange();
+		// And an image of someone else's, whose file is on its way.
+		const theirs = 'e'.repeat(40);
+		socket.receive({
+			type: 'elements',
+			epoch: 1,
+			elements: [{ ...element('theirs', 1), fileId: theirs }]
+		});
+		socket.receive({ type: 'files', epoch: 1, files: [{ ...REF, id: theirs }] });
+		expect(harness.transport.downloads).toHaveLength(1);
+
+		harness.session.stop();
+		await vi.advanceTimersByTimeAsync(1000);
+		harness.session.localChange();
+
+		// The canvas is being taken down: nothing is handed to it, or sent.
+		expect(harness.editor.files.has(theirs)).toBe(false);
+		expect(socket.take()).toEqual([]);
+		expect(harness.transport.uploads).toHaveLength(1);
 	});
 });
 

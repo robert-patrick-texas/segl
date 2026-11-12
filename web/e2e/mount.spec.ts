@@ -26,9 +26,9 @@
 import { expect, type Page } from '@playwright/test';
 import {
 	collabUrl,
-	connectionStatus,
 	elementIds,
 	expectEditor,
+	expectLive,
 	mountOf,
 	nameButton,
 	sceneDocument,
@@ -86,7 +86,7 @@ test.describe('a new visitor', () => {
 		await expectEditor(page);
 		await expect(page.getByRole('heading', { level: 1 })).toHaveText(`Workspace ${SLOTS.tools}`);
 		// The collaboration socket is under the mount too, on the page's own host.
-		await expect(connectionStatus(page)).toHaveText('Live');
+		await expectLive(page);
 		expect(traffic.sockets).toEqual([collabUrl(baseURL, SLOTS.tools)]);
 		const before = await elementIds(page);
 		// The label came from this segl, under the mount.
@@ -136,6 +136,6 @@ test('opening the root stays inside the mount too', async ({ page, baseURL }) =>
 	expect(traffic.outside).toEqual([]);
 	expect(traffic.failed).toEqual([]);
 	expect(traffic.local.filter((path) => !path.startsWith(basePath))).toEqual([]);
-	await expect(connectionStatus(page)).toHaveText('Live');
+	await expectLive(page);
 	expect(traffic.sockets).toEqual([collabUrl(baseURL, 1)]);
 });

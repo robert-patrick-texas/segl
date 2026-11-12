@@ -15,8 +15,9 @@
 """The collaboration WebSocket, ``/collab?slot=N`` (docs/API.md, "WebSocket").
 
 ``Rooms`` holds the nine rooms and loads each from its head the first time it
-is asked for. ``serve`` runs one connection: it waits for ``hello``, joins the
-room, and then passes each message to ``Room.receive`` until the browser goes.
+is asked for, with the ``Saver`` that writes it back. ``serve`` runs one
+connection: it waits for ``hello``, joins the room, and then passes each
+message to ``Room.receive`` until the browser goes.
 
 What the room has for a browser goes into that connection's outbox, and one
 task per connection writes it to the socket. A broadcast therefore never waits
@@ -34,10 +35,12 @@ from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from segl.assets import AssetStore
 from segl.config import Settings
 from segl.origin import refuse_websocket
 from segl.repository import SLOT_NUMBERS, Repository, Slot
-from segl.room import Connection, Room, encode, may_edit, parse_hello
+from segl.room import Connection, Room, encode, may_edit, parse_files, parse_hello
+from segl.saver import Saver
 
 # How long a new connection has to say hello.
 HELLO_SECONDS = 10.0
@@ -61,12 +64,15 @@ class Rooms:
     """The room of each slot, made from the slot's head when first needed.
 
     A room stays for the life of the process, so the nine of them are all
-    there will ever be.
+    there will ever be. Each has a saver, which writes its scene to the head.
     """
 
-    def __init__(self, repository: Repository) -> None:
+    def __init__(self, repository: Repository, settings: Settings, assets: AssetStore) -> None:
+        self.assets = assets
         self._repository = repository
+        self._settings = settings
         self._rooms: dict[int, Room] = {}
+        self._savers: list[Saver] = []
         self._locks = {number: asyncio.Lock() for number in SLOT_NUMBERS}
 
     async def room(self, slot: int) -> Room:
@@ -75,9 +81,23 @@ class Rooms:
             room = self._rooms.get(slot)
             if room is None:
                 # The repository blocks, so it is called from a worker thread.
-                room = await run_in_threadpool(self._load, slot)
+                room, saved_at = await run_in_threadpool(self._load, slot)
                 self._rooms[slot] = room
+                self._savers.append(
+                    Saver(
+                        room,
+                        self._repository,
+                        head_flush_seconds=self._settings.head_flush_seconds,
+                        history_interval_seconds=self._settings.history_interval_seconds,
+                        saved_at=saved_at,
+                    )
+                )
             return room
+
+    async def close(self) -> None:
+        """Write every room's unwritten scene. segl is stopping."""
+        for saver in self._savers:
+            await saver.close()
 
     async def retitle(self, slot: int, title: str) -> Slot:
         """Store a slot's new title, and tell the slot's room.
@@ -92,10 +112,23 @@ class Rooms:
                 room.retitle(renamed.title)
             return renamed
 
-    def _load(self, slot: int) -> Room:
+    def _load(self, slot: int) -> tuple[Room, str]:
+        """Return the room of a slot as it is stored, and when its head was written."""
         found = self._repository.get_slot(slot)
         head = self._repository.get_head(slot)
-        return Room.from_head(slot, found.title, head.epoch, head.scene_json)
+        files = [
+            {"id": file.file_id, "hash": file.hash, "mimeType": file.media_type}
+            for file in self._repository.list_files(slot)
+        ]
+        room = Room.from_head(
+            slot,
+            found.title,
+            head.epoch,
+            head.scene_json,
+            files=files,
+            max_scene_bytes=self._settings.max_scene_bytes,
+        )
+        return room, head.saved_at
 
 
 class _Outbox:
@@ -179,9 +212,25 @@ async def _write(websocket: WebSocket, outbox: _Outbox) -> None:
         await websocket.send_text(text)
 
 
-async def _receive(websocket: WebSocket, room: Room, connection: Connection) -> None:
+async def _uploaded(assets: AssetStore, message: object) -> frozenset[str]:
+    """Return the hashes a ``files`` message names whose bytes are stored.
+
+    The room reads no disk, so the look is here, in a worker thread.
+    """
+    if not isinstance(message, dict) or message.get("type") != "files":
+        return frozenset()
+    files = parse_files(message.get("files"))
+    if files is None:
+        return frozenset()
+    return await run_in_threadpool(assets.present, [entry["hash"] for entry in files])
+
+
+async def _receive(
+    websocket: WebSocket, room: Room, connection: Connection, assets: AssetStore
+) -> None:
     while True:
-        room.receive(connection, await _read(websocket))
+        message = await _read(websocket)
+        room.receive(connection, message, await _uploaded(assets, message))
 
 
 async def serve(websocket: WebSocket, rooms: Rooms, settings: Settings) -> None:
@@ -220,7 +269,7 @@ async def serve(websocket: WebSocket, rooms: Rooms, settings: Settings) -> None:
     # Two tasks, so that a browser that stops reading does not stop segl
     # hearing that it left. The first to end ends the connection.
     tasks = {
-        asyncio.create_task(_receive(websocket, room, connection)),
+        asyncio.create_task(_receive(websocket, room, connection, rooms.assets)),
         asyncio.create_task(_write(websocket, outbox)),
     }
     try:

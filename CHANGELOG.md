@@ -4,7 +4,7 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
-The project is specified, licensed, and public on GitHub. A Python service reads its settings, keeps nine slots in SQLite, and serves them, and a browser application shows each slot as an Excalidraw canvas under the segl bar, where each browser has a display name. People on the same slot draw together live. Nothing drawn is saved yet: a restart of segl loses it. CI and a dev container check both, including through nginx at `/board/`.
+The project is specified, licensed, and public on GitHub. A Python service reads its settings, keeps nine slots in SQLite, and serves them, and a browser application shows each slot as an Excalidraw canvas under the segl bar, where each browser has a display name. People on the same slot draw together live, and what they draw, images included, is saved and survives a restart. CI and a dev container check both, including through nginx at `/board/`.
 
 ### New
 
@@ -45,6 +45,14 @@ The project is specified, licensed, and public on GitHub. A Python service reads
 - The edit gate on the server (S-008). With `edit_token` set, a connection whose `hello` lacks the token watches live and cannot change elements, and a `PATCH` without the `X-Segl-Edit-Token` header is a `403` with `view_only`. The page puts the editor in view mode for such a connection.
 - The Origin check. A mutation, or a WebSocket handshake, whose `Origin` does not match `Host` is refused with `403` and `bad_origin`.
 - `websockets` 17.4 is a dependency: uvicorn serves the socket with it, and the tests connect with its client (D2-027).
+- Saving (S-004). segl writes a slot's scene to its head 0.2 seconds after an edit (`head_flush_seconds`), when the last browser leaves the slot, and when it is stopped with SIGTERM. `src/segl/saver.py` is the flush, and `docs/DATA-MODEL.md` has its rules. A stored scene keeps its deleted elements, so a restart does not forget a deletion (D2-029).
+- `saved`. A browser numbers the messages it sends (`seq`), and the server answers `saved` with the number of the newest one that is on its disk. The bar says `Saving…` from an edit until that answer, and then `Saved` (S-013).
+- History rows (the storage of S-005). A flush adds a revision at most once a second while people draw (`history_interval_seconds`), and always when the last browser leaves and when segl stops. The newest 50 per slot are kept (`history_limit`). No route lists them yet.
+- Images (S-012, D2-028). The bytes of an image are a file under `assets_dir`, named by their SHA-256. `POST /api/v1/slots/{n}/assets` stores them, `GET /api/v1/assets/{hash}` returns them, and a `files` message on the socket says which file id they are. The other browsers on the slot fetch the file and draw the image, and a browser that loads the slot later gets the file list with the scene. Migration `0002_slot_files.sql` adds the list to the database.
+- An uploaded file is served as `application/octet-stream` with `nosniff` and a sandboxing `Content-Security-Policy`, whatever was uploaded. An upload needs the edit token when one is set, and names one of the editor's image types (`unsupported_media_type` otherwise).
+- The elements of one slot are limited to `max_scene_bytes` together. An edit that would go over is refused with `scene_too_large`.
+- segl makes `assets_dir` when it starts, and stops with exit status 1 when it cannot write there. A backup is the database file and that folder together.
+- Browser tests for all of it: `saving.spec.ts`, `images.spec.ts`, and `durability.spec.ts`, which kills a segl of its own with SIGKILL and starts it again (T-005, T-006, T-007).
 
 ### Changed
 
@@ -61,4 +69,7 @@ The project is specified, licensed, and public on GitHub. A Python service reads
 - The browser tests run one at a time, and no longer expect an empty slot: the slots are shared, and a room keeps what a test drew. `web/e2e/pages.ts` says which slot each kind of test may change.
 - A participant has no `color` in the WebSocket messages. The pinned editor colors a cursor from the connection id and takes no other. `welcome` gained `connectionId`, and the client's `presence` is a cursor alone.
 - `GET` and `PATCH` of `/api/v1/slots/{n}` are one route, so a `405` there names both in `Allow`.
+- `GET /api/v1/slots/{n}/scene` returns the head as of the last flush, with the deleted elements and the files its images name. Before, the head never changed after startup.
+- The `elements` message takes an optional `seq`, and may be an empty list. `scene` carries the slot's files.
+- The bar's connection state has five values: connecting, live, saving, saved, and disconnected. The browser tests wait for "in the room", which is any of the middle three, where they used to wait for `Live`.
 - The license header moved from the agent rules to `CONTRIBUTING.md`. The rule to comment out superseded code was removed.

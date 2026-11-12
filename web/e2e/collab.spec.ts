@@ -28,6 +28,7 @@ import {
 	drawRectangle,
 	elementIds,
 	elementOf,
+	expectLive,
 	joinSlot,
 	nameButton,
 	openPeople,
@@ -186,7 +187,7 @@ test('an element one browser moved and the other deleted stays gone', async ({ p
 	const kept = await drawRectangle(page, 0, 150);
 	for (const browser of [page, other]) {
 		await browser.reload();
-		await expect(connectionStatus(browser)).toHaveText('Live');
+		await expectLive(browser);
 		await expectElement(browser, kept);
 		expect(await elementIds(browser)).not.toContain(moved);
 	}
@@ -224,7 +225,8 @@ test('a killed socket shows disconnected, and edits made meanwhile reconcile', a
 	expect(await elementIds(page)).not.toContain(meanwhile);
 
 	network.restore();
-	await expect(connectionStatus(page)).toHaveText('Live');
+	// `Live`, and then `Saving…` and `Saved`: it has the offline edits to send.
+	await expectLive(page);
 	await expect(presenceCount(other)).toHaveText('2');
 
 	// What was drawn while down arrives on each side.

@@ -19,13 +19,14 @@
  * `document()` is the scene document as the editor serializes it for storage.
  * It is also how the bootstrap fixture, `src/segl/empty_scene.json`, was
  * captured (docs/DEVELOPMENT.md). `reconcile()` is the editor's own rule for
- * which copy of an element is kept. The handle exposes nothing the page's own
- * user cannot already see, and changes nothing.
+ * which copy of an element is kept. `images()` says which images have their
+ * files. The handle exposes nothing the page's own user cannot already see,
+ * and changes nothing.
  */
 import { serializeAsJSON } from '@excalidraw/excalidraw';
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
 import type { WireElement } from '../collab/elements.ts';
-import { reconcileWith } from './editor.ts';
+import { imageFiles, reconcileWith } from './editor.ts';
 
 export interface CanvasHandle {
 	/** The scene document, as JSON text. */
@@ -41,6 +42,12 @@ export interface CanvasHandle {
 	 * each, its `id`, the `username` beside its cursor, and the `pointer`.
 	 */
 	peers(): string;
+	/**
+	 * The images on the canvas that are not deleted, as JSON text: for each,
+	 * the element's `id`, its `fileId`, where it is, and the `mimeType` of its
+	 * file, or null while the canvas does not hold the file.
+	 */
+	images(): string;
 }
 
 declare global {
@@ -69,7 +76,24 @@ export function publishHandle(api: ExcalidrawImperativeAPI): void {
 					username,
 					pointer: pointer ?? null
 				}))
-			)
+			),
+		images: () => {
+			const files = imageFiles(api);
+			return JSON.stringify(
+				api
+					.getSceneElements()
+					.filter((element) => element.type === 'image')
+					.map(({ id, fileId, x, y, width, height }) => ({
+						id,
+						fileId,
+						x,
+						y,
+						width,
+						height,
+						mimeType: (fileId && files.get(fileId)?.mimeType) || null
+					}))
+			);
+		}
 	};
 }
 

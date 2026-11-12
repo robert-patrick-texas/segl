@@ -219,7 +219,8 @@ def test_the_command_opens_the_configured_database(
     database = tmp_path / "var" / "segl.sqlite"
     config = tmp_path / "segl.toml"
     config.write_text(
-        f'database = "{database}"\nhistory_limit = 7\ndisplay_names = "{DISPLAY_NAMES_FILE}"\n',
+        f'database = "{database}"\nhistory_limit = 7\ndisplay_names = "{DISPLAY_NAMES_FILE}"\n'
+        f'assets_dir = "{tmp_path / "var" / "assets"}"\n',
         encoding="utf-8",
     )
     seen: list[int] = []

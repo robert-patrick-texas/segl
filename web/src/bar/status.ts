@@ -15,13 +15,21 @@
 /** What the bar says about the connection to the slot's room (S-013). */
 import type { ConnectionStatus } from '../collab/session.ts';
 
-/** `saving` and `saved` join these in T07, when the server reports a flush. */
+/**
+ * `Saved` is the server's word: every edit this browser sent is in the slot's
+ * head, on the server's disk. `Saving…` is an edit, or the file of an image,
+ * that is not there yet.
+ */
 export function statusLabel(status: ConnectionStatus): string {
 	switch (status) {
 		case 'connecting':
 			return 'Connecting…';
 		case 'live':
 			return 'Live';
+		case 'saving':
+			return 'Saving…';
+		case 'saved':
+			return 'Saved';
 		case 'disconnected':
 			return 'Disconnected';
 	}

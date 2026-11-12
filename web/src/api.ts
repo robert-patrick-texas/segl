@@ -14,6 +14,7 @@
 
 /** The HTTP routes this page calls (docs/API.md). Every URL is under segl's root. */
 
+import { isHash, parseFileRefs, type FileRef } from './collab/files.ts';
 import { apiUrl, type AppConfig } from './config.ts';
 
 export interface SlotInfo {
@@ -29,7 +30,8 @@ export interface SlotScene {
 	epoch: number;
 	savedAt: string;
 	editorLabel: string;
-	files: unknown[];
+	/** Which bytes the file ids of the scene's images mean. */
+	files: FileRef[];
 }
 
 /** A response segl sent with an error status, or one that is not what docs/API.md says. */
@@ -144,8 +146,53 @@ export async function fetchScene(
 		epoch: body.epoch,
 		savedAt: String(body.savedAt ?? ''),
 		editorLabel: String(body.editorLabel ?? ''),
-		files: Array.isArray(body.files) ? body.files : []
+		// A list this page cannot read leaves the images without their files,
+		// and the rest of the scene still loads.
+		files: parseFileRefs(body.files) ?? []
 	};
+}
+
+/**
+ * Store the bytes of an image's file and return their SHA-256, the name they
+ * are fetched by. `mimeType` is the kind of image the editor says it is.
+ */
+export async function uploadAsset(
+	config: AppConfig,
+	slot: number,
+	bytes: Uint8Array,
+	mimeType: string,
+	editToken: string,
+	signal?: AbortSignal
+): Promise<string> {
+	const url = apiUrl(config, `slots/${slot}/assets`);
+	const body = (await requestJson(url, {
+		method: 'POST',
+		headers: {
+			'Content-Type': mimeType,
+			...(editToken === '' ? {} : { [EDIT_TOKEN_HEADER]: editToken })
+		},
+		// A copy in a buffer of its own: `bytes` may be a view into a larger one.
+		body: new Blob([bytes.slice()]),
+		signal
+	})) as { hash?: unknown };
+	if (!isHash(body?.hash)) {
+		throw new ApiError(200, 'unexpected', `${url.pathname} did not return a hash`);
+	}
+	return body.hash;
+}
+
+/** The bytes stored under a hash. The server sends them as bytes and nothing else. */
+export async function fetchAsset(
+	config: AppConfig,
+	hash: string,
+	signal?: AbortSignal
+): Promise<Uint8Array> {
+	const url = apiUrl(config, `assets/${hash}`);
+	const response = await fetch(url, { signal });
+	if (!response.ok) {
+		throw new ApiError(response.status, 'not_found', `${url.pathname} answered ${response.status}`);
+	}
+	return new Uint8Array(await response.arrayBuffer());
 }
 
 /**

@@ -22,17 +22,18 @@ from http import HTTPStatus
 from typing import Any
 
 from fastapi import FastAPI, Request, WebSocket
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 from starlette.staticfiles import StaticFiles
 
+from segl.assets import MEDIA_TYPES, AssetStore
 from segl.collab import Rooms, serve
 from segl.config import Settings
 from segl.names import AllocationLimit, load_display_names, retry_after
 from segl.origin import OriginCheck
 from segl.repository import InvalidSlot, Repository, Slot
-from segl.room import may_edit
+from segl.room import encode, may_edit, named_files
 from segl.versions import app_version
 from segl.web import ROOT_PAGE, SLOT_PAGE, WebBuild, load_web_build, render_page
 
@@ -44,6 +45,17 @@ _SLOT_TEXTS = {str(number): number for number in range(1, 10)}
 MAX_TITLE_LENGTH = 80
 # The largest body of a title change. A title is at most 80 characters.
 _TITLE_BODY_BYTES = 4096
+
+# An uploaded file is whatever a browser sent. It is served as bytes and
+# nothing else: never as a page, an image, or a script of this site, whatever
+# its content, and a browser asked to open one may run nothing in it. The page
+# fetches the bytes and hands them to the editor itself. A file is named by its
+# hash, so a copy a browser holds never goes stale.
+_ASSET_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "default-src 'none'; sandbox",
+    "Cache-Control": "max-age=31536000, immutable",
+}
 
 
 def _error(status: int, code: str, message: str, headers: Any = None) -> JSONResponse:
@@ -81,13 +93,26 @@ def clean_title(value: object) -> str | None:
     return title
 
 
-async def _json_object(request: Request, limit: int) -> dict[str, Any] | JSONResponse:
-    """Return a request's body as a JSON object, or the error to answer with."""
-    body = b""
+async def _body(request: Request, limit: int) -> bytes | JSONResponse:
+    """Return a request's body, or the error to answer with when it is over ``limit`` bytes."""
+    too_large = _error(413, "payload_too_large", f"The body is larger than {limit} bytes.")
+    declared = request.headers.get("content-length", "")
+    if declared.isascii() and declared.isdigit() and int(declared) > limit:
+        # Refused before any of it is read.
+        return too_large
+    body = bytearray()
     async for chunk in request.stream():
         body += chunk
         if len(body) > limit:
-            return _error(413, "payload_too_large", f"The body is larger than {limit} bytes.")
+            return too_large
+    return bytes(body)
+
+
+async def _json_object(request: Request, limit: int) -> dict[str, Any] | JSONResponse:
+    """Return a request's body as a JSON object, or the error to answer with."""
+    body = await _body(request, limit)
+    if isinstance(body, JSONResponse):
+        return body
     try:
         parsed = json.loads(body)
     except ValueError, RecursionError:
@@ -152,7 +177,8 @@ def create_app(settings: Settings, repository: Repository) -> FastAPI:
     The application closes the repository when it shuts down. It serves the
     web application when ``settings.web_dir`` holds a build, and the API alone
     when it does not. The display-name words are read here, once, so a
-    replaced file takes a restart.
+    replaced file takes a restart. Uploaded files go under
+    ``settings.assets_dir``, which is made when the first one arrives.
 
     Raises:
         DisplayNamesError: When ``display_names`` is missing or has no usable words.
@@ -166,8 +192,12 @@ def create_app(settings: Settings, repository: Repository) -> FastAPI:
         yield
         # The one place that runs on every stop. After SIGTERM, uvicorn ends
         # the process as soon as this returns, so code after uvicorn.run does
-        # not run. Closing folds the write-ahead log back into the database file.
-        repository.close()
+        # not run. First every room's unwritten scene goes to its head. Then
+        # closing folds the write-ahead log back into the database file.
+        try:
+            await rooms.close()
+        finally:
+            repository.close()
 
     # FastAPI's generated documentation pages are off. docs/API.md is the
     # contract, and those pages use absolute URLs that a path mount would break.
@@ -186,7 +216,9 @@ def create_app(settings: Settings, repository: Repository) -> FastAPI:
     )
     app.state.settings = settings
     app.state.display_names = words
-    rooms = Rooms(repository)
+    assets = AssetStore(settings.assets_dir)
+    app.state.assets = assets
+    rooms = Rooms(repository, settings, assets)
     app.state.rooms = rooms
     # Before every route: a mutation or a WebSocket handshake from a page on
     # another site is refused with bad_origin (docs/SECURITY.md).
@@ -249,20 +281,56 @@ def create_app(settings: Settings, repository: Repository) -> FastAPI:
         return JSONResponse(_slot_json(await rooms.retitle(number, title)))
 
     @app.get("/api/v1/slots/{n}/scene")
-    def scene(n: str) -> JSONResponse:
-        head = repository.get_head(_slot_number(n))
-        # A JSONResponse, so the scene is not walked a second time by the
-        # framework's response model.
-        return JSONResponse(
-            {
-                "scene": json.loads(head.scene_json),
-                "epoch": head.epoch,
-                "savedAt": head.saved_at,
-                "editorLabel": head.editor_label,
-                # The head's uploaded files. T07 adds their storage.
-                "files": [],
-            }
-        )
+    def scene(n: str) -> Response:
+        number = _slot_number(n)
+        head = repository.get_head(number)
+        document = json.loads(head.scene_json)
+        elements = document.get("elements") if isinstance(document, dict) else None
+        files = [
+            {"id": file.file_id, "hash": file.hash, "mimeType": file.media_type}
+            for file in repository.list_files(number)
+        ]
+        body = {
+            "scene": document,
+            "epoch": head.epoch,
+            "savedAt": head.saved_at,
+            "editorLabel": head.editor_label,
+            # The files the head's images name, for the page to fetch.
+            "files": named_files(files, elements if isinstance(elements, list) else []),
+        }
+        # Written as the socket writes a scene: ASCII, so half of a surrogate
+        # pair in an element's text stays an escape. The framework's JSON
+        # response would fail on it, and the slot could not be loaded.
+        return Response(encode(body), media_type="application/json")
+
+    @app.post("/api/v1/slots/{n}/assets")
+    async def upload(n: str, request: Request) -> JSONResponse:
+        _slot_number(n)
+        if not may_edit(settings.edit_token, request.headers.get("x-segl-edit-token")):
+            return _error(403, "view_only", "Editing needs the edit token.")
+        media_type = request.headers.get("content-type", "").partition(";")[0].strip().lower()
+        if media_type not in MEDIA_TYPES:
+            return _error(
+                415,
+                "unsupported_media_type",
+                "An upload is an image, and its Content-Type says which kind.",
+            )
+        body = await _body(request, settings.max_asset_bytes)
+        if isinstance(body, JSONResponse):
+            return body
+        if not body:
+            return _error(400, "bad_request", "The body is the file's bytes.")
+        name = await run_in_threadpool(assets.save, body)
+        return JSONResponse({"hash": name, "mediaType": media_type})
+
+    @app.get("/api/v1/assets/{name}")
+    def asset(name: str) -> Response:
+        # The name is a SHA-256 or it is nothing: no path is built from any
+        # other text (docs/SECURITY.md).
+        path = assets.path(name)
+        if path is None or not path.is_file():
+            raise HTTPException(404, "Not Found")
+        return FileResponse(path, media_type="application/octet-stream", headers=_ASSET_HEADERS)
 
     @app.post("/api/v1/display-name")
     def display_name(request: Request) -> JSONResponse:

@@ -228,7 +228,8 @@
 	content: '';
 }
 
-.segl-bar__status[data-state='live']::before {
+.segl-bar__status[data-state='live']::before,
+.segl-bar__status[data-state='saved']::before {
 	background: #7fd1ae;
 }
 

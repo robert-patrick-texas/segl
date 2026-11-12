@@ -18,6 +18,7 @@
  * the page can trust a message's shape.
  */
 import { isWireElement, type WireElement } from './elements.ts';
+import { parseFileRefs, type FileRef } from './files.ts';
 
 /** A cursor, in the canvas's own coordinates. */
 export interface Cursor {
@@ -46,16 +47,23 @@ export type ServerMessage =
 			connectionId: string;
 			participants: Participant[];
 	  }
-	| { type: 'scene'; epoch: number; elements: WireElement[] }
+	| { type: 'scene'; epoch: number; elements: WireElement[]; files: FileRef[] }
 	| { type: 'elements'; epoch: number; elements: WireElement[] }
+	| { type: 'files'; epoch: number; files: FileRef[] }
+	| { type: 'saved'; epoch: number; savedAt: string; seq: number }
 	| { type: 'slot'; slot: number; title: string }
 	| ({ type: 'presence'; cursor: Cursor | null } & Participant)
 	| { type: 'presence-end'; connectionId: string }
 	| { type: 'error'; error: string; message: string };
 
+/**
+ * `seq` numbers the messages that change what is stored. The server answers
+ * with `saved` and the number of the newest one that is on the disk.
+ */
 export type ClientMessage =
 	| { type: 'hello'; clientId: string; displayName: string | null; editToken: string }
-	| { type: 'elements'; epoch: number; elements: WireElement[] }
+	| { type: 'elements'; epoch: number; elements: WireElement[]; seq: number }
+	| { type: 'files'; epoch: number; files: FileRef[]; seq: number }
 	| { type: 'presence'; cursor: Cursor | null }
 	| { type: 'rename'; displayName: string };
 
@@ -121,12 +129,32 @@ export function parseServerMessage(text: unknown): ServerMessage | null {
 				participants: people as Participant[]
 			};
 		}
-		case 'scene':
+		case 'scene': {
+			const list = elements(message['elements']);
+			// A scene from a segl older than the file list has none.
+			const files = parseFileRefs(message['files'] ?? []);
+			const { epoch } = message;
+			if (list === null || files === null || !Number.isInteger(epoch)) return null;
+			return { type: 'scene', epoch: epoch as number, elements: list, files };
+		}
 		case 'elements': {
 			const list = elements(message['elements']);
 			const { epoch } = message;
 			if (list === null || !Number.isInteger(epoch)) return null;
-			return { type: message['type'], epoch: epoch as number, elements: list };
+			return { type: 'elements', epoch: epoch as number, elements: list };
+		}
+		case 'files': {
+			const files = parseFileRefs(message['files']);
+			const { epoch } = message;
+			if (files === null || !Number.isInteger(epoch)) return null;
+			return { type: 'files', epoch: epoch as number, files };
+		}
+		case 'saved': {
+			const { epoch, savedAt, seq } = message;
+			if (!Number.isInteger(epoch) || typeof savedAt !== 'string' || !Number.isInteger(seq)) {
+				return null;
+			}
+			return { type: 'saved', epoch: epoch as number, savedAt, seq: seq as number };
 		}
 		case 'slot': {
 			const { slot, title } = message;

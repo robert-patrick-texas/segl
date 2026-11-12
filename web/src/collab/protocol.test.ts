@@ -30,6 +30,7 @@ const welcome = {
 	]
 };
 const rectangle = { id: 'a', version: 1, versionNonce: 5, type: 'rectangle' };
+const png = { id: 'f'.repeat(40), hash: 'a'.repeat(64), mimeType: 'image/png' };
 
 describe('parseServerMessage', () => {
 	test('a welcome', () => {
@@ -40,13 +41,50 @@ describe('parseServerMessage', () => {
 		expect(parse({ type: 'scene', epoch: 2, elements: [rectangle], files: [] })).toEqual({
 			type: 'scene',
 			epoch: 2,
-			elements: [rectangle]
+			elements: [rectangle],
+			files: []
 		});
 		expect(parse({ type: 'elements', epoch: 2, elements: [rectangle] })).toEqual({
 			type: 'elements',
 			epoch: 2,
 			elements: [rectangle]
 		});
+	});
+
+	test('a scene carries the files its images name', () => {
+		expect(parse({ type: 'scene', epoch: 1, elements: [], files: [png] })).toEqual({
+			type: 'scene',
+			epoch: 1,
+			elements: [],
+			files: [png]
+		});
+		// A scene from a segl older than the file list has no such field.
+		expect(parse({ type: 'scene', epoch: 1, elements: [] })).toEqual({
+			type: 'scene',
+			epoch: 1,
+			elements: [],
+			files: []
+		});
+	});
+
+	test('files another browser added', () => {
+		expect(parse({ type: 'files', epoch: 1, files: [png] })).toEqual({
+			type: 'files',
+			epoch: 1,
+			files: [png]
+		});
+		// Only the three fields are kept.
+		expect(parse({ type: 'files', epoch: 1, files: [{ ...png, dataURL: 'data:,' }] })).toEqual({
+			type: 'files',
+			epoch: 1,
+			files: [png]
+		});
+	});
+
+	test('saved, with the number of the newest message that is on the disk', () => {
+		const saved = { type: 'saved', epoch: 1, savedAt: '2026-11-12T09:00:00.000Z', seq: 4 };
+
+		expect(parse(saved)).toEqual(saved);
 	});
 
 	test('a slot title', () => {
@@ -92,8 +130,19 @@ describe('parseServerMessage', () => {
 
 	test.each([
 		// A type from a later segl is ignored, not an error.
+		{ type: 'restored', epoch: 2 },
 		{ type: 'saved', epoch: 1, savedAt: '2026-11-12T09:00:00.000Z' },
+		{ type: 'saved', epoch: 1, savedAt: '2026-11-12T09:00:00.000Z', seq: '4' },
+		{ type: 'saved', epoch: 1, savedAt: 1794474000, seq: 4 },
+		{ type: 'saved', epoch: null, savedAt: '2026-11-12T09:00:00.000Z', seq: 4 },
 		{ type: 'files', files: [] },
+		{ type: 'files', epoch: 1 },
+		{ type: 'files', epoch: 1, files: {} },
+		{ type: 'files', epoch: 1, files: [{ ...png, hash: 'A'.repeat(64) }] },
+		{ type: 'files', epoch: 1, files: [{ ...png, mimeType: 'text/html' }] },
+		{ type: 'files', epoch: 1, files: [png, { id: png.id }] },
+		{ type: 'scene', epoch: 1, elements: [], files: [{ ...png, id: '../x' }] },
+		{ type: 'scene', epoch: 1, elements: [], files: 'none' },
 		{},
 		[],
 		null,

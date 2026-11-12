@@ -25,6 +25,10 @@
  * loopback port, so the browser needs no name for it. Build first:
  * `npm run build`.
  *
+ * One spec is apart: `e2e/durability.spec.ts` is the `restart` project. Its
+ * tests kill the server and start it again, so each runs a segl of its own,
+ * on the next port, and the three projects above leave that spec out.
+ *
  * Set `PW_WS_ENDPOINT` to use a browser running elsewhere, such as the
  * Playwright container on a host without Chromium's system libraries. The
  * container's Playwright version must equal this one.
@@ -37,6 +41,9 @@ import { defineConfig, devices } from '@playwright/test';
 const PORT = Number(process.env['SEGL_E2E_PORT'] ?? 18950);
 const BOARD_PORT = PORT + 1;
 const ROOT_PORT = PORT + 2;
+// The server `e2e/durability.spec.ts` starts, kills, and starts again.
+const RESTART_PORT = PORT + 3;
+const RESTART_SPEC = 'durability.spec.ts';
 const ws = process.env['PW_WS_ENDPOINT'];
 
 // The server's data goes to a fresh folder, never to var/.
@@ -83,9 +90,26 @@ export default defineConfig({
 	},
 	// Each base URL ends in a slash, and the specs open paths relative to it.
 	projects: [
-		{ name: 'direct', use: { ...desktop, baseURL: `http://127.0.0.1:${PORT}/` } },
-		{ name: 'root', use: { ...desktop, baseURL: `https://127.0.0.1:${ROOT_PORT}/` } },
-		{ name: 'board', use: { ...desktop, baseURL: `https://127.0.0.1:${BOARD_PORT}/board/` } }
+		{
+			name: 'direct',
+			testIgnore: RESTART_SPEC,
+			use: { ...desktop, baseURL: `http://127.0.0.1:${PORT}/` }
+		},
+		{
+			name: 'root',
+			testIgnore: RESTART_SPEC,
+			use: { ...desktop, baseURL: `https://127.0.0.1:${ROOT_PORT}/` }
+		},
+		{
+			name: 'board',
+			testIgnore: RESTART_SPEC,
+			use: { ...desktop, baseURL: `https://127.0.0.1:${BOARD_PORT}/board/` }
+		},
+		{
+			name: 'restart',
+			testMatch: RESTART_SPEC,
+			use: { ...desktop, baseURL: `http://127.0.0.1:${RESTART_PORT}/` }
+		}
 	],
 	webServer: [
 		{

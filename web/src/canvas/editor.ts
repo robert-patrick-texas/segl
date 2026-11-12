@@ -14,9 +14,9 @@
 
 /**
  * The mounted editor as the collaboration session uses it (`SceneEditor` in
- * `collab/session.ts`): read the elements, merge elements from the server, and
- * draw the other people's cursors. This is where the package's
- * `reconcileElements` is called (D2-025).
+ * `collab/session.ts`): read the elements, merge elements from the server,
+ * draw the other people's cursors, and hold the files of images. This is
+ * where the package's `reconcileElements` is called (D2-025).
  */
 import {
 	CaptureUpdateAction,
@@ -26,10 +26,18 @@ import {
 } from '@excalidraw/excalidraw';
 import type {
 	ExcalidrawElement,
+	FileId,
 	OrderedExcalidrawElement
 } from '@excalidraw/excalidraw/element/types';
-import type { Collaborator, ExcalidrawImperativeAPI, SocketId } from '@excalidraw/excalidraw/types';
+import type {
+	BinaryFileData,
+	Collaborator,
+	DataURL,
+	ExcalidrawImperativeAPI,
+	SocketId
+} from '@excalidraw/excalidraw/types';
 import type { WireElement } from '../collab/elements.ts';
+import type { CanvasFile } from '../collab/files.ts';
 import type { Peer, SceneEditor } from '../collab/session.ts';
 
 type Remote = Parameters<typeof reconcileElements>[1];
@@ -70,8 +78,40 @@ export function collaborators(peers: readonly Peer[]): Map<SocketId, Collaborato
 	);
 }
 
+/**
+ * The file of every image on the canvas that is not deleted (D2-028). The
+ * editor keeps an image's bytes apart from its element, under the `fileId`
+ * the element names, and an image can be on the canvas before its file is.
+ */
+export function imageFiles(api: ExcalidrawImperativeAPI): Map<string, CanvasFile | null> {
+	const held = api.getFiles();
+	const named = new Map<string, CanvasFile | null>();
+	for (const element of api.getSceneElementsIncludingDeleted()) {
+		if (element.type !== 'image' || element.isDeleted || !element.fileId) continue;
+		const file = held[element.fileId];
+		named.set(
+			element.fileId,
+			file ? { id: file.id, mimeType: file.mimeType, dataURL: file.dataURL } : null
+		);
+	}
+	return named;
+}
+
 export function makeEditor(api: ExcalidrawImperativeAPI): SceneEditor {
 	return {
+		images: () => imageFiles(api),
+		addFiles(files) {
+			// The editor loads each into its image cache and paints the elements
+			// that were waiting for it. One it already holds is left as it is.
+			api.addFiles(
+				files.map((file) => ({
+					id: file.id as FileId,
+					mimeType: file.mimeType as BinaryFileData['mimeType'],
+					dataURL: file.dataURL as DataURL,
+					created: Date.now()
+				}))
+			);
+		},
 		elements: () =>
 			api.getSceneElementsIncludingDeleted().filter(worthSending) as unknown as WireElement[],
 		reconcile(remote) {

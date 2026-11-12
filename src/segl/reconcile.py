@@ -93,20 +93,25 @@ def wins(incoming: Element, stored: Element | None) -> bool:
     return incoming["versionNonce"] < stored["versionNonce"]
 
 
-def merge(scene: dict[str, Element], incoming: Iterable[Element]) -> list[Element]:
-    """Reconcile ``incoming`` into ``scene``, which is changed, and return the winners.
+def winners(scene: dict[str, Element], incoming: Iterable[Element]) -> dict[str, Element]:
+    """Return the incoming elements that would replace a stored copy or are new, by id.
 
-    The winners are the incoming elements that replaced a stored copy or were
-    new, in the order they arrived. An element named twice is settled by the
-    same rule.
+    ``scene`` is not changed. They are in the order they arrived, and an
+    element named twice is settled by the same rule.
     """
-    winners: dict[str, Element] = {}
+    won: dict[str, Element] = {}
     for element in incoming:
         identifier = element["id"]
-        if wins(element, scene.get(identifier)):
-            scene[identifier] = element
-            winners[identifier] = element
-    return list(winners.values())
+        if wins(element, won.get(identifier) or scene.get(identifier)):
+            won[identifier] = element
+    return won
+
+
+def merge(scene: dict[str, Element], incoming: Iterable[Element]) -> list[Element]:
+    """Reconcile ``incoming`` into ``scene``, which is changed, and return the winners."""
+    won = winners(scene, incoming)
+    scene.update(won)
+    return list(won.values())
 
 
 def ordered(elements: Iterable[Element]) -> list[Element]:

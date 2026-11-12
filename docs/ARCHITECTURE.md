@@ -9,12 +9,13 @@ How the MVP processes run together. Contracts are in `API.md` and `DATA-MODEL.md
 | Browser | React application. Excalidraw is the canvas. A segl bar handles slots, title, presence, history, and the shared-workspace notice. |
 | nginx | TLS termination and reverse proxy. Gives segl a host name of its own or a path on an existing site, such as `/board/`, which it strips before forwarding (`deploy/nginx/`). |
 | `segl` Python process | FastAPI on `127.0.0.1`. Serves the built web assets, REST, and the WebSocket at its own root. Owns SQLite, uploaded files, and the display-name file. |
-| SQLite | Head scene, revisions, name counter. One file, WAL mode. |
+| SQLite | Head scene, revisions, each slot's file list, name counter. One file, WAL mode. |
+| Uploaded files | The bytes of the images on the canvases, one file to a SHA-256 under `assets_dir`. |
 | Display-name file | Plain text list on disk. Sites replace the file to change future labels. |
 
 Node runs in the build environment and in the dev container's frontend build. systemd does not start Node.
 
-In-memory room state (who is connected, cursors, the scene as edited, dirty heads waiting to flush) lives in the one Python process. A restart drops presence and reloads each slot from its head row.
+In-memory room state (who is connected, cursors, the scene as edited, dirty heads waiting to flush) lives in the one Python process. A stop writes every dirty head first. A restart drops presence and reloads each slot from its head row.
 
 ## Mount and navigation
 
@@ -59,18 +60,18 @@ segl's own redirects are relative. It sends none today: the framework's trailing
 1. The browser requests `https://dev.example.com/board/s/1`.
 2. nginx terminates TLS, strips `/board`, and proxies `/s/1` to `127.0.0.1:8888`, with the client's address in `X-Forwarded-For`.
 3. Python returns `index.html` with `../` asset URLs and `SEGL_CONFIG`.
-4. The app stores last-slot `1`, loads the head scene from `api/v1/slots/1/scene` under its root, and mounts Excalidraw.
+4. The app stores last-slot `1`, loads the head scene from `api/v1/slots/1/scene` under its root, and mounts Excalidraw. The scene comes with its file list, and the app fetches the file of each image from `api/v1/assets/{hash}`.
 5. If `displayName` is missing, the app asks the server for the next label (`POST api/v1/display-name`) and stores it.
 6. Once the canvas is mounted with that scene, the app opens the WebSocket and sends `hello` with `clientId`, the display name, and the edit token when the browser has one.
 7. The server joins the connection to the in-memory room for slot 1 and sends `welcome`, with the epoch, the title, and the participant list, and then `scene`, the room's elements. The app merges them into the canvas.
-8. An edit in the canvas sends the changed elements. The server reconciles them into the room scene, broadcasts the winners, and schedules a head flush (T07).
+8. An edit in the canvas sends the changed elements, with a number. The server reconciles them into the room scene, broadcasts the winners, and writes the head within `head_flush_seconds`. It then answers `saved` with that number, and the bar goes from `Saving…` to `Saved`.
 9. Other browsers on slot 1 apply those elements. Slot 2 is a different room and a different SQLite head.
 
 ## Collaboration
 
 segl owns the wire protocol (`API.md`, WebSocket). The canvas adapter, `web/src/canvas/`, is the only module that imports Excalidraw.
 
-The server side is three modules. `src/segl/reconcile.py` is the rule for which copy of an element is kept. `src/segl/room.py` is one slot's room: its connections and its scene, with no I/O. `src/segl/collab.py` is the socket around a room. A room is made from the slot's head the first time someone opens the slot, and stays for the life of the process. Everything a room does runs on the event loop, and the repository, which blocks, is called from a worker thread.
+The server side is five modules. `src/segl/reconcile.py` is the rule for which copy of an element is kept. `src/segl/room.py` is one slot's room: its connections and its scene, with no I/O. `src/segl/collab.py` is the socket around a room. `src/segl/saver.py` writes a room's scene to its head (`DATA-MODEL.md`, flush rules). `src/segl/assets.py` is the store of uploaded files. A room is made from the slot's head and file list the first time someone opens the slot, and stays for the life of the process. Everything a room does runs on the event loop. The repository and the file store block, and are called from worker threads: a flush turns the scene into JSON there too, from a list of elements that nothing changes afterwards.
 
 - Element messages carry the element records the editor produces (`id`, `version`, `versionNonce`, and `isDeleted`, the deletion flag the pinned package uses). The server reads those fields and `index`, and stores and sends the rest as it arrived.
 - The server keeps the element with the greater `version`. On a tie, it keeps the lower `versionNonce`. That is the rule of `reconcileElements`, the helper the pinned package exports, which the client calls (D2-025). One table of cases, `tests/reconcile_cases.json`, holds the server's rule (pytest), the editor's helper (a browser test), and the client's own rule for what to send (Vitest) to the same answers.
@@ -81,16 +82,16 @@ The server side is three modules. `src/segl/reconcile.py` is the rule for which 
 - Each head has an integer `epoch`, starting at 1. Ordinary element messages must name the current epoch. A stale epoch gets the current scene back, which the client puts in place of its own, and the stale elements are not applied.
 - Restore and JSON import increment the epoch, replace the scene, append a revision, and broadcast the new scene to the room.
 - A title change (`PATCH` on the slot) is broadcast to the room as a `slot` message, so every open bar shows the new title. Two changes at once are stored and sent in one order.
-- Images are files, not elements. The browser that places one uploads the bytes (`POST api/v1/slots/{n}/assets`), then announces the file id and its hash in a `files` message. The server records the mapping with the head and relays it. Other browsers fetch `api/v1/assets/{hash}` and add the file to their editor, and a new load gets the mapping with the scene. T07 settles the details against the pinned editor's file model.
+- Images are files, not elements (D2-028). The editor keeps an image's bytes under a file id of its own, which the image element names. The element goes to the room as soon as it is placed, like any element. The browser that placed it uploads the bytes (`POST api/v1/slots/{n}/assets`), then says which hash that file id means in a `files` message. The server checks that it has those bytes, keeps the pair in the slot's file list, writes it with the next head flush, and tells the other connections. Each of them fetches `api/v1/assets/{hash}` and hands the file to its editor, which until then draws a placeholder. A new load gets the file list with the scene, over HTTP and again in `scene`. The browser side is `web/src/collab/files.ts`: whatever the canvas holds that the list lacks is uploaded, and whatever the list names that the canvas lacks is fetched, each once, and again after five seconds when a transfer fails. A file uploaded while the socket was down is named when the scene is back.
 - Cursors and the participant list are presence. They are not written to SQLite and they are not part of the scene. The editor draws each cursor, with its label, in a color it derives from the connection id, so the protocol carries no color. The editor's own row of avatars is hidden, because pressing one follows that person's view, which segl does not carry.
-- The client shows one of: connecting, live, saving, saved, disconnected. It is live once `welcome` arrives. `saved` means the head flush that includes that edit has finished (T07).
+- The client shows one of: connecting, live, saving, saved, disconnected. It is live once `welcome` arrives. It numbers each `elements` and `files` message it sends, and the server answers `saved` with the number of the newest one that is in the head on its disk (D2-029). The bar says `Saving…` from the moment the canvas holds an edit the server has not seen, before the edit is even sent, until that answer covers everything sent, the file of a placed image included. Then it says `Saved`, until the next edit. A viewer is never saving. After a reconnect, a browser that never heard `saved` for something it sent asks again, with an empty numbered batch.
 - The client keeps no queue of edits. It keeps the copy of each element the server is known to hold, and whatever the canvas holds that beats that copy is what it sends, at most once every 30 ms. Cursor messages go at most once every 50 ms.
 - While the socket is down the canvas stays usable, and the client tries again after 0.5, 1, 2, and then every 5 seconds. On reconnect it says `hello` again, merges the scene it is sent, and sends the elements it holds that beat the server's copies: the edits made while it was down. It does not replace the server head with a blind full-scene upload, and an element the server holds a newer copy of is not sent.
 - A broadcast never waits for a slow browser. Each connection has an outbox, and a browser that stops reading is disconnected (`API.md`, limits).
 
-Until T07 writes the head, a room's scene is only in memory. A drawing outlasts every browser leaving the slot, and a reload gets it back from the room. A restart of segl loses it, and `GET api/v1/slots/{n}/scene` still returns the stored head, not the room.
+A room's scene is in memory, and its head on the disk follows it. `GET api/v1/slots/{n}/scene` returns the head, and a browser that loads it then joins the room and is sent what the room holds, which may be one flush interval newer.
 
-The acknowledged-save boundary is the head flush. A crash can lose edits that were broadcast to peers but not flushed. Peers that are still open resend on reconnect. The flush interval default is 200 ms, and a flush also runs when the last client leaves the slot and on process shutdown. History rows are a coarser sample of that head (default 1 second, plus last-leave, restore, and import), capped at 50 per slot.
+The acknowledged-save boundary is the head flush. A crash can lose edits that were broadcast to peers but not flushed. Peers that are still open resend on reconnect. The flush interval default is 200 ms, and a flush also runs when the last client leaves the slot and on process shutdown. History rows are a coarser sample of that head (default 1 second, plus last-leave, shutdown, restore, and import), capped at 50 per slot. A stored head keeps its deleted elements, so a browser that was away across a restart cannot bring one back.
 
 The appearance of the canvas that the editor keeps outside the elements, such as the background color and the grid, is not shared live. Upstream's own collaboration does not share it either.
 
@@ -123,7 +124,7 @@ The label reaches the other browsers on the socket. `hello` carries the stored l
 
 ## Data the MVP stores
 
-SQLite holds slots, the head scene, revisions, and the name counter. The scene document is whatever the pinned editor needs in order to restore elements and embedded images, up to `max_scene_bytes`. If the editor's image model is binary files outside the scene JSON, those bytes go under `assets_dir` named by SHA-256. Either way, an image placed on the canvas is still there after a process restart and a browser reload. Details are in `DATA-MODEL.md`.
+SQLite holds slots, the head scene, revisions, each slot's file list, and the name counter. The scene document is the editor's own, with every element, up to `max_scene_bytes` of elements. The editor's image model is binary files outside the scene JSON, so those bytes go under `assets_dir` named by SHA-256, each at most `max_asset_bytes`. An image placed on the canvas is still there after a process restart and a browser reload. Details are in `DATA-MODEL.md`.
 
 ## What is intentionally absent
 

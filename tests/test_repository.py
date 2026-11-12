@@ -31,12 +31,14 @@ from segl.repository import (
     PLACEHOLDER_SCENE,
     SYSTEM_LABEL,
     EpochMismatch,
+    Flush,
     InvalidSlot,
     Migration,
     Replacement,
     Repository,
     RevisionNotFound,
     Slot,
+    SlotFile,
     StorageError,
     apply_migrations,
     load_empty_scene,
@@ -111,7 +113,7 @@ def test_the_tables_are_the_ones_in_the_data_model_page(repo: Repository, databa
     # SQLite keeps each CREATE TABLE as it was written.
     stored = rows(database, "SELECT sql FROM sqlite_master WHERE type = 'table'")
 
-    assert len(documented) == 4
+    assert len(documented) == 5
     assert {squeeze(sql) for (sql,) in stored} == documented
 
 
@@ -461,6 +463,218 @@ def test_the_history_limit_is_the_one_given(database: Path) -> None:
             repository.append_revision(1, 1, DRAWN, "Alpha1")
 
         assert [row.revision for row in repository.list_revisions(1)] == [5, 4, 3]
+
+
+# The head flush (docs/DATA-MODEL.md, "Flush and revision rules").
+
+SECOND = '{"elements":[{"id":"a","version":2}]}'
+THIRD = '{"elements":[{"id":"a","version":3}]}'
+PNG = SlotFile("f" * 40, "a" * 64, "image/png")
+JPEG = SlotFile("e" * 40, "b" * 64, "image/jpeg")
+
+
+def later(seconds: float) -> str:
+    """The stored form of the time ``seconds`` after the test clock's start."""
+    moment = START + timedelta(seconds=seconds)
+    return moment.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def test_the_first_flush_writes_the_head_and_the_first_history_row(
+    repo: Repository, clock: Clock
+) -> None:
+    clock.advance(2)
+
+    flush = repo.flush_head(2, 1, DRAWN, "Alpha1", history_seconds=1)
+
+    assert flush == Flush(saved_at=later(2), written=True, revision=1, recorded=True)
+    head = repo.get_head(2)
+    assert (head.scene_json, head.editor_label, head.saved_at) == (DRAWN, "Alpha1", later(2))
+    row = repo.get_revision(2, 1)
+    assert (row.scene_json, row.author_label, row.created_at) == (DRAWN, "Alpha1", later(2))
+    # The slot beside it was not touched.
+    assert repo.get_head(1).scene_json == EMPTY
+    assert repo.list_revisions(1) == []
+
+
+def test_a_flush_of_the_scene_the_head_holds_writes_nothing(repo: Repository, clock: Clock) -> None:
+    repo.flush_head(1, 1, DRAWN, "Alpha1", history_seconds=1)
+    clock.advance(30)
+
+    flush = repo.flush_head(1, 1, DRAWN, "Bravo2", history_seconds=1)
+
+    # The time and the label are the ones of the write that happened.
+    assert flush == Flush(saved_at=STARTED, written=False, revision=None, recorded=True)
+    head = repo.get_head(1)
+    assert (head.editor_label, head.saved_at) == ("Alpha1", STARTED)
+    assert len(repo.list_revisions(1)) == 1
+
+
+def test_a_slot_nobody_changed_gets_no_history_row(repo: Repository) -> None:
+    # The scene a slot starts with is not history, even for the flush after
+    # the last connection left.
+    flush = repo.flush_head(1, 1, EMPTY, "System", history_seconds=0)
+
+    assert flush == Flush(saved_at=STARTED, written=False, revision=None, recorded=True)
+    assert repo.list_revisions(1) == []
+
+
+def test_a_history_row_waits_until_the_newest_one_is_old_enough(
+    repo: Repository, clock: Clock
+) -> None:
+    repo.flush_head(1, 1, DRAWN, "Alpha1", history_seconds=1)
+    clock.advance(0.4)
+
+    young = repo.flush_head(1, 1, SECOND, "Alpha1", history_seconds=1)
+
+    # The head has the scene, and the history does not yet.
+    assert young == Flush(saved_at=later(0.4), written=True, revision=None, recorded=False)
+    assert repo.get_head(1).scene_json == SECOND
+    assert [row.revision for row in repo.list_revisions(1)] == [1]
+
+    clock.advance(0.6)
+    old = repo.flush_head(1, 1, THIRD, "Bravo2", history_seconds=1)
+
+    assert old == Flush(saved_at=later(1), written=True, revision=2, recorded=True)
+    assert repo.get_revision(1, 2).scene_json == THIRD
+    assert repo.get_revision(1, 2).author_label == "Bravo2"
+
+
+def test_the_interval_is_the_one_given(repo: Repository, clock: Clock) -> None:
+    repo.flush_head(1, 1, DRAWN, "Alpha1", history_seconds=5)
+    clock.advance(4.9)
+    assert repo.flush_head(1, 1, SECOND, "Alpha1", history_seconds=5).revision is None
+    clock.advance(0.1)
+    assert repo.flush_head(1, 1, THIRD, "Alpha1", history_seconds=5).revision == 2
+
+
+def test_with_no_interval_a_flush_records_a_head_that_has_no_history_row(
+    repo: Repository, clock: Clock
+) -> None:
+    """The flush after the last connection left."""
+    repo.flush_head(1, 1, DRAWN, "Alpha1", history_seconds=1)
+    clock.advance(0.2)
+    repo.flush_head(1, 1, SECOND, "Bravo2", history_seconds=1)
+    clock.advance(0.1)
+
+    left = repo.flush_head(1, 1, SECOND, "Bravo2", history_seconds=0)
+
+    # The head was already written. The row is what was owed.
+    assert left == Flush(saved_at=later(0.2), written=False, revision=2, recorded=True)
+    assert repo.get_revision(1, 2).scene_json == SECOND
+    assert repo.get_revision(1, 2).created_at == later(0.3)
+    # Leaving again, with nothing drawn since, adds no row.
+    again = repo.flush_head(1, 1, SECOND, "Bravo2", history_seconds=0)
+    assert (again.revision, again.recorded) == (None, True)
+    assert len(repo.list_revisions(1)) == 2
+
+
+def test_a_clock_that_went_backwards_does_not_stop_the_history(
+    repo: Repository, clock: Clock
+) -> None:
+    repo.flush_head(1, 1, DRAWN, "Alpha1", history_seconds=1)
+    clock.advance(-3600)
+
+    assert repo.flush_head(1, 1, SECOND, "Alpha1", history_seconds=1).revision == 2
+
+
+@pytest.mark.parametrize("epoch", [0, 2])
+def test_a_flush_for_another_epoch_is_refused_and_writes_nothing(
+    repo: Repository, epoch: int
+) -> None:
+    with pytest.raises(EpochMismatch):
+        repo.flush_head(1, epoch, DRAWN, "Alpha1", history_seconds=0, files=[PNG])
+
+    assert repo.get_head(1).scene_json == EMPTY
+    assert repo.list_revisions(1) == []
+    assert repo.list_files(1) == []
+
+
+def test_the_51st_flush_drops_the_oldest_history_row(repo: Repository, clock: Clock) -> None:
+    """T07's acceptance: the 51st revision drops the oldest, through the flush."""
+    for count in range(1, 51):
+        clock.advance(1)
+        assert repo.flush_head(1, 1, f'{{"elements":[{count}]}}', "Alpha1", history_seconds=1)
+    assert [row.revision for row in repo.list_revisions(1)] == list(range(50, 0, -1))
+
+    clock.advance(1)
+    flush = repo.flush_head(1, 1, '{"elements":[51]}', "Alpha1", history_seconds=1)
+
+    assert flush.revision == 51
+    assert [row.revision for row in repo.list_revisions(1)] == list(range(51, 1, -1))
+    with pytest.raises(RevisionNotFound):
+        repo.get_revision(1, 1)
+    assert repo.get_revision(1, 2).scene_json == '{"elements":[2]}'
+
+
+def test_a_flush_records_the_files_a_slot_names(repo: Repository) -> None:
+    repo.flush_head(3, 1, DRAWN, "Alpha1", history_seconds=1, files=[PNG])
+    repo.flush_head(3, 1, DRAWN, "Alpha1", history_seconds=1, files=[JPEG])
+
+    assert repo.list_files(3) == [PNG, JPEG]
+    # A slot's files are its own.
+    assert repo.list_files(4) == []
+
+
+def test_a_file_id_keeps_the_bytes_it_was_first_given(repo: Repository) -> None:
+    other = SlotFile(PNG.file_id, "c" * 64, "image/gif")
+    repo.flush_head(3, 1, DRAWN, "Alpha1", history_seconds=1, files=[PNG])
+
+    repo.flush_head(3, 1, SECOND, "Bravo2", history_seconds=1, files=[other, JPEG])
+
+    assert repo.list_files(3) == [PNG, JPEG]
+    # The same id on another slot is another row.
+    repo.flush_head(4, 1, DRAWN, "Alpha1", history_seconds=1, files=[other])
+    assert repo.list_files(4) == [other]
+
+
+def test_a_flush_that_fails_changes_nothing(repo: Repository) -> None:
+    broken = SlotFile(JPEG.file_id, None, "image/jpeg")  # ty: ignore[invalid-argument-type]
+
+    # The head update and the first file row ran before the second one failed.
+    with pytest.raises(StorageError, match="NOT NULL"):
+        repo.flush_head(1, 1, DRAWN, "Alpha1", history_seconds=0, files=[PNG, broken])
+
+    assert repo.get_head(1).scene_json == EMPTY
+    assert repo.list_files(1) == []
+    assert repo.list_revisions(1) == []
+    assert repo.flush_head(1, 1, DRAWN, "Alpha1", history_seconds=0, files=[PNG]).written
+
+
+@pytest.mark.parametrize("n", [0, 10])
+def test_the_flush_and_the_file_list_refuse_a_slot_that_does_not_exist(
+    repo: Repository, n: int
+) -> None:
+    with pytest.raises(InvalidSlot):
+        repo.flush_head(n, 1, DRAWN, "Alpha1", history_seconds=1)
+    with pytest.raises(InvalidSlot):
+        repo.list_files(n)
+
+
+def test_a_database_from_before_the_file_list_gains_the_table_and_keeps_its_slots(
+    database: Path, clock: Clock
+) -> None:
+    """A database made by T06's segl, at schema 1, opened by this one."""
+    with closing(sqlite3.connect(database, autocommit=True)) as connection:
+        assert apply_migrations(connection, load_migrations()[:1]) == 1
+    assert rows(database, "PRAGMA user_version") == [(1,)]
+    assert rows(database, "SELECT name FROM sqlite_master WHERE name = 'slot_file'") == []
+    with Repository(database, clock=clock) as before:
+        # The older segl's bootstrap: the same rows, without the newer table.
+        before._connection.execute("PRAGMA user_version = 2")
+        before.bootstrap()
+        before._connection.execute("PRAGMA user_version = 1")
+        before.rename_slot(2, "Kept")
+        before.save_head(2, 1, DRAWN, "Alpha1")
+
+    with Repository(database, clock=clock) as repository:
+        repository.bootstrap()
+
+        assert repository.get_slot(2).title == "Kept"
+        assert repository.get_head(2).scene_json == DRAWN
+        assert repository.list_files(2) == []
+        assert repository.flush_head(2, 1, SECOND, "Bravo2", history_seconds=1, files=[PNG])
+        assert repository.list_files(2) == [PNG]
+    assert rows(database, "PRAGMA user_version") == [(len(load_migrations()),)]
 
 
 # Restore and import.
