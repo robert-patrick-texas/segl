@@ -49,14 +49,14 @@ Acceptance (evidence in `STATUS.md`): md2html's tests pass. `python3 scripts/bui
 
 ## T01 — Python skeleton, CI, and dev container
 
-- Status: next
+- Status: done
 - Requires: T00
 - Requirements: S-017 (container starts), tooling from D2-016
 - Read: `AGENTS.md`, `CONTRIBUTING.md` (license header), `docs/DEVELOPMENT.md`, `docs/DEPLOY.md` (dev container, configuration), `docs/DECISIONS.md` D2-015, D2-016, D2-019, D2-020, D2-021, and D2-022
 
 Create the uv project at the repository root with package `segl` under `src/segl`. Read the Python pin (`runtime.python`, an exact version such as `3.15.2`) and the application version from `versions.toml`. Write the same pin to `.python-version`. Set `requires-python` to the pin's minor (`>=3.15,<3.16`). Set the project license field to `Apache-2.0` and the project version to the `versions.toml` application version.
 
-Depend on FastAPI and uvicorn. Dev-depend on pytest, httpx, ruff, and ty. Take the newest stable release of each, pin it exactly (`==`) in `pyproject.toml`, and record the same versions in `versions.toml`. Configure ruff and ty for the pin's minor in `pyproject.toml`. Add a `docs` dependency group holding md2html's two packages at the `[python.docs]` pins, and point pytest and ty at `tools/md2html` as vakr's `pyproject.toml` does, so `uv run pytest` and `uv run ty check` cover it. md2html keeps its inline metadata for `uv run`.
+Depend on FastAPI and uvicorn. Dev-depend on pytest, httpx2 (the test client's transport; Starlette deprecates plain httpx there), ruff, and ty. Take the newest stable release of each, pin it exactly (`==`) in `pyproject.toml`, and record the same versions in `versions.toml`. Configure ruff and ty for the pin's minor in `pyproject.toml`. Add a `docs` dependency group holding md2html's two packages at the `[python.docs]` pins, and point pytest and ty at `tools/md2html` as vakr's `pyproject.toml` does, so `uv run pytest` and `uv run ty check` cover it. md2html keeps its inline metadata for `uv run`.
 
 Add a console script `segl` whose `--version` prints the application version from `versions.toml`. The installed package carries a copy of `versions.toml` that the build puts inside it. A checkout reads the file at the repository root. Tests cover both lookups.
 
@@ -83,7 +83,7 @@ Out of scope: the release command (T01b), React, Excalidraw, SQLite, nginx, the 
 
 ## T01b — Release command
 
-- Status: pending
+- Status: next
 - Requires: T01
 - Requirements: D2-020
 - Read: `docs/RELEASING.md`, `docs/DECISIONS.md` D2-016, D2-020, and D2-022
