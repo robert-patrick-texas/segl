@@ -250,7 +250,7 @@ This file is the source of truth for what is done and what to do next. Update it
     - Rootless Docker and Podman were not tried. `scripts/release.py check --gate` was not run in this task.
   - Still not listed in `versions.toml` or checked: the uv 0.13.7 and Node 26.13.1 image digests in `deploy/Containerfile`.
   - Next action T06.
-- 2026-11-12: T06 done. Evidence, all on commit `8a9502f`:
+- 2026-11-12: T06 done, in commits `8a9502f` (the task) and `83831fa` (a fix to one browser test, after CI failed on it). Evidence, on `8a9502f` unless a line says otherwise:
   - Acceptance, on the host with Node 26.13.1, nginx 1.28.3, and Chromium from the `mcr.microsoft.com/playwright:v1.65.0-noble` container through `PW_WS_ENDPOINT`:
     - `npm --prefix web run e2e` gave 108 passed in 2.9 minutes: 36 tests in each of `direct`, `root`, and `board`, run one at a time. The 12 new tests are the ten of `web/e2e/collab.spec.ts`, the one of `web/e2e/reconcile.spec.ts`, and one from splitting a test in `web/e2e/slot.spec.ts`. "Two browsers" is two browser contexts against the one server.
     - T-001: a rectangle drawn in one context appeared in the other under the same id at the same place, and one drawn in the second appeared in the first.
@@ -269,7 +269,12 @@ This file is the source of truth for what is done and what to do next. Update it
   - Through nginx by pytest (`tests/test_collab.py`), with the `deploy/nginx/` files in front of a real process and the `websockets` client: two sockets synced an element at `/board/collab` and at a host root, and a title change through the mount reached both. A handshake, a `PATCH`, and `POST api/v1/display-name` were each `403` with `bad_origin` for four origins: another site, the site's name without its port, another name on the same port, and the site's name on the next port. With the mount's own origin they passed. The accepted handshakes set no cookie.
   - The reconcile rule: `tests/reconcile_cases.json` has 15 cases. pytest holds `segl.reconcile` to it, in both directions and applied twice. `web/e2e/reconcile.spec.ts` holds the pinned editor's `reconcileElements` to it in the page, with either side as the local one. Vitest holds the browser's own rule for what to send to it.
   - CI run 43199807171 succeeded on Node 26.13.1 with 694 pytest, 280 Vitest, and 108 browser tests passed. Pages run 43199807302 succeeded. `python3 scripts/build_docs.py` found 0 broken links.
-  - `docker build --progress=plain -f deploy/Containerfile .` (rootful Docker) ran 280 Vitest tests, Prettier, the build, and 694 pytest tests, all passed. The journal entry was written after that build.
+  - CI then failed once, and the cause was a test:
+    - Run 43200706604, on `a23bebe`, which changed only this file, had 105 browser tests passed and 3 failed: `a drawing stays on its slot when the person goes to another`, in each project, with `Cannot read properties of undefined (reading 'document')`.
+    - On the way back to a slot the test waited for `Live`, which the bar was still showing about the slot being left, and then read the canvas while the page was between two slots. The run on `8a9502f` and the two local runs had been fast enough to miss it.
+    - `83831fa` makes the test wait for the heading of the slot it went to (`switchSlot` in `web/e2e/pages.ts`), and makes the helpers that read the canvas wait for the canvas. It changes two files under `web/e2e/` and nothing the page runs.
+    - On `83831fa`: three local runs of `web/e2e/collab.spec.ts` gave 30 passed each, a full local run gave 108 passed, and CI run 43202478931 succeeded with 694 pytest, 280 Vitest, and 108 browser tests passed. Pages run 43202479114 succeeded.
+  - `docker build --progress=plain -f deploy/Containerfile .` (rootful Docker) ran 280 Vitest tests, Prettier, the build, and 694 pytest tests, all passed. The journal entry was written after that build, and the container does not run the browser tests that `83831fa` changed.
   - `python3 scripts/release.py check --gate` listed `python websockets 17.4: current` with every other component, printed `gate: every component is current or held`, and exited 0.
   - A real run on a scratch port with the packaged list and the production build:
     - `PATCH /api/v1/slots/4` with `Origin: https://evil.example` was `403` with `bad_origin`. With the server's own origin it was `200` with the title trimmed to `Core network`. `DELETE` was `405` with `allow: GET, PATCH`.
@@ -320,7 +325,7 @@ This file is the source of truth for what is done and what to do next. Update it
     - The editor keeps this browser's copy of an element it is editing when a newer one arrives. What the two browsers then show until the next edit was not tested.
     - A browser's batch of offline edits larger than `max_scene_bytes` would be refused each time it reconnects. Not tried.
     - The page does not check that an open socket is still alive. It relies on the browser noticing. The server's 20-second ping was not waited for, and neither was an idle socket through nginx's 120-second timeout.
-    - Runs of the browser tests in this task: one of `direct` alone with 1 failure, which led to the change in `web/e2e/names.spec.ts`, one of all three projects with 2 failures, which led to the changes in `web/e2e/mount.spec.ts`, then two with 108 passed, and CI's. Only Chromium was run.
+    - Runs of the browser tests in this task: one of `direct` alone with 1 failure, which led to the change in `web/e2e/names.spec.ts`, one of all three projects with 2 failures, which led to the changes in `web/e2e/mount.spec.ts`, then two with 108 passed, and on `83831fa` one more. CI ran them three times: passed, failed on the test above, and passed. Only Chromium was run.
     - `uv run segl` on its default port was not run. The real runs used `--config` on a scratch port.
     - The editor logs `Permissions policy violation: unload is not allowed in this document` in Chromium's console. Whether it did before this task was not looked into.
     - The 10-editor and 1,000-element runs (T11). The dev container does not run the browser tests (T11). Rootless Docker and Podman were not tried.
