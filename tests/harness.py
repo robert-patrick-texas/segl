@@ -37,6 +37,7 @@ import subprocess
 import sys
 import time
 import tomllib
+import warnings
 from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -174,6 +175,35 @@ def fetch(
         connection.close()
 
 
+# How long a WebSocket handshake may take: the client's own default.
+HANDSHAKE_SECONDS = 10.0
+
+# How much of a log a failure quotes.
+LOG_TAIL_LINES = 40
+
+
+def log_tails(logs: Mapping[str, Path]) -> str:
+    """Return the end of each log, under its name, for a failure's message.
+
+    A test that waited for a server and gave up says what the server had
+    written. A log that is not there, or is empty, is said to be so.
+    """
+    parts = []
+    for name, file in logs.items():
+        try:
+            lines = file.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError as exc:
+            parts.append(f"--- {name} ({file}): cannot be read: {exc}")
+            continue
+        if not lines:
+            parts.append(f"--- {name} ({file}): empty")
+            continue
+        shown = lines[-LOG_TAIL_LINES:]
+        parts.append(f"--- {name} ({file}), the last {len(shown)} of {len(lines)} lines:")
+        parts.extend(shown)
+    return "\n".join(parts)
+
+
 def open_socket(
     port: int,
     path: str,
@@ -181,20 +211,43 @@ def open_socket(
     site: str | None = None,
     tls: ssl.SSLContext | None = None,
     origin: str | None = None,
+    logs: Mapping[str, Path] | None = None,
 ) -> ClientConnection:
     """Open a WebSocket to 127.0.0.1:``port`` at ``path``, as ``fetch`` asks for a page.
 
     ``origin`` is the ``Origin`` header a browser would send. A handshake that
     is refused raises ``websockets.exceptions.InvalidStatus``, which carries
-    the HTTP response.
+    the HTTP response. One that is not answered in time fails the test with
+    the end of each of ``logs``: what the servers on the way had written.
     """
     plain = socket.create_connection(("127.0.0.1", port), timeout=10)
     sent_from = None if origin is None else Origin(origin)
-    # proxy=None: never through a proxy the environment names.
-    if site is not None and tls is not None:
-        uri = f"wss://{site}:{port}{path}"
-        return connect(uri, sock=plain, ssl=tls, server_hostname=site, origin=sent_from, proxy=None)
-    return connect(f"ws://127.0.0.1:{port}{path}", sock=plain, origin=sent_from, proxy=None)
+    try:
+        # proxy=None: never through a proxy the environment names.
+        if site is not None and tls is not None:
+            uri = f"wss://{site}:{port}{path}"
+            return connect(
+                uri,
+                sock=plain,
+                ssl=tls,
+                server_hostname=site,
+                origin=sent_from,
+                proxy=None,
+                open_timeout=HANDSHAKE_SECONDS,
+            )
+        return connect(
+            f"ws://127.0.0.1:{port}{path}",
+            sock=plain,
+            origin=sent_from,
+            proxy=None,
+            open_timeout=HANDSHAKE_SECONDS,
+        )
+    except TimeoutError as exc:
+        message = (
+            f"the WebSocket handshake for {path} on port {port} was not answered in "
+            f"{HANDSHAKE_SECONDS:g} seconds ({exc})"
+        )
+        raise AssertionError(f"{message}\n{log_tails(logs or {})}") from exc
 
 
 def say_hello(
@@ -218,13 +271,28 @@ def next_message(connection: ClientConnection, seconds: float = 5.0) -> dict[str
         raise AssertionError(f"no message arrived in {seconds} seconds") from None
 
 
-def _stop(process: subprocess.Popen[bytes]) -> None:
+# How long a server has to stop after SIGTERM before it is killed.
+STOP_SECONDS = 10.0
+
+
+def _stop(process: subprocess.Popen[bytes], what: str, log: Path) -> None:
+    """End a server with SIGTERM, and with SIGKILL when that does not end it.
+
+    A server that had to be killed is said so, with the end of its log, as a
+    warning in pytest's summary. The test it served has already had its
+    verdict, and a stop that hangs should not pass unseen.
+    """
     process.terminate()
     try:
-        process.wait(timeout=10)
+        process.wait(timeout=STOP_SECONDS)
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait()
+        warnings.warn(
+            f"{what} had not stopped {STOP_SECONDS:g} seconds after SIGTERM and was killed\n"
+            f"{log_tails({what: log})}",
+            stacklevel=2,
+        )
 
 
 def _wait_until(
@@ -272,7 +340,7 @@ class SeglServer:
         return fetch(self.port, path, method="PATCH", headers=headers, body=sent)
 
     def socket(self, path: str, origin: str | None = None) -> ClientConnection:
-        return open_socket(self.port, path, origin=origin)
+        return open_socket(self.port, path, origin=origin, logs={"segl": self.log_file})
 
     def log(self) -> str:
         return self.log_file.read_text(encoding="utf-8")
@@ -326,7 +394,7 @@ def running_segl(folder: Path, config: str = "") -> Generator[SeglServer]:
         _wait_until(lambda: server.get("/api/v1/health"), process, "segl", server.log_file)
         yield server
     finally:
-        _stop(process)
+        _stop(process, "segl", log_file)
 
 
 @dataclass(frozen=True)
@@ -452,6 +520,8 @@ class Mount:
     segl: SeglServer
     https_port: int
     tls: ssl.SSLContext
+    # The folder nginx runs from, which holds its two logs.
+    prefix: Path
 
     def get(self, site: str, path: str, headers: Mapping[str, str] | None = None) -> Reply:
         return fetch(self.https_port, path, site=site, tls=self.tls, headers=headers)
@@ -493,7 +563,14 @@ class Mount:
         return f"https://{site}:{self.https_port}"
 
     def socket(self, site: str, path: str, origin: str | None = None) -> ClientConnection:
-        return open_socket(self.https_port, path, site=site, tls=self.tls, origin=origin)
+        # A socket through nginx that is not answered: what nginx saw of it,
+        # what it said went wrong, and what segl had logged.
+        logs = {
+            "nginx error.log": self.prefix / "error.log",
+            "nginx access.log": self.prefix / "access.log",
+            "segl": self.segl.log_file,
+        }
+        return open_socket(self.https_port, path, site=site, tls=self.tls, origin=origin, logs=logs)
 
 
 @contextmanager
@@ -519,7 +596,7 @@ def running_mount(
         with running_nginx(tools, prefix, https_port):
             # The client checks the test certificate and the site's name, as a browser would.
             tls = ssl.create_default_context(cafile=str(certificate[0]))
-            yield Mount(segl=segl, https_port=https_port, tls=tls)
+            yield Mount(segl=segl, https_port=https_port, tls=tls, prefix=prefix)
 
 
 @contextmanager
@@ -534,4 +611,4 @@ def running_nginx(tools: NginxTools, prefix: Path, https_port: int) -> Generator
         _wait_until(connect, process, "nginx", prefix / "error.log")
         yield
     finally:
-        _stop(process)
+        _stop(process, "nginx", prefix / "error.log")

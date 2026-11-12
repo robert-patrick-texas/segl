@@ -76,6 +76,7 @@ The project is specified, licensed, and public on GitHub. A Python service reads
 - `GET /api/v1/slots/{n}/scene` returns the head as of the last flush, with the deleted elements and the files its images name. Before, the head never changed after startup.
 - The `elements` message takes an optional `seq`, and may be an empty list. `scene` carries the slot's files.
 - A history row for a head that an earlier flush wrote, as after a restart, carries that head's label and not `System`.
+- The test harness (`tests/harness.py`) quotes the servers' logs when it gives up on one. A WebSocket handshake that is not answered fails with the end of segl's log, and through nginx of nginx's two logs as well. A server that had to be killed after SIGTERM is named in a warning with its log. `tests/test_harness.py` covers both.
 - `Room.restore`, which took back a snapshot that was not written, is `Room.take_back`. A restore is now something else.
 - The bar's connection state has five values: connecting, live, saving, saved, and disconnected. The browser tests wait for "in the room", which is any of the middle three, where they used to wait for `Live`.
 - The license header moved from the agent rules to `CONTRIBUTING.md`. The rule to comment out superseded code was removed.
