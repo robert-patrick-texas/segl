@@ -1,3 +1,5 @@
+<img width="1672" height="941" alt="SEGL: Chart the network. A longship crew and two figures of light chart a glowing network on a shared map under a stormy sky, beneath a sail drawn with the same network" src="../images/segl-charting-the-living-network.png" />
+
 # segl
 
 **Historical baseline, frozen 2026-11-11.** This folder stays in the git repository as the record of the earlier plan. It is not the current specification. The contributor manual is [`docs/`](../docs/README.md). The next implementation task is [`draft2/STATUS.md`](../draft2/STATUS.md).
