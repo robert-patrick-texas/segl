@@ -196,3 +196,11 @@ This file is the source of truth for what is done and what to do next. Update it
     - Rootless Docker and Podman were not tried.
   - Still not listed in `versions.toml` or checked: the uv 0.13.7 image digest and, new in this task, the Node 26.13.1 image digest in `deploy/Containerfile`. `upgrade` moves `web/.node-version` and not that line.
   - Next action T05.
+- 2026-11-12: Default port moved from 8000 to 8888, at the user's request and outside the task queue. Evidence, all on commit `b88914f`:
+  - `DEFAULT_BIND` in `src/segl/config.py`, the upstream in `deploy/nginx/segl-http.conf`, `deploy/segl.toml.example`, the Vite dev server's proxy target, and the documents that named the port now say `127.0.0.1:8888`. `draft1/` and the earlier entries in this log were left as written.
+  - In a folder with no configuration, `uv run segl` printed `Uvicorn running on http://127.0.0.1:8888` and `/api/v1/health` answered `{"status":"ok"}` there. Port 8000 on the development host is held by another program, so the old default could not start on it.
+  - `uv run pytest` gave 318 passed. `npm --prefix web test` gave 71 passed. `uv run ruff check .`, `uv run ruff format --check .`, `uv run ty check`, `npm --prefix web run check`, and `npm --prefix web run format:check` passed. `python3 scripts/build_docs.py` found 0 broken links.
+  - `tests/harness.py` takes the upstream line it replaces from `DEFAULT_BIND`. With the nginx file set back to port 8000, `tests/test_mount.py` failed with `deploy/nginx/segl-http.conf has 'server 127.0.0.1:8888;' 0 times`.
+  - CI run 43182009744 succeeded with 318 pytest, 71 Vitest, and 42 browser tests passed. Pages run 43182009715 succeeded.
+  - Not done: the browser tests were not run on the host for this change, only in CI, and the dev container was not rebuilt.
+  - Next action remains T05.
