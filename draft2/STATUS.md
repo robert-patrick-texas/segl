@@ -494,3 +494,12 @@ This file is the source of truth for what is done and what to do next. Update it
     - The dev container does not run the browser tests (T11). Rootless Docker and Podman were not tried.
   - Still not listed in `versions.toml` or checked: the uv 0.13.7 and Node 26.13.1 image digests in `deploy/Containerfile`.
   - Next action T09.
+- 2026-11-12: T08, a CI failure on the status commit, `aedceb8`, which changed only this file. The cause is not established. Evidence:
+  - CI run 43238041766, first attempt: `1 failed, 982 passed in 95.47s`. The failure was `tests/test_collab.py::test_two_sockets_sync_through_nginx_at_board_and_at_a_host_root`, a T06 test, with `TimeoutError: timed out while waiting for handshake response` from its first socket through nginx, after the client's ten seconds. The browser tests did not run in that attempt.
+  - The time was lost in one place. pytest's second line of progress, which ends with the tests of `tests/test_collab.py` that start `segl` processes and nginx, took 65 seconds. In run 43237130098, on `b680296`, the same line took 4 seconds. The lines before it and after it took about what they did there, and the tests after it, which start more processes and more nginx, passed at their usual speed.
+  - The second attempt of the same run, on the same commit, succeeded: `983 passed in 26.20s`, 445 Vitest tests, and `143 passed (3.5m)` in the browser tests. Pages run 43238041971 succeeded.
+  - On the development host, `uv run pytest tests/test_collab.py` twelve times in a row gave 78 passed each time, in 5.7 to 6.0 seconds.
+  - So the tree of `b680296` has passed CI twice and failed it once. What the handshake waited for is not in the log: the test does not print segl's or nginx's log when a socket times out, and `tests/harness.py` ends a server that has not stopped ten seconds after SIGTERM with SIGKILL, without saying so.
+  - My reading, not a finding: a stall on that runner for about a minute. Six or so waits of ten seconds in a row and none afterwards fits a stretch of time better than it fits a fault in a server, which would show in the later tests too. The handshake path was not changed by T08, and no test in that file restores.
+  - Not done: nothing was changed. Printing the two logs when a handshake times out, and saying when a server had to be killed, would make the next one readable. That is a change to the T02 harness and was left for a decision.
+  - Next action remains T09.
