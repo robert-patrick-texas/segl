@@ -10,14 +10,14 @@ P0 is done when every row below has been run and recorded in `draft2/STATUS.md`,
 | T-004 | S-013 | Kill the socket. The UI shows disconnected. Restore the socket. Edits made while down reconcile, and a newer server edit is not discarded. |
 | T-005 | S-003, S-004 | Draw on slot 2, close both browsers, open slot 2 again. The drawing is there. Slot 1 is unchanged. |
 | T-006 | S-004 | After the UI shows saved, stop the process and start it. The head scene matches. |
-| T-007 | S-012 | Place an image, reach saved, restart, load the slot in a fresh context. The image renders. |
+| T-007 | S-012 | Place an image. A second context already open on the slot shows it without reloading. Reach saved, restart, load the slot in a fresh context. The image renders. |
 | T-008 | S-008 | With `edit_token` set, a client without the token sees live edits and cannot change elements, the title, or history. A client that stored the token can. With the token empty, both clients can edit. |
 | T-009 | S-011 | Export Excalidraw JSON, clear the slot by restoring an empty revision or importing an empty document, import the file. The drawing returns and a new revision exists. |
 | T-010 | S-014 | With outbound network blocked, the slot page still paints the editor. |
 | T-011 | S-005 | Produce more than one revision, restore an older one, and see every connected client switch. Restore the pre-restore revision and the later drawing returns. The 51st revision drops the oldest. |
-| T-012 | S-007 | Walk health, config, slots, scene, display-name, a view-only mutation, and a WebSocket handshake. No response includes `Set-Cookie`. |
-| T-013 | S-006 | `base_path = "/whiteboard"`: TestClient fetches `/whiteboard/s/1`, `/whiteboard/api/v1/health`, and the slot scene. `/s/1` is not the slot. Repeat with `base_path = "/"`. |
-| T-014 | S-009 | Against a temp word file `Guest` / `Staff`, three fresh clients receive `Guest1`, `Staff2`, `Guest3`. A stored label is not replaced on reload. A rename of `john smith` is broadcast as `John Smith`. |
+| T-012 | S-007 | Walk health, config, slots, scene, display-name, a view-only mutation, and a WebSocket handshake. No response includes `Set-Cookie`. A mutation and a WebSocket upgrade whose `Origin` does not match `Host` are refused with `bad_origin`. |
+| T-013 | S-006 | nginx runs the `deploy/nginx/` files on a loopback port in front of the test server. At `/board/`: `/board` redirects to `/board/`, `/board/api/v1/health` answers, `/board/s/1` renders the slot, two contexts sync over `/board/collab`, and the page requests nothing outside `/board/`. The same build passes the same checks at a host root (`location /`). T02 covers the HTTP part, T04 the page, and T06 the WebSocket. |
+| T-014 | S-009 | Against a temp word file `Guest` / `Staff`, three fresh clients receive `Guest1`, `Staff2`, `Guest3`. A stored label is not replaced on reload. A rename of `john smith` is broadcast as `John Smith`. Through nginx, 31 allocations from one address within a minute, each sending a different `X-Forwarded-For`, are limited at 30. |
 | T-015 | S-010 | Two connections on slot 3 show count 2 and both labels. Closing one drops the count to 1. Slot 1's count does not include them. |
 | T-016 | S-003 | `PATCH` title on slot 4 is visible to a second browser. Slots have no create or delete route. |
 | T-017 | S-015 | On Ubuntu 26.04 the `.deb` places the interpreter under `/opt/segl/python`, the unit is active, and nginx proxies a TLS request to a slot page. |

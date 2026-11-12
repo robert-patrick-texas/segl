@@ -1,23 +1,39 @@
 # Releasing
 
-`versions.toml` at the repository root is the only list of versions. It holds the application version, the Python version, the Node version used to build the frontend, and the direct dependency versions. Lockfiles hold the transitive closure. Application code that displays or checks a version reads `versions.toml`. `.python-version`, `pyproject.toml`, and the web manifest mirror the matching entries. A task that adds or upgrades a direct dependency updates `versions.toml` in the same change.
+`versions.toml` at the repository root is the only list of versions. It holds the application version, the exact Python version, the Node version used to build the frontend, and the direct dependency versions. Lockfiles hold the transitive closure. Application code that displays or checks a version reads `versions.toml`. `.python-version`, `pyproject.toml`, `web/.node-version`, and `web/package.json` mirror the matching entries. A change that adds or upgrades a direct dependency updates `versions.toml` in the same change.
 
 `0.0.0` means unpublished. Do not publish it.
 
-## Command
+## Policy
+
+segl releases the way vakr and Sunstone do:
+
+- Every component moves to its newest stable release: Python (patch or minor, from what `uv python list` offers), each direct Python and web dependency, Node's newest LTS release, and the GitHub Actions the workflows pin. A release's age is never a reason to wait. One published an hour ago counts.
+- Pre-releases (`a`, `b`, `rc`, `dev`, and SemVer suffixes such as `-beta.1`) never count as the newest release.
+- A component is held back only after its newest release fails the tests and the fix is not a straightforward correction in this repository. The hold is a `[held.<name>]` entry in `versions.toml` (the version kept, the version skipped, the reason, the date) and an Additional Notes bullet in the release notes. Other components still move.
+- A hold lasts until the component publishes a release newer than the one that failed. Then it is tried again.
+- Currency is checked again when a release is published, not only when it was prepared.
+
+## Commands
 
 ```bash
-python3 scripts/release.py check          # report newer versions, change nothing
+python3 scripts/release.py check          # each component beside its newest release; changes nothing
+python3 scripts/release.py check --gate   # exit 1 unless every component is current or held
+python3 scripts/release.py upgrade        # move components one at a time, test each, hold failures
 python3 scripts/release.py notes          # print the release-note body
-python3 scripts/release.py cut            # upgrade, test, hold failures, rewrite the changelog
-python3 scripts/release.py cut --publish  # cut, then the destinations enabled in versions.toml
+python3 scripts/release.py cut            # gate and suite, then the version bump and changelog section
+python3 scripts/release.py publish        # preflight, tag, and GitHub Release
 ```
 
-`check` and `notes` work before any application code exists. `cut` changes nothing until `pyproject.toml` and the test suite exist. T01 finishes `cut` so that it then does the rest of this contract: move each direct dependency to its newest release, move Python to the newest patch of the minor already pinned in `versions.toml` (a 3.15 pin stays on 3.15), and run the test suite. When a newer component fails and the fix is not a straightforward correction in this repository, restore that component's known-good version, record a `[held.*]` entry, and add an Additional Notes bullet. Other components still move forward. A new minor of Python is reported and left pinned.
+`check` and `notes` work before any application code exists. T01b finishes the rest:
 
-Publish destinations are `[publish]` in `versions.toml`. GitHub Releases are enabled. PyPI is off until there is a build worth demonstrating; the script uploads to PyPI only when `pypi = true`. The `.deb`, once T12 builds it, is uploaded as a GitHub Release asset. A container registry waits for L-005. The script reads credentials from the environment (`GH_TOKEN` or an authenticated `gh`, and a PyPI token only after that destination is enabled). It does not store tokens in the repository.
+- `upgrade` moves each outdated component on its own, runs the suite, and keeps the move when the suite passes. When the suite fails it restores the previous version and records the hold. It updates `versions.toml` and the mirrors. When the Python minor moves, `requires-python` and the ruff and ty targets move with it.
+- `cut` requires `check --gate` and the suite to pass. Then it writes the new application version into `versions.toml`, turns `Unreleased` into `## <version> — <date>`, and opens a fresh `Unreleased`. It leaves both files unchanged when either check fails. Commit and push the result, and CI runs on it.
+- `publish` runs a preflight and stops at the first failure. The tree must be clean, `HEAD` must be on `main`, `CHANGELOG.md` must have the version's section, the version must not be `0.0.0`, tag `v<version>` must exist neither locally nor on `origin`, every GitHub check run for `HEAD` must have passed, and `check --gate` must pass now. Then it tags `v<version>`, pushes the tag, and runs `gh release create v<version> --verify-tag` with the notes and, once T12 builds one, the `.deb` from `dist/`. It uploads to PyPI only when `publish.pypi` is true.
 
-Before `1.0.0`, a release that contains New or Changed increments the minor number. A release that contains only Fixed increments the patch number. `cut` writes the new application version into `versions.toml` and opens a fresh `Unreleased` section.
+Before `1.0.0`, a release that contains New or Changed increments the minor number. A release that contains only Fixed increments the patch number.
+
+Publish destinations are `[publish]` in `versions.toml`. GitHub Releases are enabled, to `publish.github_repo`. PyPI is off until there is a build worth demonstrating. A container registry waits for L-005. The script reads credentials from the environment (`GH_TOKEN` or an authenticated `gh`, and a PyPI token only after that destination is enabled). It does not store tokens in the repository.
 
 ## Release note shape
 
@@ -65,7 +81,7 @@ cloc . --json --quiet --fullpath \
   --not-match-f='(uv\.lock|package-lock\.json|pnpm-lock\.yaml)'
 ```
 
-`cloc` is installed on the development host. Documentation, the journal, deploy files, and application source all count. `node_modules`, virtualenvs, build output, and an embedded copy of upstream Excalidraw do not.
+`cloc` is installed on the development host (`DEVELOPMENT.md`). Documentation, the journal, deploy files, and application source all count. `node_modules`, virtualenvs, build output, and an embedded copy of upstream Excalidraw do not.
 
 ## Changelog and journal
 
@@ -73,4 +89,4 @@ cloc . --json --quiet --fullpath \
 
 ## GitHub Actions
 
-T01 adds `.github/workflows/ci.yml` to run ruff, ty, and pytest. The release script is the publisher. CI does not publish.
+T01 adds `.github/workflows/ci.yml` to run ruff, ty, and pytest, and T04 adds the web checks. `publish` requires those checks to pass for the release commit. CI does not publish.

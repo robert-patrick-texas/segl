@@ -230,10 +230,16 @@ def latest_of(ecosystem: str, name: str) -> str:
     raise SystemExit(f"unknown ecosystem {ecosystem}")
 
 
-def newest_python_patch(minor: str) -> str | None:
+# A stable CPython build in `uv python list` output. Pre-releases (3.16.0a1)
+# and build variants (3.15.2+freethreaded) do not match.
+STABLE_CPYTHON = re.compile(r"\bcpython-(\d+)\.(\d+)\.(\d+)-")
+
+
+def uv_cpython_versions() -> list[tuple[int, ...]] | None:
+    """Return the stable CPython versions uv can install here, or None if uv fails."""
     try:
         completed = subprocess.run(
-            ["uv", "python", "list", "--all-versions", minor],
+            ["uv", "python", "list", "--all-versions"],
             cwd=ROOT,
             check=False,
             capture_output=True,
@@ -244,21 +250,42 @@ def newest_python_patch(minor: str) -> str | None:
         return None
     if completed.returncode != 0:
         return None
-    found = re.findall(rf"\b{re.escape(minor)}\.\d+\b", completed.stdout)
-    if not found:
-        return None
-    return max(found, key=lambda value: tuple(int(part) for part in value.split(".")))
+    found = {
+        tuple(int(part) for part in match)
+        for match in STABLE_CPYTHON.findall(completed.stdout)
+    }
+    return sorted(found) or None
+
+
+def dotted(version: tuple[int, ...]) -> str:
+    return ".".join(str(part) for part in version)
+
+
+def python_status(pin: str) -> str:
+    """Compare the exact Python pin with the newest CPython that uv offers."""
+    parts = pin.split(".")
+    if len(parts) != 3 or not all(part.isdigit() for part in parts):
+        return f"python cpython {pin}: not an exact X.Y.Z pin (D2-016)"
+    current = tuple(int(part) for part in parts)
+    versions = uv_cpython_versions()
+    if versions is None:
+        return f"python cpython {pin}: lookup failed (uv python list did not answer)"
+    marks: list[str] = []
+    same_minor = max((v for v in versions if v[:2] == current[:2]), default=current)
+    if same_minor > current:
+        marks.append(f"newer {dotted(same_minor)}")
+    newest = max(versions)
+    if newest[:2] > current[:2]:
+        marks.append(f"newer minor {dotted(newest)}")
+    return f"python cpython {pin}: {', '.join(marks) if marks else 'current'}"
 
 
 def cmd_check() -> int:
     doc = load_versions()
     runtime_python = str(doc.get("runtime", {}).get("python", ""))
     print(f"segl {doc.get('project', {}).get('version')}  Python {runtime_python}")
-    patch = newest_python_patch(runtime_python) if runtime_python else None
-    if patch:
-        print(f"newest Python {runtime_python} patch: {patch}")
-    elif runtime_python:
-        print("Python patch check skipped (uv python list did not answer)")
+    if runtime_python:
+        print(python_status(runtime_python))
     rows = direct_rows(doc)
     if not rows:
         print("no direct dependencies listed yet")
@@ -301,7 +328,8 @@ def cmd_cut(publish: bool) -> int:
     """Upgrade, test, and publish once the application suite exists.
 
     Until pyproject.toml is present there is nothing to test, so this command
-    changes no files. T01 is what makes a real cut possible.
+    changes no files. T01 creates the suite and T01b finishes this command
+    to the contract in docs/RELEASING.md.
     """
     summary, topics = parse_unreleased(CHANGELOG.read_text(encoding="utf-8"))
     sentences = summary_sentence_count(summary)
@@ -315,20 +343,20 @@ def cmd_cut(publish: bool) -> int:
         raise SystemExit(
             "Not cutting a release. pyproject.toml is not in the tree yet, "
             "so there is no suite to run against newer dependency versions. "
-            "Use 'notes' to preview the announcement. T01 creates the project "
-            "this command will test before it changes versions.toml or publishes."
+            "Use 'notes' to preview the announcement. T01 creates the project, "
+            "and T01b finishes this command before it changes versions.toml."
         )
     doc = load_versions()
     new_version = bump_version(str(doc["project"]["version"]), topics)
     if publish:
         raise SystemExit(
-            f"Publish of {new_version} is wired for GitHub Releases and PyPI "
-            "after the upgrade-and-test loop lands with the first passing suite. "
+            f"Publishing {new_version} arrives with T01b as 'release.py publish', "
+            "after the upgrade-and-test loop. "
             "Refusing to upload from a tree that has not run that loop."
         )
     raise SystemExit(
         f"Would cut {new_version} after testing dependency upgrades. "
-        "The upgrade loop runs only once T01's suite is the command this script calls."
+        "T01b finishes the upgrade loop that runs T01's suite."
     )
 
 

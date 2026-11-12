@@ -1,0 +1,7 @@
+# The path lives in nginx
+
+The first plan gave segl a `base_path` setting: nginx forwarded `/board/s/1` unchanged, and Python had to be told it lived under `/board`. That is two files that must agree, and a mismatch shows up as a blank page. Sunstone and texas2step, the projects beside this one, already answer the question the other way. nginx strips the prefix, and the application never needs to know it. segl now follows Sunstone: one build, assets and API calls relative to the page, and no setting for the path. The only twist is that segl has a real second page depth, `/s/N`, so Python tells each page how far it is from the root (`./` or `../`).
+
+The same pass took Sunstone's and vakr's habits for everything else that touches a release. Every dependency moves to its newest release, however new it is. A release that fails the tests is held with the reason written down, and is tried again when it publishes again. The check that everything is current runs when the release is published, not when it was prepared. The web package uses npm and Playwright Test because those projects already do, so one person's muscle memory covers all three.
+
+The nginx snippet was checked before any application code existed. It ran in front of a stub backend that echoed what it received, which confirmed the details that are easy to get wrong: the prefix stripped, the port kept in `Host` for the Origin check, a client's own `X-Forwarded-For` thrown away, and HSTS surviving the include.

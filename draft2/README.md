@@ -17,7 +17,7 @@
 
 ## System in one pass
 
-A browser opens `{base}/s/N` (`N` is 1–9). Python returns the React application and a small runtime config that carries `basePath`. The page loads that slot's scene from SQLite, assigns a display label if the browser does not already have one, and joins a WebSocket room for that slot. Element edits and cursors fan out to the other browsers on the same slot. The server writes the head scene to SQLite and keeps the latest 50 revisions for restore. Slot 9 is the same mechanism as slot 1. A future protected area under `/{team}/{project}/{board}` is reserved and is not part of this MVP.
+A browser opens `s/N` under segl's root (`N` is 1–9), such as `https://dev.example.com/board/s/1`, where nginx strips `/board`. Python returns the React application with asset URLs relative to the page, and a small runtime config that names the way back to segl's root. The page loads that slot's scene from SQLite, assigns a display label if the browser does not already have one, and joins a WebSocket room for that slot. Element edits and cursors fan out to the other browsers on the same slot. The server writes the head scene to SQLite and keeps the latest 50 revisions for restore. Slot 9 is the same mechanism as slot 1. A future protected area under `/{team}/{project}/{board}` is reserved and is not part of this MVP.
 
 ## Repository the tasks create
 
@@ -40,11 +40,11 @@ segl/
   .python-version           # mirrors versions.toml runtime.python
   src/segl/                 # FastAPI application
   tests/                    # pytest
-  web/                      # Vite + React + TypeScript + Excalidraw
+  web/                      # Vite + React + TypeScript + Excalidraw, npm (D2-023)
   deploy/
     display-names.txt
     segl.toml.example
-    nginx/
+    nginx/                  # files a site includes; /board/ example (T00)
     systemd/segl.service
     Containerfile
     debian/
@@ -56,6 +56,7 @@ Production layout, built by T12, is separate from the git checkout:
 /opt/segl/python/           # uv-pinned CPython
 /opt/segl/venv/             # application virtualenv
 /opt/segl/app/              # server code and built web assets
+/opt/segl/share/nginx/      # the deploy/nginx files
 /opt/segl/etc/segl.toml
 /opt/segl/etc/display-names.txt
 /opt/segl/var/segl.sqlite

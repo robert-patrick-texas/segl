@@ -11,18 +11,18 @@ Priority **M** is required for the MVP gate. **L** is recorded so it is not buil
 | S-003 | M | Nine persistent slots | Slots 1–9 exist after first startup. Each has its own scene and title. Users cannot create or delete slots. |
 | S-004 | M | Restart recovery | After the process is killed once the UI says saved, the head scene returns on reload. |
 | S-005 | M | History | The latest 50 revisions per slot can be listed and restored. Restore updates every connected browser and can itself be restored. |
-| S-006 | M | Base path | The same build works at `/s/1` and at `/whiteboard/s/1` when `base_path` matches. |
+| S-006 | M | Mount path | The same build works at a host root (`/s/1`) and under a path a proxy strips (`https://dev.example.com/board/s/1`). No setting names the path, and the page requests nothing outside it. |
 | S-007 | M | No cookies | No MVP response sets `Set-Cookie`. Preferences and the edit token live in `localStorage`. |
 | S-008 | M | Optional edit token | With an empty token, every viewer can edit. With a token set, viewers still follow live, and scene, title, restore, and asset writes require the token. |
 | S-009 | M | Display labels | A new browser receives `WordN` from the name file and the server counter, keeps it, and can rename it with title case. |
 | S-010 | M | Presence list | The menu count equals current WebSocket connections on this slot. Activating it lists their labels. |
 | S-011 | M | JSON round-trip | A scene exported to Excalidraw JSON and imported back restores the drawing, bumps the epoch, and writes a revision. |
-| S-012 | M | Embedded image | An image on the canvas survives process restart and a new browser load. |
+| S-012 | M | Embedded image | An image on the canvas appears in the other open browsers on the slot, and survives process restart and a new browser load. |
 | S-013 | M | Connection state | The UI shows connecting, live, saving, saved, and disconnected. Reconnect reconciles without a blind overwrite. |
 | S-014 | M | Self-hosted runtime | With outbound network blocked, a loaded slot still renders the editor and previously saved scene. Fonts and assets are local. |
 | S-015 | M | Ubuntu install | A `.deb` installs uv-pinned CPython and the app under `/opt/segl`. systemd runs it. nginx proxies TLS to it. |
 | S-016 | M | Shared notice | Every slot shows that the workspace is shared and open. View-only clients also show that editing is locked. |
-| S-017 | M | Dev container | The rootless dev container runs the automated test suite, including the two-browser cases. |
+| S-017 | M | Dev container | The dev container runs the automated test suite, including the two-browser cases, under rootful Docker, rootless Docker, or rootless Podman. |
 
 ## Later — do not implement in P0
 

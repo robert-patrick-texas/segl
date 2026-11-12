@@ -1,7 +1,7 @@
 # Reporting a vulnerability
 
-Report a vulnerability through GitHub private vulnerability reporting on this repository once it is published. Do not open a public issue for an undisclosed security problem.
+Report a vulnerability privately through GitHub: open the repository's Security tab and choose "Report a vulnerability", or go to <https://github.com/robert-patrick-texas/segl/security/advisories/new>. Do not open a public issue for an undisclosed security problem.
 
-There is no public security mailing list yet. Until the GitHub repository exists, send the report privately to the maintainers.
+There is no security mailing list.
 
 The product model for the open slots (what they store, the edit token, and what they must not expose) is [`docs/SECURITY.md`](docs/SECURITY.md). That document is design guidance, not the reporting channel.

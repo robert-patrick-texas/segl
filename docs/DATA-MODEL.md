@@ -38,7 +38,7 @@ CREATE TABLE name_counter (
 
 Startup inserts slots 1–9 with title `Workspace N`, epoch 1, an empty scene the pinned editor accepts as `initialData`, and `name_counter.next_value = 1`. Capture the empty scene from the editor during T04 and store that fixture in tests. Do not hand-invent a scene schema and call it compatible.
 
-If the pinned editor stores images as binary outside the scene document, add a migration for hashed files under `assets_dir` rather than stretching `scene_json` past `max_scene_bytes`. Record that choice in `DECISIONS.md`.
+If the pinned editor stores images as binary outside the scene document, add a migration for hashed files under `assets_dir` rather than stretching `scene_json` past `max_scene_bytes`. Record that choice in `DECISIONS.md`. The head records each file's editor id and SHA-256 hash, so a new load can fetch the bytes from `/api/v1/assets/{hash}`.
 
 ## Repository methods
 

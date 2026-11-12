@@ -13,6 +13,11 @@ build/
 node_modules/
 web/dist/
 *.sqlite
+# Development data from the default config (docs/DEPLOY.md).
+var/
+# Playwright output.
+test-results/
+playwright-report/
 segl.toml
 *.local.toml
 .DS_Store

@@ -67,11 +67,6 @@ Nixon
 Ford
 Carter
 Reagan
-Bush
-Clinton
-Obama
-Trump
-Biden
 
 # State names, one word, 10 letters or fewer
 Alabama

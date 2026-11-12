@@ -7,8 +7,8 @@ How the MVP processes run together. Contracts are in `API.md` and `DATA-MODEL.md
 | Piece | Role |
 |---|---|
 | Browser | React application. Excalidraw is the canvas. A segl bar handles slots, title, presence, history, and the shared-workspace notice. |
-| nginx | TLS termination and reverse proxy. Forwards the request URI unchanged, including a site prefix such as `/whiteboard`. |
-| `segl` Python process | FastAPI on `127.0.0.1`. Serves the built web assets, REST, and the WebSocket. Owns SQLite and the display-name file. |
+| nginx | TLS termination and reverse proxy. Gives segl a host name of its own or a path on an existing site, such as `/board/`, which it strips before forwarding (`deploy/nginx/`). |
+| `segl` Python process | FastAPI on `127.0.0.1`. Serves the built web assets, REST, and the WebSocket at its own root. Owns SQLite, uploaded files, and the display-name file. |
 | SQLite | Head scene, revisions, name counter. One file, WAL mode. |
 | Display-name file | Plain text list on disk. Sites replace the file to change future labels. |
 
@@ -18,40 +18,49 @@ In-memory room state (who is connected, cursors, dirty heads waiting to flush) l
 
 ## Mount and navigation
 
-`base_path` is `/` or a prefix with a leading slash and no trailing slash (`/whiteboard`). Every route the browser uses hangs off that prefix:
+segl serves at its own root and has no setting for the path it is mounted under (D2-007). nginx can give it a host name of its own (`https://board.example.com/s/1`) or a path on an existing site (`https://dev.example.com/board/s/1`). In the second case nginx strips `/board` and segl sees `/s/1`. Every URL the page uses is relative to the page, so the browser stays under `/board/`. This follows Sunstone.
 
-- `{base}/` redirects to the last slot in `localStorage`, or `{base}/s/1` when none is stored.
-- `{base}/s/1` … `{base}/s/9` are the slots. Any other `/s/...` value redirects to slot 1.
-- `{base}/api/v1/...` is HTTP.
-- `{base}/collab` is the WebSocket.
-- Built assets are under `{base}/`.
+Routes at segl's root:
 
-`localStorage` keys include the base path so two mounts on one origin stay separate:
+- `/` serves the app, which opens the last slot in `localStorage`, or `s/1` when none is stored.
+- `/s/1` … `/s/9` are the slots. The app sends any other `/s/...` value to slot 1.
+- `/api/v1/...` is HTTP.
+- `/collab` is the WebSocket.
+- `/assets/...`, the editor's fonts, and the favicon are the Vite build output.
 
-- `segl:{basePath}:lastSlot`
+Vite builds with `base: './'`, so the built `index.html` names its files `./assets/...` and code-split chunks find each other relative to themselves. Python serves `index.html` for `/` and for `/s/{n}`. A slot page is one level down, so for it Python rewrites those `./` URLs to `../`. Both pages get:
+
+```html
+<script>window.SEGL_CONFIG = { "root": "../", "editRequired": false };</script>
+```
+
+`root` is the path from this page to segl's root: `./` on `/`, `../` on `/s/N`. A later, deeper route gets the matching number of `../`. The app resolves it once, `new URL(SEGL_CONFIG.root, location.href)`, to get its root URL, such as `https://dev.example.com/board/`. Everything else comes from that URL:
+
+- `basePath` is its path: `/board/`, or `/` at a host root. It is the React Router basename.
+- API calls are `new URL("api/v1/...", root)`.
+- The WebSocket is `new URL("collab?slot=N", root)` with `ws:` or `wss:` to match the page, so TLS follows the page.
+- `window.EXCALIDRAW_ASSET_PATH` is the root URL, so the editor loads its fonts from segl.
+
+`editRequired` is true when `edit_token` is non-empty. The token value is never injected. In the Vite dev server, which serves the page itself at the host root, a missing `SEGL_CONFIG` means `root` is the host root, and `editRequired` comes from `GET api/v1/config`.
+
+segl's own redirects are relative. nginx's `/board` to `/board/` redirect is in `deploy/nginx/segl-board.conf`.
+
+`localStorage` keys include `basePath` so two mounts on one origin stay separate:
+
+- `segl:{basePath}:lastSlot`, such as `segl:/board/:lastSlot`
 - `segl:{basePath}:displayName`
 - `segl:{basePath}:editToken`
 - `segl:{basePath}:clientId`
 
-The page learns `basePath` from the injected config, not from a build-time constant:
-
-```html
-<script>window.SEGL_CONFIG = { "basePath": "/whiteboard", "editRequired": false };</script>
-```
-
-`editRequired` is true when `edit_token` is non-empty. The token value is never injected.
-
-The React Router basename is `basePath`. The WebSocket URL is relative to the page (`{base}/collab?slot=N`) so TLS follows the page.
-
 ## Request path
 
-1. The browser requests `https://example.com/whiteboard/s/1`.
-2. nginx terminates TLS and proxies the full URI to `127.0.0.1`.
-3. Python returns `index.html` with `SEGL_CONFIG`.
-4. The app stores last-slot `1`, loads the head scene, and mounts Excalidraw.
+1. The browser requests `https://dev.example.com/board/s/1`.
+2. nginx terminates TLS, strips `/board`, and proxies `/s/1` to `127.0.0.1:8000`, with the client's address in `X-Forwarded-For`.
+3. Python returns `index.html` with `../` asset URLs and `SEGL_CONFIG`.
+4. The app stores last-slot `1`, loads the head scene from `api/v1/slots/1/scene` under its root, and mounts Excalidraw.
 5. If `displayName` is missing, the app asks the server for the next label and stores it.
 6. The app opens the WebSocket and sends `hello` with `clientId`, the display name, and the edit token when the browser has one.
-7. The server joins the connection to the in-memory room for slot 1 and sends the current head epoch plus the current participant list.
+7. The server joins the connection to the in-memory room for slot 1 and sends the current head epoch, the title, and the current participant list.
 8. An edit in the canvas sends the changed elements. The server reconciles them into the room scene, broadcasts the winners, and schedules a head flush.
 9. Other browsers on slot 1 apply those elements. Slot 2 is a different room and a different SQLite head.
 
@@ -65,6 +74,8 @@ segl owns the wire protocol. The canvas adapter is the only module that imports 
 - A full-scene replace happens on join (load the head) and when the epoch changes (restore or import).
 - Each head has an integer `epoch`, starting at 1. Ordinary element messages must name the current epoch. A stale epoch gets the current scene back so the client can reconcile, and the stale elements are not applied.
 - Restore and JSON import increment the epoch, replace the scene, append a revision, and broadcast the new scene to the room.
+- A title change (`PATCH` on the slot) is broadcast to the room as a `slot` message, so every open bar shows the new title.
+- Images are files, not elements. The browser that places one uploads the bytes (`POST api/v1/slots/{n}/assets`), then announces the file id and its hash in a `files` message. The server records the mapping with the head and relays it. Other browsers fetch `api/v1/assets/{hash}` and add the file to their editor, and a new load gets the mapping with the scene. T07 settles the details against the pinned editor's file model.
 - Cursors and the participant list are presence. They are not written to SQLite and they are not part of the scene.
 - The client shows one of: connecting, live, saving, saved, disconnected. `saved` means the head flush that includes that edit has finished.
 - On reconnect the client sends any elements it still holds that the server may have missed, then applies the server reconcile result. It does not replace the server head with a blind full-scene upload.
@@ -81,7 +92,7 @@ When `edit_token` is empty, every connection may mutate the scene, the title, th
 When `edit_token` is set:
 
 - Mutations include the token from `localStorage` (HTTP header `X-Segl-Edit-Token`, and the same value inside the WebSocket `hello` / later mutation messages).
-- A missing or wrong token joins as view-only. The server drops scene, title, restore, and asset mutations. Presence and rename still work.
+- A missing or wrong token joins as view-only. The server drops scene, title, restore, and file mutations. Presence and rename still work.
 - The comparison is constant-time. Logs record the slot and the byte size, not the token and not the scene body.
 - A shared link may carry the token in the URL fragment `#e=...`. The page writes it to `localStorage` and removes the fragment with `history.replaceState`. The fragment is not sent on the HTTP request.
 
@@ -101,4 +112,4 @@ SQLite holds slots, the head scene, revisions, and the name counter. The scene d
 
 ## What is intentionally absent
 
-No second collaboration process, no Redis, no PostgreSQL, no cookie session, no user accounts, no board create/delete, no inventory tables, and no route under `/{team}/{project}/{board}`. The repository interface is the seam those later stores will implement. Slot handlers do not call a protected-data function, because that function does not exist in this phase.
+No second collaboration process, no Redis, no PostgreSQL, no cookie session, no user accounts, no board create/delete, no inventory tables, no base-path setting, and no route under `/{team}/{project}/{board}`. The repository interface is the seam those later stores will implement. Slot handlers do not call a protected-data function, because that function does not exist in this phase.

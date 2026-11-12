@@ -6,12 +6,12 @@ The network perimeter is the access boundary for reading a slot. nginx listens o
 
 - TLS at nginx for any shared deployment. The application generates relative URLs so it does not terminate TLS itself.
 - `edit_token` compared with a constant-time compare. Wrong and missing tokens both yield a view-only connection.
-- Token storage on the client is `localStorage` under the base-path key. A shared link uses the `#e=` fragment, which the page strips after copying it into `localStorage`.
+- Token storage on the client is `localStorage` under the `basePath` key. A shared link uses the `#e=` fragment, which the page strips after copying it into `localStorage`.
 - No `Set-Cookie` on any response. No session middleware. No credentialed CORS.
-- Reject mutating requests whose `Origin` is present and is not this host. WebSocket upgrades follow the same origin check.
-- Body limits: `max_asset_bytes` default 10485760, `max_scene_bytes` default 52428800.
-- Display-name allocation: at most 30 successful or attempted allocations per minute per client address, in memory.
-- Asset reads use a SHA-256 hex name under `assets_dir`. Reject any other path shape.
+- Reject a mutating request whose `Origin` header is present and does not match its `Host` header, host and port, with `bad_origin`. nginx passes the browser's `Host` with its port (`deploy/nginx/segl-proxy.conf`). WebSocket upgrades follow the same check.
+- Body limits: `max_asset_bytes` default 10485760, `max_scene_bytes` default 52428800. nginx allows 52 MiB, so segl's own limits answer first.
+- Display-name allocation: at most 30 successful or attempted allocations per minute per client address, in memory. The client address is the `X-Forwarded-For` value when the connection comes from an address in `trusted_proxies` (default `127.0.0.1` and `::1`), and the connection's own address otherwise. nginx overwrites that header with the address it sees, so a client cannot choose it.
+- Uploaded-file reads (`/api/v1/assets/{hash}`) use a SHA-256 hex name under `assets_dir`. Reject any other path shape.
 - SQL parameters only. Slot numbers are integers 1–9.
 - Logs may include slot, epoch, revision, status, and byte size. Logs omit the edit token, cookies, authorization headers, and scene bodies.
 - Secrets live in `/opt/segl/etc/segl.toml`. When a token is set, that file is mode `0640` and group `segl`. The service user cannot write the Python install or the virtualenv.

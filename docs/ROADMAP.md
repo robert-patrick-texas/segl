@@ -4,7 +4,7 @@ Phases are dependency order, not dates. P0 is the task list in `draft2/TASKS.md`
 
 ## P0 — Collaborative slots
 
-Nine Excalidraw slots, live sync, SQLite durability, history, optional edit token, display labels, base path, dev container, and the `/opt/segl` `.deb`.
+Nine Excalidraw slots, live sync, SQLite durability, history, optional edit token, display labels, the relative mount, dev container, and the `/opt/segl` `.deb`.
 
 **Gate:** `TEST-PLAN.md` rows T-001 through T-018 pass and `draft2/STATUS.md` records the evidence. Next task becomes `NONE`.
 
