@@ -117,7 +117,7 @@ This file is the source of truth for what is done and what to do next. Update it
   - Still not listed in `versions.toml` or checked: the uv 0.13.7 image digest in `deploy/Containerfile`.
   - Next action T03.
 - 2026-11-12: T03 done. Evidence, all on commit `3d41422`:
-  - `uv run pytest` gave 259 passed and none skipped, on the host with SQLite 3.53.1 in Python 3.15.2. The 99 new tests are in `tests/test_repository.py`, `tests/test_slots.py`, `tests/test_routes.py`, and `tests/test_mount.py`.
+  - `uv run pytest` gave 259 passed and none skipped, on the host with SQLite 3.53.1 in Python 3.15.2. The 99 new tests are 37 in `tests/test_repository.py`, 42 in `tests/test_slots.py`, 17 in `tests/test_routes.py`, 2 in `tests/test_mount.py`, and 1 in `tests/test_license_headers.py`.
   - The acceptance test, `test_a_new_database_serves_nine_isolated_slots`, boots a temporary database and reads it over HTTP:
     - `GET /api/v1/slots` and each `GET /api/v1/slots/{n}` gave the titles `Workspace 1` to `Workspace 9`.
     - Every scene started as `{"elements": []}`. After a head was saved to slot 2, slot 2 returned it and the other eight were unchanged.
