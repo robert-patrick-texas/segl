@@ -109,26 +109,26 @@ ruff and ty pass.
 
 ## T02 — Config, relative mount, nginx harness
 
-- Status: next
+- Status: done
 - Requires: T01
 - Requirements: S-006, S-007
 - Read: `docs/DEPLOY.md`, `docs/ARCHITECTURE.md` (mount and navigation), `docs/API.md` (config route), `docs/SECURITY.md`
 
-Implement the TOML keys from `docs/DEPLOY.md` with those defaults, and the development defaults when `--config` is absent. Write `deploy/segl.toml.example` with the production paths. Serve health and `GET /api/v1/config` at segl's root. Run uvicorn with proxy headers believed only from `trusted_proxies`. Every redirect segl sends is relative. Inject nothing into pages yet; the config route is the contract test.
+Implement the TOML keys from `docs/DEPLOY.md` with those defaults, and the development defaults when `--config` is absent, with a `segl.toml` in the working directory read over them. Refuse a key segl does not know, and a value it cannot use, at startup. Write `deploy/segl.toml.example` with the production paths. Serve health and `GET /api/v1/config` at segl's root. Run uvicorn with proxy headers believed only from `trusted_proxies`. Every redirect segl sends is relative. The framework's trailing-slash redirect is absolute, so it is off, and segl sends no redirect yet. Inject nothing into pages yet; the config route is the contract test.
 
-Add nginx to the dev container. Add a pytest harness that runs the real segl server on a free loopback port, and nginx in front of it with the `deploy/nginx/` files. Copy those files to a temporary prefix, point the upstream at the test port, and use a test certificate in place of snakeoil. Do not edit the shipped files for the test.
+Add nginx and openssl to the dev container, and install nginx in CI. Add a pytest harness (`tests/harness.py`, used by `tests/test_mount.py`) that runs the real segl server on a free loopback port, and nginx in front of it with the `deploy/nginx/` files. Copy those files to a temporary prefix, point the upstream at the test port, and use a test certificate in place of snakeoil. Do not edit the shipped files for the test.
 
 Acceptance:
 
 - pytest covers the HTTP half of T-013 through the harness: `/board` redirects to `/board/`, and `/board/api/v1/health` and `/board/api/v1/config` reach segl. The same requests work at a host root.
 - Those responses have no `Set-Cookie` (start of T-012).
 - `nginx -t` passes for both site examples.
-- The harness skips with a clear message when nginx is not installed, and it does not skip in the dev container.
+- The harness skips with a clear message when nginx is not installed, or is older than 1.25.1, or openssl is missing. It does not skip in the dev container or in CI: `SEGL_REQUIRE_NGINX=1` turns the skip into a failure there.
 - ruff and ty pass.
 
 ## T03 — SQLite slots
 
-- Status: pending
+- Status: next
 - Requires: T02
 - Requirements: S-003
 - Read: `docs/DATA-MODEL.md`

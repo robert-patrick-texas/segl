@@ -4,10 +4,10 @@ This file is the source of truth for what is done and what to do next. Update it
 
 - Updated: 2026-11-12
 - Phase: P0 collaborative slots
-- Next task: T02
-- Completed: T00, T00b, T01, T01b
+- Next task: T03
+- Completed: T00, T00b, T01, T01b, T02
 - Blocked: no
-- Application code: Python skeleton (`src/segl`), health route only
+- Application code: Python service (`src/segl`) with settings, and the health and config routes
 
 ## Log
 
@@ -86,3 +86,33 @@ This file is the source of truth for what is done and what to do next. Update it
   - Not exercised for real: a hold written by a real failing release, a real `publish`, the web and Node paths (no `web/` yet), and PyPI upload.
   - Still not listed in `versions.toml` or checked: the uv 0.13.7 image digest in `deploy/Containerfile`.
   - Next action T02.
+- 2026-11-12: T02 done. Evidence, all on commit `95e1d3c`:
+  - `uv run pytest` gave 160 passed and none skipped, on the host with nginx 1.28.3 and OpenSSL 3.5.5. The 55 new tests are in `tests/test_config.py`, `tests/test_routes.py`, `tests/test_proxy_headers.py`, and `tests/test_mount.py`.
+  - Through nginx (`tests/test_mount.py`, the HTTP half of T-013), with the `deploy/nginx/` files copied to a temporary prefix in front of a real `python -m segl --config` process, over TLS with the test certificate verified:
+    - `nginx -t` passed for `site-board.example.conf` and for `site-root.example.conf`.
+    - `/board` → 301 with `Location: /board/`.
+    - `/board/api/v1/health` → `{"status":"ok"}` and `/board/api/v1/config` → `{"editRequired":false}`. The same two answered at the host root of the second site.
+    - None of those responses had `Set-Cookie` (start of T-012).
+    - segl's access log showed `/api/v1/health` with `/board` stripped, and the client as `127.0.0.1` although the request sent `X-Forwarded-For: 203.0.113.9`.
+    - `/api/v1/health` outside `/board/` got nginx's 404 and did not reach segl.
+    - `/board/api/v1/health/` got segl's 404 with no `Location`.
+    - The server block's HSTS header was on a proxied response.
+  - The copies differ from the shipped files in the upstream port, the listening ports, and `snippets/snakeoil.conf`. A test checks that the two snippets are copied byte for byte and that `deploy/nginx/` is unchanged afterwards.
+  - Without nginx: tests with `nginx` hidden got a skip reading `nginx is not installed: the tests through nginx (docs/TEST-PLAN.md T-013) did not run`, and a failure once `SEGL_REQUIRE_NGINX` was set. No host without nginx was tried.
+  - `docker build --progress=plain -f deploy/Containerfile .` (rootful Docker) installed nginx 1.28.3 and ran 160 passed on Python 3.15.2 with `SEGL_REQUIRE_NGINX=1`.
+  - CI run 43168575664 succeeded with 160 passed, after its new step installed nginx. Pages run 43168575659 succeeded. `python3 scripts/build_docs.py` found 0 broken links.
+  - `uv run ruff check .` and `uv run ty check` printed `All checks passed!`. `uv run ruff format --check .` printed `33 files already formatted`.
+  - Nine deliberate breakages each failed a test: the slash redirect back on, proxy headers off, every address trusted, `editRequired` always false, unknown keys allowed, and in `deploy/nginx/` the prefix not stripped, the client's `X-Forwarded-For` appended, an absolute `/board` redirect, and an `add_header` in the location.
+  - `uv run segl --config` with `base_path = "/board"` in the file printed `unknown key base_path` with the list of keys and exited 2.
+  - Choices the task left open:
+    - Without `--config`, segl reads `segl.toml` from the working directory when it exists. `docs/DEPLOY.md` said a local file "can override" the development defaults without saying how.
+    - An unknown key stops startup, so a misspelled `edit_token` cannot leave the slots open. `Settings` keeps the token out of its repr, and error messages do not repeat it.
+    - `trusted_proxies` takes addresses and networks, checked strictly. `*` is refused. An empty list believes nobody.
+    - FastAPI's trailing-slash redirect is off, because it is absolute. segl sends no redirect yet.
+    - The client address is checked in uvicorn's access log, since no route reports it until T05.
+    - The harness is `tests/harness.py`, imported by bare name through pytest's `pythonpath`. T04's Playwright setup can reuse `install_nginx` and `running_nginx`.
+    - CI installs nginx and sets `SEGL_REQUIRE_NGINX=1`. The task named only the dev container.
+    - nginx older than 1.25.1 (no `http2 on`) and a missing openssl also skip.
+  - Not done or not exercised: the port-80 servers in the site examples, the WebSocket and the page through nginx (T06, T04), gzip, IPv6 listeners (the copies drop them), rootless Docker and Podman, and the `Host` header segl receives, which T06's Origin check will test. Unknown paths still get FastAPI's `{"detail":"Not Found"}`, not the `{ "error", "message" }` shape in `docs/API.md`; T03 adds the first coded error.
+  - Still not listed in `versions.toml` or checked: the uv 0.13.7 image digest in `deploy/Containerfile`.
+  - Next action T03.
