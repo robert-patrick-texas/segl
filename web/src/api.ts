@@ -14,6 +14,7 @@
 
 /** The HTTP routes this page calls (docs/API.md). Every URL is under segl's root. */
 
+import { sceneElements, type WireElement } from './collab/elements.ts';
 import { isHash, parseFileRefs, type FileRef } from './collab/files.ts';
 import { apiUrl, type AppConfig } from './config.ts';
 import { parseRevisions, type RevisionInfo } from './history.ts';
@@ -29,6 +30,8 @@ export interface SlotInfo {
 export interface SlotScene {
 	/** The stored document, as the editor saved it. The canvas adapter reads it. */
 	scene: unknown;
+	/** That document's elements, which the server is known to hold. */
+	elements: WireElement[];
 	epoch: number;
 	savedAt: string;
 	editorLabel: string;
@@ -171,6 +174,7 @@ export async function fetchScene(
 	}
 	return {
 		scene: body.scene,
+		elements: sceneElements(body.scene),
 		epoch: body.epoch,
 		savedAt: String(body.savedAt ?? ''),
 		editorLabel: String(body.editorLabel ?? ''),

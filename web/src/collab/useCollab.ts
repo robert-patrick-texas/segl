@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { collabUrl, storageKey, type AppConfig } from '../config.ts';
 import { browserStorage } from '../slots.ts';
+import type { WireElement } from './elements.ts';
 import type { FileRef } from './files.ts';
 import { readClientId } from './identity.ts';
 import type { Cursor } from './protocol.ts';
@@ -27,6 +28,8 @@ export interface CollabOptions {
 	slot: number;
 	/** The epoch of the scene the canvas was loaded with, or null until it has loaded. */
 	epoch: number | null;
+	/** The elements of that scene. Kept the same until the next load. */
+	elements: readonly WireElement[];
 	/** The file list that came with that scene. Kept the same until the next load. */
 	files: readonly FileRef[];
 	/** This browser's display name, or null while it has none. */
@@ -49,7 +52,15 @@ export interface Collab {
  * that, and between slots, the state is the initial one: connecting, nobody
  * here.
  */
-export function useCollab({ config, slot, epoch, files, name, pass }: CollabOptions): Collab {
+export function useCollab({
+	config,
+	slot,
+	epoch,
+	elements,
+	files,
+	name,
+	pass
+}: CollabOptions): Collab {
 	const [editor, setEditor] = useState<SceneEditor | null>(null);
 	// Kept with its slot, so that a state from the slot just left is never shown.
 	const [held, setHeld] = useState<{ slot: number; state: SessionState } | null>(null);
@@ -73,6 +84,7 @@ export function useCollab({ config, slot, epoch, files, name, pass }: CollabOpti
 		const started = new CollabSession({
 			url: collabUrl(config, slot).href,
 			epoch,
+			elements,
 			editor,
 			// Read at each upload: a pass may arrive after the session began.
 			transport: httpTransport(config, slot, () => latestPass.current),
@@ -96,7 +108,7 @@ export function useCollab({ config, slot, epoch, files, name, pass }: CollabOpti
 			session.current = null;
 			setHeld(null);
 		};
-	}, [config, slot, epoch, files, editor]);
+	}, [config, slot, epoch, elements, files, editor]);
 
 	// The label changed after `hello` was sent with another, or with none.
 	useEffect(() => {

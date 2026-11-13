@@ -20,6 +20,7 @@ import {
 	knownFrom,
 	note,
 	pendingElements,
+	sceneElements,
 	type WireElement
 } from './elements.ts';
 
@@ -146,4 +147,26 @@ describe('isWireElement', () => {
 	])('%j is not one', (value) => {
 		expect(isWireElement(value)).toBe(false);
 	});
+});
+
+describe('sceneElements', () => {
+	test('a stored scene gives its elements, deleted ones among them', () => {
+		const kept = { id: 'a', version: 3, versionNonce: 9, type: 'rectangle' };
+		const deleted = { id: 'b', version: 2, versionNonce: 4, isDeleted: true };
+		const document = { type: 'excalidraw', elements: [kept, deleted], appState: {} };
+		expect(sceneElements(document)).toEqual([kept, deleted]);
+	});
+
+	test('what is not an element is left out, and the rest is kept', () => {
+		const good = { id: 'a', version: 1, versionNonce: 1 };
+		const document = { elements: [null, 'a', { id: 'x' }, good, { id: 'y', version: '2' }] };
+		expect(sceneElements(document)).toEqual([good]);
+	});
+
+	test.each([null, undefined, 7, 'scene', [], {}, { elements: null }, { elements: { a: 1 } }])(
+		'%j has none',
+		(document) => {
+			expect(sceneElements(document)).toEqual([]);
+		}
+	);
 });

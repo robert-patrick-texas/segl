@@ -106,6 +106,7 @@ The project is specified, licensed, and public on GitHub. A Python service reads
 
 ### Fixed
 
+- A browser that opens a slot no longer sends the scene it loaded back to the server. The page's list of what the server holds started empty, so a change the canvas reported between `welcome` and `scene` made every loaded element look unsent: 462,000 characters for a slot of 1,024 elements, in 5 loads of 12. The list now starts with the loaded scene. Nothing was lost before, and nothing changes on the server.
 - The segl bar wraps when its parts do not fit on one line, at any width. It used to wrap only below 720 pixels. Between there and about 1,100 pixels the notice was squeezed into a column a word wide: at 800 pixels the bar of an open slot was 203 pixels tall, and the slot's title was cut to its first letter. It is 70 pixels tall there now, with the title whole.
 - A viewer's canvas takes nothing that is dropped on it. The editor's view mode does not cover a drop, so an image dragged onto the canvas of a browser that may not edit was placed there, for that browser alone. The server had refused it all along.
 - A hand-made `elements` message with a number too large to hold, such as `1e999`, is `bad_message`. It used to be taken: Python read it as infinity, the other browsers were sent `Infinity`, which is not JSON, and the slot's stored scene could then not be loaded by any browser. No browser sends such a number.

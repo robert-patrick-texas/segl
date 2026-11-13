@@ -180,8 +180,19 @@ interface Harness {
 	state(): SessionState;
 }
 
-function start(epoch = 1, files: FileRef[] = []): Harness {
+/**
+ * A session over a canvas that was loaded with `loaded`: the elements the
+ * scene route returned, which the canvas holds from the start. `early` is
+ * what the person drew before the session began.
+ */
+function start(
+	epoch = 1,
+	files: FileRef[] = [],
+	loaded: WireElement[] = [],
+	early: WireElement[] = []
+): Harness {
 	const editor = new FakeEditor();
+	editor.draw(...loaded, ...early);
 	const transport = new FakeTransport();
 	const sockets: FakeSocket[] = [];
 	const states: SessionState[] = [];
@@ -189,6 +200,7 @@ function start(epoch = 1, files: FileRef[] = []): Harness {
 	const session = new CollabSession({
 		url: URL,
 		epoch,
+		elements: loaded,
 		editor,
 		transport,
 		files,
@@ -310,6 +322,103 @@ describe('joining', () => {
 		expect(harness.editor.calls).toEqual(['reconcile']);
 		expect(harness.editor.held).toEqual([element('a', 1), element('b', 4)]);
 		expect(socket.take()).toEqual([]);
+	});
+});
+
+describe('the scene the canvas was loaded with', () => {
+	const LOADED = [element('a', 1), element('b', 4)];
+
+	/** Open the socket and take it to `welcome`. The server's `scene` is still to come. */
+	function welcomed(harness: Harness): FakeSocket {
+		const socket = harness.socket();
+		socket.open();
+		welcome(socket);
+		socket.take();
+		return socket;
+	}
+
+	test('is not sent back when the canvas reports a change before the scene arrives', () => {
+		const harness = start(1, [], LOADED);
+		const socket = welcomed(harness);
+
+		// The canvas reports a change: it drew the people `welcome` named.
+		harness.session.localChange();
+		vi.advanceTimersByTime(1000);
+		expect(socket.take()).toEqual([]);
+
+		socket.receive({ type: 'scene', epoch: 1, elements: LOADED, files: [] });
+		harness.session.localChange();
+		vi.advanceTimersByTime(1000);
+		expect(socket.take()).toEqual([]);
+		// Nothing was sent, so the bar never said `saving`, and has nothing to call saved.
+		expect(harness.states.map((state) => state.status)).not.toContain('saving');
+		expect(harness.state().status).toBe('live');
+	});
+
+	test('what the person draws before the scene arrives goes at once, alone', () => {
+		const harness = start(1, [], LOADED);
+		const socket = welcomed(harness);
+
+		harness.editor.draw(element('new', 1));
+		harness.session.localChange();
+		expect(harness.state().status).toBe('saving');
+		vi.advanceTimersByTime(SEND_INTERVAL_MS);
+
+		expect(socket.take()).toEqual([
+			{ type: 'elements', epoch: 1, elements: [element('new', 1)], seq: 1 }
+		]);
+	});
+
+	test('a loaded element the person changed before the scene arrives is sent, and the rest is not', () => {
+		const harness = start(1, [], LOADED);
+		const socket = welcomed(harness);
+
+		harness.editor.draw(element('b', 5));
+		harness.session.localChange();
+		vi.advanceTimersByTime(SEND_INTERVAL_MS);
+
+		expect(socket.take()).toEqual([
+			{ type: 'elements', epoch: 1, elements: [element('b', 5)], seq: 1 }
+		]);
+	});
+
+	test('what was drawn before the session began is not taken for the loaded scene', () => {
+		const harness = start(1, [], LOADED, [element('early', 1), element('b', 5)]);
+		const socket = welcomed(harness);
+
+		// It goes with the first change the canvas reports, before the scene arrives.
+		harness.session.localChange();
+		vi.advanceTimersByTime(SEND_INTERVAL_MS);
+
+		expect(socket.take()).toEqual([
+			{ type: 'elements', epoch: 1, elements: [element('b', 5), element('early', 1)], seq: 1 }
+		]);
+	});
+
+	test('a newer copy the room holds is taken, and nothing is sent for it', () => {
+		const harness = start(1, [], LOADED);
+		const socket = welcomed(harness);
+		harness.session.localChange();
+
+		// The stored scene the page loaded was a flush behind the room.
+		const room = [element('a', 2), element('b', 4), element('c', 1)];
+		socket.receive({ type: 'scene', epoch: 1, elements: room, files: [] });
+		vi.advanceTimersByTime(1000);
+
+		expect(harness.editor.held).toEqual(room);
+		expect(socket.take()).toEqual([]);
+	});
+
+	test('the scene is what the server holds from then on: a loaded element the room lacks is sent', () => {
+		// A server that came back without something it had served.
+		const harness = start(1, [], LOADED);
+		const socket = welcomed(harness);
+
+		socket.receive({ type: 'scene', epoch: 1, elements: [element('a', 1)], files: [] });
+
+		expect(socket.take()).toEqual([
+			{ type: 'elements', epoch: 1, elements: [element('b', 4)], seq: 1 }
+		]);
 	});
 });
 
@@ -1614,6 +1723,7 @@ describe('images', () => {
 		const session = new CollabSession({
 			url: URL,
 			epoch: 1,
+			elements: [picture()],
 			editor,
 			transport,
 			files: [REF],

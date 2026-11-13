@@ -28,6 +28,7 @@ import {
 } from './api.ts';
 import { editingState } from './bar/notice.ts';
 import { SeglBar } from './bar/SeglBar.tsx';
+import type { WireElement } from './collab/elements.ts';
 import type { FileRef } from './collab/files.ts';
 import { useCollab } from './collab/useCollab.ts';
 import { storageKey, type AppConfig } from './config.ts';
@@ -42,6 +43,7 @@ const Canvas = lazy(() => import('./canvas/Canvas.tsx'));
 
 const NO_TITLES: ReadonlyMap<number, string> = new Map();
 const NO_FILES: readonly FileRef[] = [];
+const NO_ELEMENTS: readonly WireElement[] = [];
 
 export interface SlotPageProps {
 	config: AppConfig;
@@ -63,6 +65,7 @@ export function SlotPage({ config, slot, displayName, editPass }: SlotPageProps)
 		config,
 		slot,
 		epoch: scene === null ? null : scene.epoch,
+		elements: scene === null ? NO_ELEMENTS : scene.elements,
 		files: scene === null ? NO_FILES : scene.files,
 		name: displayName.name,
 		pass

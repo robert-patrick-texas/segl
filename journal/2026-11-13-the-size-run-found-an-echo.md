@@ -28,6 +28,8 @@ Nothing is lost. Every browser still ended with the same scene, and the server a
 
 T11 recorded it and did not change it: the session is T06's code, and the fix is the owner's call. It is small. The page already has the scene it loaded, and can start its list from that.
 
+The owner said yes the same day. The list now starts with the loaded scene, as the session's list of image files already did. A browser test holds `scene` back for a whole second, so the gap is certain, and fails if the page sends anything it did not draw. Before the fix it failed at every mount. After it, twelve loads of the 1,024-element slot sent nothing.
+
 ## The numbers
 
 In the dev container, on a four-core host, with a browser that draws without a GPU:

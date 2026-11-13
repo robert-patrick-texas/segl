@@ -29,9 +29,11 @@ import {
 	elementIds,
 	elementOf,
 	expectLive,
+	expectSaved,
 	joinSlot,
 	nameButton,
 	openPeople,
+	openSlot,
 	presenceCount,
 	SLOTS,
 	socketSwitch,
@@ -348,4 +350,54 @@ test('a drawing stays on its slot when the person goes to another', async ({ pag
 	await switchSlot(page, SLOTS.drawing, `Workspace ${SLOTS.drawing}`);
 	await expectElement(page, here);
 	expect(await elementIds(page)).not.toContain(there);
+});
+
+test('a browser that opens a slot sends none of the drawing it loaded back', async ({
+	page,
+	person
+}) => {
+	const slot = SLOTS.drawing;
+	const other = await person('Cy');
+	await joinSlot(other, slot);
+	const theirs = await drawRectangle(other, -300, 150);
+	await expectSaved(other);
+
+	// The page loads the scene over HTTP, and the server's own copy comes over
+	// the socket after `welcome`. Here it comes a second later, so whatever the
+	// page would send in between, it sends.
+	const sent: { type: string; elements?: { id: string }[] }[] = [];
+	await page.routeWebSocket(/\/collab\?slot=\d$/, (route) => {
+		const server = route.connectToServer();
+		route.onMessage((message) => {
+			sent.push(JSON.parse(String(message)) as (typeof sent)[number]);
+			server.send(message);
+		});
+		server.onMessage((message) => {
+			const { type } = JSON.parse(String(message)) as { type: string };
+			if (type === 'scene') setTimeout(() => route.send(message), 1000);
+			else route.send(message);
+		});
+	});
+	await openSlot(page, `s/${slot}`);
+	await expectLive(page);
+	await expectElement(page, theirs);
+	// The canvas has something to report meanwhile: the other person is drawn
+	// on it at `welcome`, and their pointer moves.
+	const canvas = (await other.locator('.excalidraw canvas.interactive').boundingBox())!;
+	await other.mouse.move(canvas.x + 300, canvas.y + 300);
+	await other.mouse.move(canvas.x + 400, canvas.y + 350, { steps: 5 });
+	await expect.poll(async () => (await canvasPeers(page)).length).toBe(1);
+	await page.waitForTimeout(1500);
+
+	const edits = () => sent.filter((message) => message.type === 'elements');
+	expect(edits()).toEqual([]);
+	// It drew nothing, so the bar has nothing to call saved.
+	await expect(connectionStatus(page)).toHaveAttribute('data-state', 'live');
+
+	// What it then draws goes out, and nothing else with it.
+	const mine = await drawRectangle(page, 300, 150);
+	await expectSaved(page);
+	await expectElement(other, mine);
+	const ids = edits().flatMap((message) => (message.elements ?? []).map((each) => each.id));
+	expect([...new Set(ids)]).toEqual([mine]);
 });

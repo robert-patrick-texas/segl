@@ -22,7 +22,9 @@
  * It keeps no queue of edits. What it keeps is `known`, the copy of each
  * element the server holds. Whatever the canvas holds that beats that copy is
  * what has to be sent: after an edit, and after a reconnect, when the canvas
- * still holds everything drawn while the socket was down.
+ * still holds everything drawn while the socket was down. The list starts
+ * with the scene the canvas was loaded with, which the server sent, so the
+ * loaded scene is never sent back.
  *
  * It numbers what it sends, and the server answers `saved` with the number of
  * the newest message that is on its disk. Until then the status is `saving`.
@@ -114,6 +116,8 @@ export interface SessionOptions {
 	url: string;
 	/** The epoch of the scene the canvas was loaded with. */
 	epoch: number;
+	/** The elements of that scene, as the server sent them over HTTP. */
+	elements: readonly WireElement[];
 	editor: SceneEditor;
 	/** How the files of images reach the server and come back. */
 	transport: FileTransport;
@@ -162,7 +166,7 @@ export class CollabSession {
 	private live = false;
 	private failures = 0;
 	private epoch: number;
-	private known: Known = new Map();
+	private known: Known;
 	/** The number of the newest message sent that the server answers with `saved`. */
 	private seq = 0;
 	/** The newest of those numbers the server has called saved. */
@@ -183,6 +187,9 @@ export class CollabSession {
 	constructor(options: SessionOptions) {
 		this.options = options;
 		this.epoch = options.epoch;
+		// The server holds what it served. Without this, a change the canvas
+		// reports before the socket's `scene` arrives would send all of it back.
+		this.known = knownFrom(options.elements);
 		this.files = new FileSync({
 			editor: options.editor,
 			transport: options.transport,

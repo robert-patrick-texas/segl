@@ -64,6 +64,17 @@ export function note(known: Known, elements: readonly WireElement[]): void {
 	}
 }
 
+/**
+ * The elements of a stored scene document, as the scene route returns one.
+ * The server holds each of them, or a newer copy. Anything that is not an
+ * element segl can read is left out, as the socket leaves it out.
+ */
+export function sceneElements(document: unknown): WireElement[] {
+	if (typeof document !== 'object' || document === null) return [];
+	const { elements } = document as { elements?: unknown };
+	return Array.isArray(elements) ? elements.filter(isWireElement) : [];
+}
+
 export function knownFrom(elements: readonly WireElement[]): Known {
 	const known: Known = new Map();
 	note(known, elements);
