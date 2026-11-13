@@ -1,0 +1,170 @@
+# Which tests run each row of docs/TEST-PLAN.md.
+#
+# `scripts/testplan.py` runs pytest and the browser tests once, then reads
+# each row's result here. A row passes when every test it names ran and
+# passed. A skipped test fails its row. `tests/test_testplan.py` holds this
+# file to the test plan and to the tests' names.
+#
+# pytest:  "tests/file.py" is every test of the file.
+#          "tests/file.py::test_name" is one test, with all its cases.
+# browser: "file.spec.ts" is every test of the spec.
+#          "file.spec.ts > title" is one test. A test inside a
+#          `test.describe` has the group's title first: "spec > group > title".
+#
+# T-017 (the .deb, T12) and T-018 (this run, in the dev container) have no
+# tests here. The script says so.
+
+# The Playwright projects a spec's tests must pass in. `default` is the three
+# mounts: Python alone, nginx at a host root, and nginx at /board/.
+[projects]
+default = ["direct", "root", "board"]
+"access.spec.ts" = ["access-direct", "access-root", "access-board"]
+"durability.spec.ts" = ["restart"]
+"expiry.spec.ts" = ["restart"]
+
+[rows.T-001]
+pytest = [
+    "tests/test_room.py::test_a_drawn_element_reaches_the_others_and_not_its_sender",
+    "tests/test_collab.py::test_two_connections_on_a_slot_see_each_other_and_share_edits",
+]
+browser = ["collab.spec.ts > a rectangle drawn in one browser appears in the other"]
+
+[rows.T-002]
+pytest = ["tests/test_room.py::test_two_people_drawing_at_once_both_keep_their_elements"]
+browser = ["collab.spec.ts > both browsers draw at the same time, and both elements remain"]
+
+[rows.T-003]
+pytest = ["tests/test_room.py::test_a_deleted_element_stays_deleted"]
+browser = [
+    "collab.spec.ts > an element one browser moved and the other deleted stays gone",
+    "saving.spec.ts > a deleted element is not brought back by the stored head",
+]
+
+[rows.T-004]
+browser = ["collab.spec.ts > a killed socket shows disconnected, and edits made meanwhile reconcile"]
+
+[rows.T-005]
+pytest = ["tests/test_durability.py::test_a_drawing_is_there_after_everyone_left_and_came_back"]
+browser = [
+    "saving.spec.ts > a drawing is still there after both browsers closed, and slot 1 is unchanged",
+]
+
+[rows.T-006]
+pytest = [
+    "tests/test_durability.py::test_a_killed_process_comes_back_with_the_scene_it_called_saved",
+]
+browser = [
+    "durability.spec.ts > after the bar says saved, a killed and restarted server has the scene",
+]
+
+[rows.T-007]
+pytest = [
+    "tests/test_durability.py::test_an_image_placed_in_one_browser_reaches_the_other_and_a_later_one",
+    "tests/test_durability.py::test_an_image_is_there_after_the_process_is_killed_and_started",
+]
+browser = [
+    "images.spec.ts > an image placed in one browser shows in the other and in a later one",
+    "durability.spec.ts > an image is there after the server is killed and restarted",
+]
+
+[rows.T-008]
+pytest = [
+    "tests/test_room.py::test_a_viewer_sees_edits_and_cannot_make_them",
+    "tests/test_collab.py::test_without_a_token_configured_everyone_edits",
+    "tests/test_collab.py::test_with_a_token_a_client_without_it_watches_and_cannot_edit",
+    "tests/test_collab.py::test_with_a_token_a_running_server_gates_the_scene_and_the_title",
+    "tests/test_history.py::test_with_a_token_a_running_server_gates_the_restore",
+    "tests/test_import.py::test_with_a_token_a_running_server_gates_the_import",
+    "tests/test_access.py::test_a_real_process_issues_a_pass_for_a_code_in_its_toml",
+]
+browser = [
+    "access.spec.ts > a browser without a pass watches live and cannot change the canvas",
+    "access.spec.ts > a browser without a pass cannot change the title, and sees the change of one that has one",
+    "access.spec.ts > a browser without a pass reads the history and cannot restore, and follows a restore",
+    "access.spec.ts > a browser without a pass cannot import, and follows an import",
+    "access.spec.ts > a browser without a pass cannot upload, and paints the image of one that has one",
+    "slot.spec.ts > without access codes every browser edits, and the bar offers no access page",
+]
+
+[rows.T-009]
+pytest = [
+    "tests/test_import.py::test_a_drawing_is_exported_cleared_and_imported_back",
+    "tests/test_import.py::test_an_import_survives_a_kill_and_so_do_its_files",
+]
+browser = [
+    "import.spec.ts > a drawing is exported, the slot is cleared, and the file brings it back for everyone",
+]
+
+[rows.T-010]
+browser = [
+    "mount.spec.ts > a new visitor > the slot page stays inside its mount, with outbound network blocked",
+]
+
+[rows.T-011]
+pytest = [
+    "tests/test_history.py::test_the_list_is_at_most_the_history_limit",
+    "tests/test_history.py::test_restoring_an_older_revision_switches_every_connection_and_can_be_undone",
+]
+browser = [
+    "history.spec.ts > an older version is restored in every browser, and the one it replaced comes back",
+]
+
+[rows.T-012]
+pytest = [
+    "tests/test_sweep.py",
+    "tests/test_origin.py",
+    "tests/test_collab.py::test_a_running_server_serves_the_socket",
+    "tests/test_collab.py::test_a_running_server_refuses_a_socket_from_another_site",
+]
+browser = ["origin.spec.ts"]
+
+[rows.T-013]
+pytest = [
+    "tests/test_mount.py",
+    "tests/test_collab.py::test_two_sockets_sync_through_nginx_at_board_and_at_a_host_root",
+]
+browser = [
+    "mount.spec.ts",
+    "slot.spec.ts > a slot shows the editor under the segl bar",
+    "collab.spec.ts > a rectangle drawn in one browser appears in the other",
+]
+
+[rows.T-014]
+pytest = [
+    "tests/test_names.py::test_three_new_clients_get_guest1_staff2_guest3",
+    "tests/test_names.py::test_through_nginx_31_names_from_one_address_are_limited_at_30",
+    "tests/test_room.py::test_a_rename_is_title_cased_and_sent_to_everyone",
+]
+browser = [
+    "names.spec.ts > a new visitor > is given a label once, and keeps it across reloads and slots",
+    "names.spec.ts > a returning visitor keeps the stored label and asks for none",
+    "names.spec.ts > a rename is title-cased, stored, and kept across a reload",
+    "collab.spec.ts > a rename is shown to everyone on the slot, title-cased",
+]
+
+[rows.T-015]
+pytest = ["tests/test_collab.py::test_two_connections_on_a_slot_see_each_other_and_share_edits"]
+browser = ["collab.spec.ts > the count is the connections on this slot, and the list names them"]
+
+[rows.T-016]
+pytest = [
+    "tests/test_collab.py::test_a_title_change_is_stored_and_sent_to_the_slots_room",
+    "tests/test_collab.py::test_slots_still_have_no_create_or_delete_route",
+]
+browser = [
+    "collab.spec.ts > a new title is seen by a second browser, and is still there after a reload",
+]
+
+[rows.T-019]
+pytest = ["tests/test_access.py"]
+browser = [
+    "access.spec.ts > a viewer follows the link in the bar, enters the code, and edits",
+    "access.spec.ts > a wrong code is answered in words, and the right one then lets the browser edit",
+    "access.spec.ts > a browser that has to wait is told for how long, and one the server cannot answer to try again",
+    "access.spec.ts > a browser whose pass the server does not take is told that its access has ended",
+    "access.spec.ts > a pass stamped now that no code of this segl signed is not taken",
+    "expiry.spec.ts > a pass ends: the browser stops taking edits before the server would refuse one, and a code entered again lets it edit",
+]
+
+[rows.T-020]
+pytest = ["tests/test_networks.py"]

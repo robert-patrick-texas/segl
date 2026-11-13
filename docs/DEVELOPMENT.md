@@ -13,7 +13,7 @@ These versions were verified on the development host, Ubuntu 26.04.1 LTS on amd6
 | uv | 0.13.7 | Python and every Python command (`uv sync`, `uv run`). It installs the pinned CPython, 3.15.2, so the app never uses the system Python. | T01 |
 | python3 | 3.14.4 (system) | Only `scripts/release.py`, which needs Python 3.11 or newer and the standard library. | T00 |
 | cloc | 2.06 | The line count in release notes (`RELEASING.md`). | T00 |
-| Docker | 29.8.2, rootful | The dev container, `FROM ubuntu:26.04`. Rootless Docker or rootless Podman also work (D2-015). | T01 |
+| Docker | 29.8.2, rootful and rootless | The dev container, `FROM ubuntu:26.04`. T11 ran it under both. Rootless Podman is allowed too (D2-015) and was not tried. | T01 |
 | Node.js and npm | 26.13.1 and 11.20.0 | Building and testing `web/`. The version is `web/.node-version`, the newest LTS release (D2-023). npm refuses another major (`engine-strict`), so put this Node first on `PATH` when the host's default is a different one. | T04 |
 | nginx | 1.28.3 | The mount tests, which run it without root on loopback ports with the `deploy/nginx/` files. They need 1.25.1 or newer. The dev container installs its own. | T02 |
 | openssl | 3.5.5 | The mount tests' certificate. | T02 |
@@ -35,7 +35,7 @@ $ PW_WS_ENDPOINT=ws://127.0.0.1:3124/ npm --prefix web run e2e
 
 `<version>` must equal the `@playwright/test` version in `versions.toml`, 1.65.0 today. `web/playwright.config.ts` reads `PW_WS_ENDPOINT`. The container shares the host's network, so its browser reaches the test servers on `127.0.0.1`. The tests pass the browser no launch arguments, which that server would drop unless started with `--unsafe`.
 
-CI installs the browser with `npx playwright install --with-deps chromium`, which also installs its system libraries.
+CI installs the browser with `npx playwright install --with-deps chromium`, which also installs its system libraries. The dev container's image has both, installed the same way, so the browser tests run in it with no second container.
 
 ## What the browser tests start
 
@@ -95,11 +95,7 @@ uv run ty check
 
 `uv run pytest` covers `tests/` and `tools/md2html`. The page tests (`tests/test_web.py`) use a small stand-in for `web/dist`, so pytest needs no web build. One of them holds the stand-in to the real build when `web/dist` exists, and skips when it does not. Some tests start a real `segl` process on a free loopback port. The mount tests (`tests/test_mount.py`) also start nginx in front of it, from a temporary copy of the `deploy/nginx/` files (`tests/harness.py`), and so does the display-name limit's test (`tests/test_names.py`). A test server's word file is `Guest` and `Staff`. On a host without nginx or openssl they skip, and the summary line says why. With `SEGL_REQUIRE_NGINX=1` they fail instead. The dev container and CI set it. The harness's own client is held at TLS 1.2 (`running_mount`). Under TLS 1.3 its WebSocket client, the `websockets` package, sometimes lost its request on a busy machine, and a test then failed with a handshake that was not answered. nginx runs the shipped files either way and still offers TLS 1.3, which the browser tests use. `uv run python tests/handshake_loop.py 3000 --busy 8` repeats the measurement, and with `--tls13` it runs without the hold, which is how to find out whether a newer `websockets` lets it go (`ROADMAP.md`, held until a dependency moves). When a server keeps a test waiting, the harness says what the server had written. A WebSocket handshake that is not answered in ten seconds fails the test with the last 40 lines of segl's log, and through nginx also of nginx's `error.log` and `access.log`, where the client's bare timeout used to be. Through nginx that failure comes when the connection ends, which may be later than the ten seconds: the client waits for nginx to let go. A server that has not stopped ten seconds after SIGTERM is killed, as before, and is now named in a warning in pytest's summary with the end of its log. `tests/test_harness.py` holds both, with a segl that is stopped where it stands (SIGSTOP) to stand in for a host that stalls. The release script's tests use fakes for the network, `gh`, and `git push`, and real `git` in a temporary repository. One test builds the wheel with `uv build` to confirm it carries `versions.toml` and the SQL migrations, so it needs the network the first time. The repository and slot tests each use a SQLite file in pytest's temporary folder. The room tests (`tests/test_room.py`) need no socket: a test's browser is a list of the messages the room delivered. The socket tests (`tests/test_collab.py`) use the FastAPI test client entered as a context manager, so that every socket of a test shares one event loop as in the server, then a real `segl` process, and then nginx in front of one, with the `websockets` client. The saver's tests (`tests/test_saver.py`) run a room over a real database with flush intervals of a hundredth of a second, or of an hour where only a leave or a stop may be the reason for a write, and with a clock the test moves for the history interval. `tests/test_durability.py` is T-005, T-006, and T-007 at the socket: it kills a `segl` process with SIGKILL, or stops it with SIGTERM, and starts another over the same folder. `tests/test_assets.py` covers the file store and its two routes, through nginx too. `tests/test_history.py` is the revision routes and restore: T-011 and the history part of T-008 at the socket, the 51st revision as the list route shows it, a restore across two kills of a `segl` process, and both through nginx. How a restore takes its turn with the head flushes is in `tests/test_saver.py`, where a test holds a write open in its worker thread. `tests/test_sweep.py` is T-012 as one walk: a table of one request for every route, asked as segl's own page asks, as a page of another site asks, and as a browser without a pass asks, in process and through nginx in front of a real process that has access codes. No answer may set a cookie or carry a CORS header, a refusal among them. One of its tests compares the table with the routes the application registers, so a new route has to join the walk. `tests/reconcile_cases.json` is one table of which copy of an element is kept. pytest, Vitest, and a browser test all read it. `tests/test_access.py` is the access codes: a code's normal form, the pass and each reason to refuse one with a clock the test moves, the count of wrong codes, the route, and each gate, then a real process with codes in its TOML, and nginx in front of one. `tests/test_networks.py` is `internal_networks`: in process, where the test says which address the client has, and against a real process that is sent `X-Forwarded-For`. `tests/harness.py` has a code, a secret, and `issue_pass` for the tests of the other routes. `tests/header_value_cases.json` is one table of what a page can, and cannot, send in a request header, which Vitest holds the page's stored pass to and pytest holds an issued pass to. ruff's settings are in `pyproject.toml`: 100-character lines, Markdown left alone, and `scripts/` kept to Python 3.11 syntax because the host's `python3` runs them.
 
-The dev container runs the same suite while it builds, from the repository root:
-
-```bash
-docker build -f deploy/Containerfile .    # or: podman build -f deploy/Containerfile .
-```
+The dev container runs the same suite while it builds (below).
 
 Web, from T04:
 
@@ -114,7 +110,58 @@ npm --prefix web run e2e               # Playwright, against Python serving that
 
 `npm --prefix web run format` rewrites the files Prettier would complain about. Vitest covers the modules that need no browser: how the page finds segl's root, slot parsing and the last slot, display names, slot titles, the canvas adapter's reading of a stored scene, the collaboration session (against a socket, a canvas, and a file server the test supplies, with a clock it moves), the messages of the socket, the files of images (`web/src/collab/files.ts`, and the `data:` URL codec beside it), the stored pass (`web/src/pass.ts`), the access page's logic (`web/src/access.ts`: what the server's answer to a code means, and the words for it), the notice in the bar, and the build scripts. `tests/display_name_cases.json` is one table of typed names and what segl shows for each. Vitest and pytest both read it, so the browser's title case and the server's cannot drift apart. A test (`tests/test_pins.py`) holds `web/package.json`, `web/package-lock.json`, and `web/.node-version` to `versions.toml`.
 
-CI runs the same commands (`.github/workflows/ci.yml`). It installs nginx and Chromium, sets `SEGL_REQUIRE_NGINX=1`, and builds `web/` before pytest. The dev container runs them too, except the browser tests, which join in T11.
+CI runs the same commands (`.github/workflows/ci.yml`). It installs nginx and Chromium, sets `SEGL_REQUIRE_NGINX=1`, and builds `web/` before pytest.
+
+## The dev container
+
+The dev container is Ubuntu 26.04 with uv, Node, nginx, and Chromium (`deploy/Containerfile`). It needs Docker from the host and nothing else. From the repository root:
+
+```bash
+docker build -f deploy/Containerfile -t segl-dev .   # the web checks, the web build, and pytest
+docker run --rm --init segl-dev                      # the test plan's rows, one line each
+```
+
+The build stops at the first check that fails. The run is `scripts/testplan.py` (next section): pytest again, then the browser tests, about ten minutes in all. It exits 0 when every row passed. `--init` gives the container a first process that cleans up after the processes the tests end.
+
+Chromium runs in the Ubuntu 26.04 image itself. Playwright lists that Ubuntu, `playwright install-deps chromium` installs the libraries, and Playwright starts Chromium with `--no-sandbox` and `--disable-dev-shm-usage`, so `docker run` needs no extra flag. The Playwright image and `PW_WS_ENDPOINT` are for a host without the libraries, not for the container.
+
+The tests run as the image's `ubuntu` account, on uv's Python. The image has no system Python for them to fall back on, and `UV_PYTHON_PREFERENCE=only-managed` would refuse one.
+
+Rootless Docker takes the same two commands. T11 ran both under rootful Docker 29.8.2 and under rootless Docker 29.8.2. The rootless daemon was started by hand with `dockerd-rootless.sh`, on rootlesskit's own network driver. Podman reads the same file and was not tried: the development host has none.
+
+## The test plan as one command
+
+```bash
+uv run python scripts/testplan.py
+```
+
+It runs pytest whole, then the browser tests whole, and prints one line for each row of `TEST-PLAN.md`:
+
+```text
+  T-001  pass  2 pytest, 3 browser
+  T-002  pass  1 pytest, 3 browser
+```
+
+`tests/testplan.toml` names the tests that run each row. A row passes when every test it names ran and passed. A skipped test fails its row. So does a browser test that missed one of its projects: the three mounts, the three `access-` projects, or `restart`. A failed row lists what failed under it. The command exits 0 when every row passed and both suites did.
+
+Above the rows it prints what an evidence block needs (`TEST-PLAN.md`, evidence): the revision, the Python and where it came from, Node, nginx, Excalidraw, Playwright, and Chromium.
+
+It needs what `npm --prefix web run e2e` needs: the build and a browser. T-017 is not run here: T12 installs the `.deb`. T-018 is judged in the dev container alone, where it passes when the other rows did, on uv's Python.
+
+`tests/test_testplan.py` holds the table to the test plan's rows and to the tests' names. A test that is renamed fails pytest until the table follows. It holds the judging to made-up reports, and the command to stand-ins for the two suites.
+
+## Size runs
+
+```bash
+npm --prefix web run stretch
+```
+
+It runs the two sizes of `TEST-PLAN.md`: ten editors on one slot, and a slot of 1,024 elements. `web/stretch/sizes.stretch.ts` has both, and `web/playwright.stretch.config.ts` runs them against Python alone and through nginx at `/board/`. Each test prints what it measured, on lines that start with `stretch:`.
+
+- Ten editors: ten browser contexts join one slot. All draw at once, three times, then all move a rectangle twenty steps at once. Every browser must end with the same scene, and the stored scene must have every rectangle.
+- 1,024 elements: one rectangle, doubled ten times with select-all and duplicate, while a second browser watches. A third browser then loads the slot, draws one more rectangle, and the second moves all 1,025 at once. All three must end with the same scene.
+
+The runs are not part of the gate and hold no time to a limit. They fail only when the browsers end with different scenes. They use the browser tests' servers and ports, so run one or the other. In the dev container: `docker run --rm --init segl-dev npm --prefix web run stretch`. The times are those of the machine and of a browser that draws without a GPU. `draft2/STATUS.md` has the numbers of T11's run.
 
 ## Dev loop
 

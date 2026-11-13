@@ -15,7 +15,8 @@
 		"format": "prettier --write .",
 		"format:check": "prettier --check .",
 		"test": "vitest run",
-		"e2e": "playwright test"
+		"e2e": "playwright test",
+		"stretch": "playwright test --config playwright.stretch.config.ts"
 	},
 	"dependencies": {
 		"@excalidraw/excalidraw": "0.18.1",
