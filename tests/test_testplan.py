@@ -357,7 +357,7 @@ class Suites:
                 Path(path).write_text(self.junit(), encoding="utf-8")
             return subprocess.CompletedProcess(command, self.exits[0])
         if self.browser is not None:
-            report = Path(options["env"]["PLAYWRIGHT_JSON_OUTPUT_FILE"])
+            report = Path(command[command.index("--report") + 1])
             report.write_text(json.dumps(self.report()), encoding="utf-8")
         return subprocess.CompletedProcess(command, self.exits[1])
 
@@ -422,7 +422,8 @@ def test_the_command_passes_when_every_row_did(
     assert suites.folders == [built, built]
     server, browser = suites.commands
     assert server[1:3] == ["-m", "pytest"] and len(server) == 4
-    assert browser == ["npm", "--prefix", "web", "run", "e2e", "--", "--reporter=list,json"]
+    assert browser[:3] == [sys.executable, "scripts/e2e.py", "--report"]
+    assert len(browser) == 4
     # A test through nginx fails here where it would skip.
     assert suites.environments[0]["SEGL_REQUIRE_NGINX"] == "1"
 

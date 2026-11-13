@@ -270,10 +270,12 @@ def main(run: Run = subprocess.run) -> int:
             env={**os.environ, "SEGL_REQUIRE_NGINX": "1"},
             check=False,
         ).returncode
+        # In as many groups at once as the machine has room for, with one
+        # report for all of them (scripts/e2e.py).
         browser_exit = run(
-            ["npm", "--prefix", "web", "run", "e2e", "--", "--reporter=list,json"],
+            [sys.executable, "scripts/e2e.py", "--report", str(report)],
             cwd=ROOT,
-            env={**os.environ, "PLAYWRIGHT_JSON_OUTPUT_FILE": str(report)},
+            env=dict(os.environ),
             check=False,
         ).returncode
         pytest_outcomes = read_pytest_report(junit) if junit.is_file() else None

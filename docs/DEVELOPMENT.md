@@ -54,7 +54,39 @@ Every spec but three runs three times, as the projects `direct` (Python alone), 
 
 The other two are the `restart` project. Each of their tests starts a segl of its own with `uv run segl --config`, on port 18953 and in a new folder under the system's temporary directory (`web/e2e/server.ts`), and removes the folder afterwards. The tests of `web/e2e/durability.spec.ts` kill segl and start it again (T-006, and the restart of T-007), which cannot be done to the server the other tests share: they end it with SIGKILL and start it again over the same folder. `web/e2e/expiry.spec.ts` runs a segl whose passes last 14.4 seconds. It shows the page stopping by itself before its pass ends, with nothing drawn afterwards and no refusal from the server, and a code entered again (T-019). It reads the frames of the page's socket, each with its time.
 
-The tests run one at a time (`workers: 1`). The three projects share the one server, and its slots are shared by design: a room keeps what was drawn on its slot until the server stops, and counts every connection. So a test asserts on what it drew itself, by element id, and never on a slot being empty. `SLOTS` in `web/e2e/pages.ts` says which slot each kind of test may change. Slots 1 and 9 are never drawn on, for the tests about an empty slot. The title test puts `Workspace 4` back when it ends, and slot 4 is where the image tests place their images, each project in a color and at a place of its own. The run takes about nine minutes.
+The tests run one at a time (`workers: 1`). The three projects share the one server, and its slots are shared by design: a room keeps what was drawn on its slot until the server stops, and counts every connection. So a test asserts on what it drew itself, by element id, and never on a slot being empty. `SLOTS` in `web/e2e/pages.ts` says which slot each kind of test may change. Slots 1 and 9 are never drawn on, for the tests about an empty slot. The title test puts `Workspace 4` back when it ends, and slot 4 is where the image tests place their images, each project in a color and at a place of its own. One process runs them all in about ten minutes on the development host.
+
+### The browser tests in groups
+
+```bash
+python3 scripts/e2e.py                 # every browser test, in groups side by side
+SEGL_TEST_GROUPS=1 python3 scripts/e2e.py   # one group, as `npm run e2e` runs them
+```
+
+`scripts/e2e.py` runs the whole suite in less time. It splits the tests into groups with Playwright's `--shard` and runs the groups side by side. Each group is a `playwright test` of its own, with its own servers: every port follows `SEGL_E2E_PORT`, and each group gets a base ten above the last (18950, 18960, 18970). Inside a group nothing changes. The tests still run one at a time and share their slots. So no test had to change, and a test that passes in one group passes in three.
+
+`npm --prefix web run e2e` stays as it is: one process, and the way to run one spec.
+
+`scripts/capacity.py` picks the number of groups from what the machine has free at that moment:
+
+- One group for each idle core, less one core kept for everything else. It measures the busy cores over one second, not the load average, which would count the test run that has just ended.
+- One group for each 1.5 GiB of free memory. A group was seen to take 0.95 GiB.
+- At most six groups. More gain little: each group starts its own servers.
+- When there is no room for even one group, it waits and looks again every 15 seconds. It says once that it waits. After ten minutes it runs one group anyway.
+
+So the development host, with 4 cores and 10 GB, runs three groups when it is idle, fewer when another job is running, and waits when it is full. A larger machine runs more.
+
+| Setting | What it does |
+|---|---|
+| `SEGL_TEST_GROUPS=3` | Run this many groups. Nothing is measured, and nothing waits. |
+| `SEGL_TEST_WAIT=60` | Wait at most this many seconds for room. `0` does not wait. |
+| `SEGL_E2E_PORT=19950` | The first group's port base. |
+
+Each group's lines are printed with its number in front, `[2]`. Its traces of a failure are in `web/test-results/group-2/`. The last line counts all groups together. `--report FILE` writes one Playwright JSON report for all of them, which `scripts/testplan.py` reads. Arguments after `--` go to every group's `playwright test`.
+
+On the development host, idle, three groups ran the 240 tests in 4.2 minutes on 2026-11-13, where one process takes about ten. The three groups had 82, 79, and 79 tests and took 4.2, 3.9, and 4.0 minutes. The groups share four cores, so each runs slower than it would alone: the load average reached 11.8. No test failed and none was retried. `scripts/testplan.py`, which is pytest and then these groups, took 5.5 minutes there, where it took 11.3 before.
+
+CI, the dev container (`scripts/testplan.py`), and `scripts/release.py upgrade` all run the browser tests this way.
 
 `web/e2e/fonts.spec.ts` is about the one font file that is not the editor's own, Liberation Sans (`web/licenses/README.md`). A page fetches that file only when some text uses the face, so the test asks the page to load it, and checks that the browser took it as a font and that its bytes are the file in `web/fonts/`.
 
@@ -108,6 +140,7 @@ npm --prefix web test                  # Vitest
 npm --prefix web run format:check      # Prettier
 npm --prefix web run build             # web/dist, which Python serves
 npm --prefix web run e2e               # Playwright, against Python serving that build
+python3 scripts/e2e.py                 # the same tests, in groups side by side (below)
 ```
 
 `npm --prefix web run format` rewrites the files Prettier would complain about. Vitest covers the modules that need no browser: how the page finds segl's root, slot parsing and the last slot, display names, slot titles, the canvas adapter's reading of a stored scene, the collaboration session (against a socket, a canvas, and a file server the test supplies, with a clock it moves), the messages of the socket, the files of images (`web/src/collab/files.ts`, and the `data:` URL codec beside it), the stored pass (`web/src/pass.ts`), the access page's logic (`web/src/access.ts`: what the server's answer to a code means, and the words for it), the notice in the bar, and the build scripts. `tests/display_name_cases.json` is one table of typed names and what segl shows for each. Vitest and pytest both read it, so the browser's title case and the server's cannot drift apart. A test (`tests/test_pins.py`) holds `web/package.json`, `web/package-lock.json`, and `web/.node-version` to `versions.toml`.
@@ -123,7 +156,7 @@ docker build -f deploy/Containerfile -t segl-dev .   # the web checks, the web b
 docker run --rm --init segl-dev                      # the test plan's rows, one line each
 ```
 
-The build stops at the first check that fails. The run is `scripts/testplan.py` (next section): pytest again, then the browser tests, about ten minutes in all. It exits 0 when every row passed. `--init` gives the container a first process that cleans up after the processes the tests end.
+The build stops at the first check that fails. The run is `scripts/testplan.py` (next section): pytest again, then the browser tests in groups (above). It took about ten minutes when the browser tests ran in one process. It exits 0 when every row passed. `--init` gives the container a first process that cleans up after the processes the tests end.
 
 Chromium runs in the Ubuntu 26.04 image itself. Playwright lists that Ubuntu, `playwright install-deps chromium` installs the libraries, and Playwright starts Chromium with `--no-sandbox` and `--disable-dev-shm-usage`, so `docker run` needs no extra flag. The Playwright image and `PW_WS_ENDPOINT` are for a host without the libraries, not for the container.
 

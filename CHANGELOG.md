@@ -78,11 +78,13 @@ The project is specified, licensed, and public on GitHub. A Python service reads
 - `deploy/debian/package-test.sh` is T-017: it installs the package in an `ubuntu:26.04` container that booted with systemd, puts nginx in front with the `deploy/nginx/` files and the snakeoil certificate, draws through it, and then upgrades, removes, and purges. CI runs it as a second job.
 - `deploy/OPERATOR.md`, the operator notes, which the package installs in `/usr/share/doc/segl`.
 - The package carries the license text of every part it bundles. `web/scripts/bundled-packages.ts` lists the npm packages in the web build, `web/scripts/collect-licenses.ts` copies their license texts, and `web/licenses/` keeps the texts of the nine fonts and of the npm packages that ship none. A part without a text fails the package build and pytest.
+- `scripts/e2e.py` runs the browser tests in several groups side by side, each a `playwright test` with servers and ports of its own. `scripts/capacity.py` picks how many from the idle cores and the free memory at that moment, runs fewer on a busy machine, and waits when there is no room. `SEGL_TEST_GROUPS` sets the number and `SEGL_TEST_WAIT` the longest wait. Three groups ran the 240 tests in 4.2 minutes on the development host, where one process takes ten. CI, `scripts/testplan.py`, and `scripts/release.py upgrade` run them this way. `npm --prefix web run e2e` is still one process.
 - `tests/test_package.py` holds the unit, the nfpm spec, the maintainer scripts, the copyright file, and the operator notes to the rest of the tree.
 
 ### Changed
 
 - The dev container's command is `scripts/testplan.py`. It was `uv run pytest`.
+- `scripts/release.py upgrade` no longer runs the whole suite once for each component. The components that can break anything move together and the suite runs once. Only when that fails does it run the suite on the tree as it stands and then for each component alone. A tool that can only break its own check gets that check: ruff, ty, pytest, httpx2, md2html's packages, Prettier, TypeScript, and the `@types` packages. A GitHub Action moves without a run, since only CI runs it.
 - fastapi 0.162.7, ruff 0.17.5, ty 0.0.104, and `@playwright/test` 1.65.1, each moved by `scripts/release.py upgrade` after the suite passed with it.
 - `scripts/release.py publish` ends its preflight with `deploy/debian/package-test.sh`, and attaches the package that test built and installed. It attached every `.deb` in `dist/` before.
 - `pyproject.toml` has a `build` dependency group, the same line as `[build-system] requires`, so that `uv.lock` holds hatchling and its dependencies with hashes for the package build. `uv sync` does not install it.

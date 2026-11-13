@@ -12,18 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Move each outdated component on its own, run the suite, and hold a failure.
+"""Move each outdated component, run what it can break, and hold a failure.
 
-`upgrade` keeps a move when the suite passes. Otherwise it restores the files
+`upgrade` keeps a move when its checks pass. Otherwise it restores the files
 it changed and records ``[held.<name>]`` in versions.toml with the first
 failing test (docs/RELEASING.md).
+
+It does not run the whole suite for every component. A tool that can only
+break its own check gets that check, which takes seconds. The others move
+together and the suite runs once. Only when that run fails does it run the
+suite on the tree as it was, and then for each of them alone.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import re
-from collections.abc import Callable
+import sys
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import release_edits as edits
@@ -64,7 +70,35 @@ WEB_CHECKS: tuple[tuple[str, ...], ...] = (
     ("npm", "--prefix", "web", "run", "format:check"),
     ("npm", "--prefix", "web", "run", "build"),
 )
-WEB_E2E: tuple[str, ...] = ("npm", "--prefix", "web", "run", "e2e")
+# The browser tests, in as many groups at once as the machine has room for.
+WEB_E2E: tuple[str, ...] = (sys.executable, "scripts/e2e.py")
+WEB_FORMAT: tuple[str, ...] = ("npm", "--prefix", "web", "run", "format:check")
+WEB_TYPES: tuple[str, ...] = ("npm", "--prefix", "web", "run", "check")
+
+# What the move of a tool can break, when that is less than everything: the
+# commands of the suite that use the tool. A component that is not named
+# here gets the whole suite. So does one whose reach is not certain: Vitest
+# is not here, because vite.config.ts takes its `defineConfig` from it, and
+# so the build does too.
+NARROW_PYTHON: dict[str, tuple[tuple[str, ...], ...]] = {
+    # The linter and formatter, and the type checker: each runs as one check.
+    "ruff": PYTHON_CHECKS[:2],
+    "ty": PYTHON_CHECKS[2:],
+    # The test runner and the test client's transport: only pytest uses them.
+    "pytest": (PYTHON_TESTS,),
+    "httpx2": (PYTHON_TESTS,),
+    # md2html's packages, which its tests in tools/ cover.
+    "markdown-it-py": (PYTHON_TESTS,),
+    "mdit-py-plugins": (PYTHON_TESTS,),
+}
+NARROW_WEB: dict[str, tuple[tuple[str, ...], ...]] = {
+    "prettier": (WEB_FORMAT,),
+    # Type checking alone: Vite does not build with tsc.
+    "typescript": (WEB_TYPES,),
+    "@types/node": (WEB_TYPES,),
+    "@types/react": (WEB_TYPES,),
+    "@types/react-dom": (WEB_TYPES,),
+}
 MD2HTML = "tools/md2html/md2html.py"
 _FAILED_TEST = re.compile(r"^(?:FAILED|ERROR) (\S+)", flags=re.MULTILINE)
 
@@ -86,9 +120,30 @@ def suite_commands(root: Path) -> tuple[tuple[str, ...], ...]:
     return (*sync_commands(root), *PYTHON_CHECKS, *WEB_CHECKS, PYTHON_TESTS, WEB_E2E)
 
 
+def narrow_commands(root: Path, status: Status) -> tuple[tuple[str, ...], ...] | None:
+    """Return the checks that cover a component's move, or None for the whole suite.
+
+    An empty answer means nothing here can test the move: a GitHub Action runs
+    in CI alone, and the push is its test.
+    """
+    component = status.component
+    if component.kind == "action":
+        return ()
+    if component.kind == "python" and component.name in NARROW_PYTHON:
+        return (PYTHON_SYNC, *NARROW_PYTHON[component.name])
+    if component.kind == "web" and component.name in NARROW_WEB and has_web(root):
+        return (WEB_SYNC, *NARROW_WEB[component.name])
+    return None
+
+
 def run_suite(runner: Runner, root: Path) -> str | None:
     """Run the suite. Return None when it passes, or what failed first."""
-    for argv in suite_commands(root):
+    return run_commands(runner, suite_commands(root))
+
+
+def run_commands(runner: Runner, commands: Sequence[tuple[str, ...]]) -> str | None:
+    """Run commands in order. Return None when all pass, or what failed first."""
+    for argv in commands:
         command = " ".join(argv)
         try:
             result = runner.run(argv, check=False)
@@ -206,37 +261,105 @@ def upgrade(root: Path, runner: Runner, sources: Sources, today: dt.date | None 
     if not outdated:
         print("nothing to upgrade")
         return 1 if unknown else 0
-    print("running the suite before any move")
-    baseline = run_suite(runner, root)
-    if baseline is not None:
-        print(f"the suite fails before any move ({baseline}); nothing was changed")
-        return 1
-    held = 0
-    for status in outdated:
-        component, new = status.component, target_of(status)
-        print(f"{component.label}: trying {new}")
+    narrow = [s for s in outdated if narrow_commands(root, s) is not None]
+    wide = [s for s in outdated if narrow_commands(root, s) is None]
+
+    def keep(status: Status) -> None:
+        component = status.component
+        rewrite(versions, lambda t: edits.clear_hold(t, component.name))
+        print(f"{component.label}: moved to {target_of(status)}")
+
+    def hold(status: Status, reason: str) -> None:
+        component = status.component
+        rewrite(
+            versions,
+            lambda t: edits.set_hold(
+                t, component.name, component.version, status.latest, reason, since
+            ),
+        )
+        print(f"{component.label}: kept, {status.latest} held ({reason})")
+
+    def move(status: Status) -> bool:
+        """Write one move. Say so and return False when it cannot be written."""
         saved = snapshot(root)
         try:
             apply_move(root, status, sources)
-            reason = run_suite(runner, root)
         except (edits.EditError, LookupFailed) as exc:
             restore(saved)
-            print(f"{component.label}: could not be moved ({exc})")
+            print(f"{status.component.label}: could not be moved ({exc})")
             unknown.append(status)
-            continue
+            return False
+        return True
+
+    held = 0
+    # Whether a whole-suite run has passed, on the tree or on the tree with moves.
+    tree_is_good = False
+    if wide:
+        # The components that can break anything, together, and the suite
+        # once. A pass shows the tree and every one of these moves to be good.
+        start = snapshot(root)
+        moved = [status for status in wide if move(status)]
+        labels = ", ".join(f"{s.component.label} {target_of(s)}" for s in moved)
+        reason = None
+        if moved:
+            print(f"trying together: {labels}")
+            reason = run_suite(runner, root)
         if reason is None:
-            rewrite(versions, lambda t, c=component: edits.clear_hold(t, c.name))
-            print(f"{component.label}: moved to {new}")
+            tree_is_good = bool(moved)
+            for status in moved:
+                keep(status)
+        else:
+            # Something failed: the tree as it was, or one of the moves.
+            restore(start)
+            print(f"the suite fails with those moves ({reason}); running it before any move")
+            baseline = run_suite(runner, root)
+            if baseline is not None:
+                print(f"the suite fails before any move ({baseline}); nothing was changed")
+                return 1
+            tree_is_good = True
+            if len(moved) == 1:
+                # It ran alone already.
+                hold(moved[0], reason)
+                held += 1
+            else:
+                for status in moved:
+                    print(f"{status.component.label}: trying {target_of(status)} alone")
+                    saved = snapshot(root)
+                    if not move(status):
+                        continue
+                    alone = run_suite(runner, root)
+                    if alone is None:
+                        keep(status)
+                        continue
+                    restore(saved)
+                    hold(status, alone)
+                    held += 1
+    for status in narrow:
+        commands = narrow_commands(root, status)
+        assert commands is not None
+        component = status.component
+        if commands and not tree_is_good:
+            # No whole-suite run has shown the tree to be good. These checks
+            # take seconds, so run them as the tree stands first.
+            before = run_commands(runner, commands)
+            if before is not None:
+                print(f"{component.label}: its check fails before the move ({before}); not tried")
+                unknown.append(status)
+                continue
+        saved = snapshot(root)
+        if not move(status):
+            continue
+        if not commands:
+            keep(status)
+            print(f"{component.label}: nothing here runs it; CI on the push is its test")
+            continue
+        reason = run_commands(runner, commands)
+        if reason is None:
+            keep(status)
             continue
         restore(saved)
-        rewrite(
-            versions,
-            lambda t, c=component, s=status, r=reason: edits.set_hold(
-                t, c.name, c.version, s.latest, r, since
-            ),
-        )
+        hold(status, reason)
         held += 1
-        print(f"{component.label}: kept, {status.latest} held ({reason})")
     if held:
         # Put the environments back on the pins that were kept.
         for argv in sync_commands(root):

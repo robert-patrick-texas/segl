@@ -15,12 +15,13 @@
 """`upgrade`: one move at a time, kept when the suite passes, held when it fails."""
 
 import datetime as dt
+import sys
 import tomllib
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from release_proc import Result
-from release_upgrade import suite_commands, upgrade
+from release_upgrade import NARROW_PYTHON, NARROW_WEB, suite_commands, upgrade
 
 TODAY = dt.date(2026, 11, 12)
 
@@ -45,6 +46,25 @@ def suite_that_fails_on(root: Path, text: str) -> Callable[[Sequence[str]], Resu
 
 def versions(root: Path) -> dict:
     return tomllib.loads((root / "versions.toml").read_text())
+
+
+def add_tool(root: Path, name: str, version: str) -> None:
+    """Pin a development tool in the tree, as versions.toml and pyproject.toml do."""
+    path = root / "versions.toml"
+    path.write_text(
+        path.read_text().replace("[python.dev]\n", f'[python.dev]\n{name} = "{version}"\n')
+    )
+    path = root / "pyproject.toml"
+    path.write_text(
+        path.read_text().replace(
+            "[dependency-groups]\n", f'[dependency-groups]\ndev = ["{name}=={version}"]\n'
+        )
+    )
+
+
+def commands(runner) -> list[str]:
+    """Return every command the runner was given, each as one line."""
+    return [" ".join(argv) for argv in runner.calls]
 
 
 def test_upgrade_holds_the_component_that_fails_and_keeps_the_others(
@@ -73,10 +93,140 @@ def test_upgrade_holds_the_component_that_fails_and_keeps_the_others(
     )
     # A [python.docs] move also updates md2html's inline metadata.
     assert '#     "markdown-it-py==4.4.0",' in (tree / "tools/md2html/md2html.py").read_text()
-    # The suite ran before any move, once for each of the three moves, and
-    # `uv sync` ran last to put the environment back on the kept pin.
-    assert len(runner.called("uv", "run", "pytest")) == 4
+    # pytest ran five times: for the two dependencies together, which failed,
+    # for the tree as it was, for each of the two alone, and for md2html's
+    # package, whose move only pytest covers. `uv sync` ran last, to put the
+    # environment back on the kept pin.
+    assert len(runner.called("uv", "run", "pytest")) == 5
     assert runner.calls[-1] == ["uv", "sync"]
+
+
+def test_moves_that_all_pass_cost_one_run_of_the_suite(
+    tree: Path, fake_runner, fake_sources, capsys
+) -> None:
+    runner = fake_runner(tree)
+    sources = fake_sources(runner, {"good": "1.1.0", "bad": "2.0.0", "python": "3.15.3"})
+
+    assert upgrade(tree, runner, sources, TODAY) == 0
+
+    doc = versions(tree)
+    assert doc["python"]["dependencies"] == {"good": "1.1.0", "bad": "2.0.0"}
+    assert doc["runtime"]["python"] == "3.15.3"
+    assert doc["held"] == {}
+    assert len(runner.called("uv", "run", "pytest")) == 1
+    assert commands(runner) == [" ".join(argv) for argv in suite_commands(tree)]
+    assert "trying together: " in capsys.readouterr().out
+
+
+def test_one_component_that_fails_is_held_after_two_runs_and_not_three(
+    tree: Path, fake_runner, fake_sources
+) -> None:
+    runner = fake_runner(tree, {("uv",): suite_that_fails_on(tree, 'bad = "2.0.0"')})
+
+    assert upgrade(tree, runner, fake_sources(runner, {"bad": "2.0.0"}), TODAY) == 0
+
+    assert versions(tree)["held"]["bad"]["reason"] == "tests/test_scene.py::test_reconcile"
+    assert versions(tree)["python"]["dependencies"]["bad"] == "1.0.0"
+    # With the move, and as the tree was. It had already run alone.
+    assert len(runner.called("uv", "run", "pytest")) == 2
+
+
+def test_a_tool_gets_the_checks_that_use_it_and_no_others(
+    tree: Path, fake_runner, fake_sources
+) -> None:
+    add_tool(tree, "ruff", "0.1.0")
+    runner = fake_runner(tree)
+
+    assert upgrade(tree, runner, fake_sources(runner, {"ruff": "0.2.0"}), TODAY) == 0
+
+    assert versions(tree)["python"]["dev"] == {"ruff": "0.2.0"}
+    assert 'dev = ["ruff==0.2.0"]' in (tree / "pyproject.toml").read_text()
+    checks = ["uv sync", "uv run ruff check .", "uv run ruff format --check ."]
+    # As the tree stands, since no run of the suite has shown it to be good,
+    # and then with the move.
+    assert commands(runner) == checks + checks
+    assert not runner.called("uv", "run", "pytest")
+
+
+def test_a_tool_whose_check_fails_after_the_move_is_held(
+    tree: Path, fake_runner, fake_sources
+) -> None:
+    add_tool(tree, "ty", "0.0.1")
+
+    def reply(argv: Sequence[str]) -> Result:
+        moved = 'ty = "0.0.2"' in (tree / "versions.toml").read_text()
+        return Result(1 if moved and "ty" in argv else 0, "error[invalid-argument-type]\n")
+
+    runner = fake_runner(tree, {("uv",): reply})
+
+    assert upgrade(tree, runner, fake_sources(runner, {"ty": "0.0.2"}), TODAY) == 0
+
+    doc = versions(tree)
+    assert doc["python"]["dev"] == {"ty": "0.0.1"}
+    assert doc["held"]["ty"]["reason"] == "`uv run ty check` failed"
+    assert doc["held"]["ty"]["skipped"] == "0.0.2"
+    assert 'dev = ["ty==0.0.1"]' in (tree / "pyproject.toml").read_text()
+    assert not runner.called("uv", "run", "pytest")
+    assert runner.calls[-1] == ["uv", "sync"]
+
+
+def test_a_tool_whose_check_fails_before_the_move_is_not_tried(
+    tree: Path, fake_runner, fake_sources, capsys
+) -> None:
+    add_tool(tree, "ruff", "0.1.0")
+    runner = fake_runner(tree, {("uv", "run", "ruff"): Result(1, "E501 line too long\n")})
+    before = (tree / "versions.toml").read_text()
+
+    assert upgrade(tree, runner, fake_sources(runner, {"ruff": "0.2.0"}), TODAY) == 1
+
+    assert (tree / "versions.toml").read_text() == before
+    assert "ruff==0.1.0" in (tree / "pyproject.toml").read_text()
+    assert (
+        "its check fails before the move (`uv run ruff check .` failed)" in capsys.readouterr().out
+    )
+
+
+def test_after_a_suite_run_passed_a_tool_is_not_checked_twice(
+    tree: Path, fake_runner, fake_sources
+) -> None:
+    add_tool(tree, "ruff", "0.1.0")
+    runner = fake_runner(tree)
+
+    assert (
+        upgrade(tree, runner, fake_sources(runner, {"ruff": "0.2.0", "good": "1.1.0"}), TODAY) == 0
+    )
+
+    doc = versions(tree)
+    assert doc["python"]["dev"] == {"ruff": "0.2.0"}
+    assert doc["python"]["dependencies"]["good"] == "1.1.0"
+    suite = [" ".join(argv) for argv in suite_commands(tree)]
+    # The suite for the dependency, which showed the tree to be good, and
+    # then ruff's own checks once, with its move.
+    assert commands(runner) == [
+        *suite,
+        "uv sync",
+        "uv run ruff check .",
+        "uv run ruff format --check .",
+    ]
+
+
+def test_the_narrow_checks_are_commands_of_the_suite() -> None:
+    """A tool's checks are a part of the suite, never something else."""
+    suite = {
+        ("uv", "run", "ruff", "check", "."),
+        ("uv", "run", "ruff", "format", "--check", "."),
+        ("uv", "run", "ty", "check"),
+        ("uv", "run", "pytest"),
+        ("npm", "--prefix", "web", "run", "check"),
+        ("npm", "--prefix", "web", "run", "format:check"),
+    }
+    for name, checks in {**NARROW_PYTHON, **NARROW_WEB}.items():
+        assert checks, name
+        assert set(checks) <= suite, name
+    # What can reach the running application, or the build, is not narrow.
+    for name in ("fastapi", "uvicorn", "websockets", "hatchling", "vite", "vitest", "react"):
+        assert name not in NARROW_PYTHON
+        assert name not in NARROW_WEB
 
 
 def test_a_held_component_is_left_alone_until_a_newer_release_appears(
@@ -143,7 +293,9 @@ def test_a_python_patch_move_leaves_the_minor_settings(
     assert (tree / "pyproject.toml").read_text() == before
 
 
-def test_action_pins_move_by_tag_and_by_commit(tree: Path, fake_runner, fake_sources) -> None:
+def test_action_pins_move_by_tag_and_by_commit(
+    tree: Path, fake_runner, fake_sources, capsys
+) -> None:
     runner = fake_runner(tree)
     latest = {"actions/checkout": "v8.1.0", "astral-sh/setup-uv": "v10.4.0"}
 
@@ -152,6 +304,9 @@ def test_action_pins_move_by_tag_and_by_commit(tree: Path, fake_runner, fake_sou
     workflow = (tree / ".github/workflows/ci.yml").read_text()
     assert "      - uses: actions/checkout@v8\n" in workflow
     assert f"      - uses: astral-sh/setup-uv@{'b' * 40} # v10.4.0\n" in workflow
+    # Nothing on this machine runs an action, so nothing was run for it.
+    assert runner.calls == []
+    assert "nothing here runs it; CI on the push is its test" in capsys.readouterr().out
 
 
 def test_web_moves_edit_package_json_and_node_version(
@@ -166,7 +321,7 @@ def test_web_moves_edit_package_json_and_node_version(
     path.write_text(
         text.replace("[web.dependencies]\n", '[web.dependencies]\n"@scope/pkg" = "1.0.0"\n')
     )
-    runner = fake_runner(tree, {("npm",): ""})
+    runner = fake_runner(tree, {("npm",): "", (sys.executable,): ""})
     sources = fake_sources(runner, {"node": "24.23.0", "@scope/pkg": "1.2.0"})
 
     suite = [" ".join(argv) for argv in suite_commands(tree)]
@@ -174,7 +329,8 @@ def test_web_moves_edit_package_json_and_node_version(
     # made before pytest and the browser tests, and those come last.
     assert suite[:2] == ["uv sync", "npm --prefix web install --no-audit --no-fund"]
     assert suite.index("npm --prefix web run build") < suite.index("uv run pytest")
-    assert suite[-2:] == ["uv run pytest", "npm --prefix web run e2e"]
+    # The browser tests last, through the script that runs them in groups.
+    assert suite[-2:] == ["uv run pytest", f"{sys.executable} scripts/e2e.py"]
     assert len(suite) == 11
     assert upgrade(tree, runner, sources, TODAY) == 0
 
@@ -184,7 +340,9 @@ def test_web_moves_edit_package_json_and_node_version(
     assert (web / ".node-version").read_text() == "24.23.0\n"
     assert '"@scope/pkg": "1.2.0"' in (web / "package.json").read_text()
     assert runner.called("npm", "--prefix", "web", "test")
-    assert runner.called("npm", "--prefix", "web", "run", "e2e")
+    assert runner.called(sys.executable, "scripts/e2e.py")
+    # Node and the package moved together: the suite ran once.
+    assert len(runner.called(sys.executable, "scripts/e2e.py")) == 1
 
 
 def test_a_failed_lookup_is_reported_and_the_others_still_move(

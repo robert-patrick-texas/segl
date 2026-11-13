@@ -81,8 +81,10 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       # Python serves the build, at a host root and behind nginx at /board/.
+      # scripts/e2e.py runs the tests in as many groups at once as the runner
+      # has room for, each with servers of its own.
       - name: Browser tests
-        run: npm --prefix web run e2e
+        run: python3 scripts/e2e.py
 
       - name: Keep the browser traces of a failure
         if: failure()
