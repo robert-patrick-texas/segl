@@ -142,7 +142,7 @@ describe('loadConfig', () => {
 		expect(config.editRequired).toBe(true);
 	});
 
-	test('on the dev server, the root is the host root and the API says whether a token is needed', async () => {
+	test('on the dev server, the root is the host root and the API says whether an access code is needed', async () => {
 		const asked: string[] = [];
 		const fetcher: typeof fetch = async (input) => {
 			asked.push(String(input));

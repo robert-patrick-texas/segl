@@ -43,21 +43,15 @@ async function unlessFinal<Result>(work: () => Promise<Result>): Promise<Result>
 }
 
 /**
- * The transport for one slot. `editToken` is read at each upload, so a token
+ * The transport for one slot. `pass` is read at each upload, so a pass
  * stored after the page loaded is used.
  */
-export function httpTransport(
-	config: AppConfig,
-	slot: number,
-	editToken: () => string
-): FileTransport {
+export function httpTransport(config: AppConfig, slot: number, pass: () => string): FileTransport {
 	return {
 		upload(file) {
 			const decoded = dataUrlToBytes(file.dataURL);
 			if (decoded === null) return Promise.reject(new Refused('the file is not a data URL'));
-			return unlessFinal(() =>
-				uploadAsset(config, slot, decoded.bytes, file.mimeType, editToken())
-			);
+			return unlessFinal(() => uploadAsset(config, slot, decoded.bytes, file.mimeType, pass()));
 		},
 		async download(ref) {
 			const bytes = await unlessFinal(() => fetchAsset(config, ref.hash));

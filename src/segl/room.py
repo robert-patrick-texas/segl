@@ -25,11 +25,11 @@ something to write (``on_change``, ``on_empty``), and ``segl.saver`` takes a
 ``Snapshot`` of it and writes the slot's head.
 """
 
-import hmac
 import json
 import math
 import re
 import secrets
+import time
 from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass
 from typing import Any
@@ -51,6 +51,9 @@ MAX_FILES_IN_MESSAGE = 256
 # JavaScript counts exactly.
 _MAX_SEQ = 2**53 - 1
 
+# What a browser that may not edit is told, on the socket and by the routes.
+NEEDS_CODE = "Editing needs an access code."
+
 # One of a slot's files, as the messages carry it: `id`, `hash`, `mimeType`.
 FileEntry = dict[str, str]
 
@@ -59,17 +62,6 @@ def encode(message: dict[str, Any]) -> str:
     """Return a message as the JSON text that goes on the socket."""
     # ASCII only: a lone surrogate in an element's text stays an escape.
     return json.dumps(message, separators=(",", ":"))
-
-
-def may_edit(configured: str, given: str | None) -> bool:
-    """Return whether a client that sent ``given`` may edit.
-
-    With no token configured, everyone may. Otherwise the two are compared in
-    constant time, and a missing token is a wrong one.
-    """
-    if not configured:
-        return True
-    return hmac.compare_digest((given or "").encode(), configured.encode())
 
 
 def stored_name(value: object) -> str | None:
@@ -134,7 +126,9 @@ class Hello:
 
     client_id: str
     display_name: str | None
-    edit_token: str
+    # The pass this browser has, or "". The field's name on the wire is
+    # `editToken`, from when it carried a token.
+    edit_pass: str
 
 
 def parse_hello(message: object) -> Hello | None:
@@ -144,10 +138,10 @@ def parse_hello(message: object) -> Hello | None:
     client_id = message.get("clientId")
     if not isinstance(client_id, str) or _CLIENT_ID.fullmatch(client_id) is None:
         return None
-    token = message.get("editToken", "")
-    if not isinstance(token, str):
+    edit_pass = message.get("editToken", "")
+    if not isinstance(edit_pass, str):
         return None
-    return Hello(client_id, stored_name(message.get("displayName")), token)
+    return Hello(client_id, stored_name(message.get("displayName")), edit_pass)
 
 
 class Connection:
@@ -157,18 +151,42 @@ class Connection:
     out from the connection id, the same in every browser, and takes no other.
     """
 
-    def __init__(self, deliver: Callable[[str], None], hello: Hello, *, view_only: bool) -> None:
-        """``deliver`` takes JSON text for this connection's browser and never blocks."""
+    def __init__(
+        self,
+        deliver: Callable[[str], None],
+        hello: Hello,
+        *,
+        view_only: bool,
+        edit_until: float | None = None,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
+        """``deliver`` takes JSON text for this connection's browser and never blocks.
+
+        ``edit_until`` is when this connection's pass ends, in the seconds
+        ``clock`` counts, or None when it does not end.
+        """
         self.deliver = deliver
         self.client_id = hello.client_id
         self.display_name = hello.display_name
         self.view_only = view_only
+        self._edit_until = edit_until
+        self._clock = clock
         # The room sets this when the connection joins.
         self.id = ""
         self.cursor: dict[str, float] | None = None
         # The number of this connection's newest message that is waiting to
         # be called saved, or None when none is.
         self.awaiting: int | None = None
+
+    def may_not_edit(self) -> bool:
+        """Return whether this connection is view-only now.
+
+        A pass can end while its socket is open. From then on the connection
+        is a viewer, as one that came without a pass is, and stays one.
+        """
+        if not self.view_only and self._edit_until is not None:
+            self.view_only = self._clock() >= self._edit_until
+        return self.view_only
 
     def send(self, message: dict[str, Any]) -> None:
         self.deliver(encode(message))
@@ -456,9 +474,9 @@ class Room:
             connection.error("unknown_type", "segl does not know this message type.")
 
     def _elements(self, connection: Connection, message: dict[str, Any]) -> None:
-        if connection.view_only:
+        if connection.may_not_edit():
             # Dropped. The scene is unchanged, and nobody is told.
-            connection.error("view_only", "Editing needs the edit token.")
+            connection.error("view_only", NEEDS_CODE)
             return
         epoch, sent = message.get("epoch"), message.get("elements")
         if isinstance(epoch, bool) or not isinstance(epoch, int) or not isinstance(sent, list):
@@ -501,8 +519,8 @@ class Room:
     def _files(
         self, connection: Connection, message: dict[str, Any], uploaded: Collection[str]
     ) -> None:
-        if connection.view_only:
-            connection.error("view_only", "Editing needs the edit token.")
+        if connection.may_not_edit():
+            connection.error("view_only", NEEDS_CODE)
             return
         epoch, files = message.get("epoch"), parse_files(message.get("files"))
         if isinstance(epoch, bool) or not isinstance(epoch, int) or files is None:

@@ -14,7 +14,7 @@
 
 /**
  * What this browser tells the server about itself in `hello`, beside its
- * display name and its edit token (`editToken.ts`): an id of its own, in
+ * display name and its pass (`pass.ts`): an id of its own, in
  * `localStorage` under a key that carries the mount (docs/ARCHITECTURE.md).
  */
 import type { SlotStorage } from '../slots.ts';

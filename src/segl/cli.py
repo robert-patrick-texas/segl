@@ -16,11 +16,13 @@
 
 import argparse
 import sys
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
 import uvicorn
 
+from segl.access import PASS_AHEAD_SECONDS
 from segl.app import create_app
 from segl.assets import AssetsError
 from segl.config import ConfigError, load_settings
@@ -51,6 +53,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ConfigError as exc:
         print(f"segl: {exc}", file=sys.stderr)
         return 2
+    ended = settings.access_passes_after_seconds
+    if ended is not None and ended > time.time() + PASS_AHEAD_SECONDS:
+        # Most likely a slip with the time zone. segl still starts: the codes
+        # are read, and the passes they buy are stamped with that time.
+        print(
+            "segl: access_passes_after is ahead of this server's clock: "
+            "no pass lets a browser edit until then",
+            file=sys.stderr,
+        )
     # The database is opened, migrated, and given its nine slots before the
     # port is, so a database segl cannot use stops it here with one line. So
     # does a display-name file without words, which create_app reads, and a

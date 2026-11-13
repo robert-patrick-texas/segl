@@ -24,7 +24,7 @@
 import { IMAGE_TYPES } from './collab/files.ts';
 
 /** What the control says where a viewer would find the way to import. */
-export const IMPORT_NEEDS_TOKEN = 'Importing needs the edit token.';
+export const IMPORT_NEEDS_CODE = 'Importing needs an access code.';
 
 /** What the control says while this browser is not in the slot's room. */
 export const IMPORT_NEEDS_CONNECTION = 'Importing waits for the connection.';
@@ -70,7 +70,7 @@ export type DropGoesTo = 'editor' | 'import' | 'nowhere';
  * a shape from the library does.
  *
  * A scene file goes to the import whoever drops it: the Import control then
- * tells a viewer that importing needs the edit token. Everything else is the
+ * tells a viewer that importing needs an access code. Everything else is the
  * editor's, unless this browser is view-only. The editor's own drop handler
  * does not ask about its view mode, and would place an image, or a link, on
  * a canvas that then shows one person a drawing nobody else has (S-008).
@@ -117,7 +117,7 @@ export function importProblem(error: unknown): string {
 		typeof error === 'object' && error !== null && 'code' in error
 			? (error as { code: unknown }).code
 			: null;
-	if (code === 'view_only') return IMPORT_NEEDS_TOKEN;
+	if (code === 'view_only') return IMPORT_NEEDS_CODE;
 	if (code === 'payload_too_large') return 'That file is larger than this segl takes.';
 	if (code === 'invalid_document' || code === 'bad_request') {
 		return 'That is not an Excalidraw file.';

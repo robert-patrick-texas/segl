@@ -105,6 +105,7 @@ export interface SocketLike {
 export interface Hello {
 	clientId: string;
 	displayName: string | null;
+	/** This browser's pass, or `''`. The field's name is from when it carried a token. */
 	editToken: string;
 }
 
@@ -121,13 +122,6 @@ export interface SessionOptions {
 	/** Read when a socket opens, so a reconnect sends the label of that moment. */
 	hello(): Hello;
 	onState(state: SessionState): void;
-	/**
-	 * Called at each `welcome` with the edit token its `hello` carried, and
-	 * whether the server lets that connection edit. `viewOnly` in the state
-	 * does not say which token it is an answer to: between a new `hello` and
-	 * its `welcome` it is still the answer to the last one.
-	 */
-	onGate?(editToken: string, viewOnly: boolean): void;
 	createSocket?(url: string): SocketLike;
 }
 
@@ -173,8 +167,6 @@ export class CollabSession {
 	private cursorTimer: Timer | undefined;
 	private cursorWaiting: { cursor: Cursor | null } | null = null;
 	private renameWaiting: string | null = null;
-	/** The edit token in the `hello` this socket was opened with. */
-	private saidToken = '';
 
 	constructor(options: SessionOptions) {
 		this.options = options;
@@ -182,7 +174,7 @@ export class CollabSession {
 		this.files = new FileSync({
 			editor: options.editor,
 			transport: options.transport,
-			// Only once the server has said so: an upload needs the edit token.
+			// Only once the server has said so: an upload needs a pass.
 			mayUpload: () => this.state.viewOnly === false,
 			onChange: () => {
 				this.announce();
@@ -251,7 +243,7 @@ export class CollabSession {
 	/**
 	 * Connect again now, with a new `hello`. For a label that arrived after
 	 * the socket opened: `rename` would title-case a name from the server's
-	 * word file, and `hello` sends it as written. And for an edit token that
+	 * word file, and `hello` sends it as written. And for a pass that
 	 * changed: the server reads it once, in `hello` (D2-027).
 	 */
 	reconnect(): void {
@@ -277,7 +269,6 @@ export class CollabSession {
 		socket.onopen = () => {
 			if (socket !== this.socket) return;
 			const hello = this.options.hello();
-			this.saidToken = hello.editToken;
 			this.send({ type: 'hello', ...hello });
 		};
 		socket.onmessage = (event) => {
@@ -396,7 +387,6 @@ export class CollabSession {
 					this.send({ type: 'rename', displayName: this.renameWaiting });
 					this.renameWaiting = null;
 				}
-				this.options.onGate?.(this.saidToken, message.viewOnly);
 				break;
 			case 'scene':
 				if (this.live) this.takeScene(message.epoch, message.elements, message.files);

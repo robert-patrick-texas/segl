@@ -31,10 +31,8 @@ export interface CollabOptions {
 	files: readonly FileRef[];
 	/** This browser's display name, or null while it has none. */
 	name: string | null;
-	/** This browser's edit token, or `''`. */
-	editToken: string;
-	/** Called with what the server answered for the token a `hello` carried. */
-	onGate: (editToken: string, viewOnly: boolean) => void;
+	/** This browser's pass, or `''`. */
+	pass: string;
 }
 
 export interface Collab {
@@ -51,36 +49,23 @@ export interface Collab {
  * that, and between slots, the state is the initial one: connecting, nobody
  * here.
  */
-export function useCollab({
-	config,
-	slot,
-	epoch,
-	files,
-	name,
-	editToken,
-	onGate
-}: CollabOptions): Collab {
+export function useCollab({ config, slot, epoch, files, name, pass }: CollabOptions): Collab {
 	const [editor, setEditor] = useState<SceneEditor | null>(null);
 	// Kept with its slot, so that a state from the slot just left is never shown.
 	const [held, setHeld] = useState<{ slot: number; state: SessionState } | null>(null);
 	const session = useRef<CollabSession | null>(null);
 	const latestName = useRef(name);
 	const sentName = useRef(name);
-	const latestToken = useRef(editToken);
-	const sentToken = useRef(editToken);
-	const latestGate = useRef(onGate);
+	const latestPass = useRef(pass);
+	const sentPass = useRef(pass);
 
 	useEffect(() => {
 		latestName.current = name;
 	}, [name]);
 
 	useEffect(() => {
-		latestToken.current = editToken;
-	}, [editToken]);
-
-	useEffect(() => {
-		latestGate.current = onGate;
-	}, [onGate]);
+		latestPass.current = pass;
+	}, [pass]);
 
 	useEffect(() => {
 		if (editor === null || epoch === null) return;
@@ -89,20 +74,20 @@ export function useCollab({
 			url: collabUrl(config, slot).href,
 			epoch,
 			editor,
-			// Read at each upload: the token may arrive after the session began.
-			transport: httpTransport(config, slot, () => latestToken.current),
+			// Read at each upload: a pass may arrive after the session began.
+			transport: httpTransport(config, slot, () => latestPass.current),
 			files,
 			hello: () => {
 				sentName.current = latestName.current;
-				sentToken.current = latestToken.current;
+				sentPass.current = latestPass.current;
 				return {
 					clientId: readClientId(storage, storageKey(config, 'clientId')),
 					displayName: latestName.current,
-					editToken: latestToken.current
+					// The wire's name for the pass.
+					editToken: latestPass.current
 				};
 			},
-			onState: (state) => setHeld({ slot, state }),
-			onGate: (token, viewOnly) => latestGate.current(token, viewOnly)
+			onState: (state) => setHeld({ slot, state })
 		});
 		session.current = started;
 		started.start();
@@ -124,15 +109,14 @@ export function useCollab({
 		else session.current.rename(name);
 	}, [name]);
 
-	// The token changed after `hello` was sent with another: a link opened in
-	// this tab, a token another tab stored, or a link's token the server
-	// refused giving way to the stored one. The server reads the token in
-	// `hello` alone, so the session says it again.
+	// The pass changed after `hello` was sent with another: one that another
+	// tab of this browser stored, or the site's data cleared. The server reads
+	// the pass in `hello` alone, so the session says it again.
 	useEffect(() => {
-		if (editToken === sentToken.current || session.current === null) return;
-		sentToken.current = editToken;
+		if (pass === sentPass.current || session.current === null) return;
+		sentPass.current = pass;
 		session.current.reconnect();
-	}, [editToken]);
+	}, [pass]);
 
 	const onChange = useCallback(() => session.current?.localChange(), []);
 	const onCursor = useCallback((cursor: Cursor) => session.current?.cursor(cursor), []);

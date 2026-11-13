@@ -21,11 +21,19 @@ the working directory when that file exists.
 
 import ipaddress
 import math
-import re
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
+
+from segl.access import (
+    MAX_CODE_LENGTH,
+    MIN_CODE_CHARACTERS,
+    MIN_SECRET_CHARACTERS,
+    letters_and_digits,
+    normalize,
+)
 
 DEFAULT_BIND = "127.0.0.1:8888"
 
@@ -33,7 +41,11 @@ DEFAULT_BIND = "127.0.0.1:8888"
 DEFAULTS: Mapping[str, object] = {
     "bind": DEFAULT_BIND,
     "trusted_proxies": ["127.0.0.1", "::1"],
-    "edit_token": "",
+    "internal_networks": [],
+    "access_codes": [],
+    "access_secret": "",
+    "access_pass_hours": 12,
+    "access_passes_after": "",
     "database": "/opt/segl/var/segl.sqlite",
     "assets_dir": "/opt/segl/var/assets",
     "display_names": "/opt/segl/etc/display-names.txt",
@@ -68,8 +80,16 @@ class Settings:
     host: str
     port: int
     trusted_proxies: tuple[str, ...]
-    # Kept out of the repr so that a logged Settings does not carry the token.
-    edit_token: str = field(repr=False)
+    # The networks segl answers, or none for every address (docs/SECURITY.md).
+    internal_networks: tuple[str, ...]
+    # The access codes, each in its normal form (segl.access.normalize). Kept
+    # out of the repr, with the secret, so that a logged Settings carries neither.
+    access_codes: tuple[str, ...] = field(repr=False)
+    access_secret: str = field(repr=False)
+    # How long a pass lasts from its issue, in hours. 0 is no limit.
+    access_pass_hours: float
+    # A pass issued before this time is refused. None for no such time.
+    access_passes_after: datetime | None
     database: Path
     assets_dir: Path
     display_names: Path
@@ -89,8 +109,19 @@ class Settings:
 
     @property
     def edit_required(self) -> bool:
-        """Return whether a mutation needs the edit token."""
-        return bool(self.edit_token)
+        """Return whether a mutation needs a pass, which an access code buys."""
+        return bool(self.access_codes)
+
+    @property
+    def access_pass_seconds(self) -> float | None:
+        """Return how long a pass lasts, in seconds, or None for no limit."""
+        return self.access_pass_hours * 3600 or None
+
+    @property
+    def access_passes_after_seconds(self) -> float | None:
+        """Return ``access_passes_after`` in Unix seconds, or None."""
+        after = self.access_passes_after
+        return None if after is None else after.timestamp()
 
 
 def parse_bind(value: object) -> tuple[str, int]:
@@ -141,27 +172,108 @@ def parse_trusted_proxies(value: object) -> tuple[str, ...]:
     return tuple(proxies)
 
 
-# What a browser can send whole in the X-Segl-Edit-Token header: printable
-# ASCII, space to tilde. A header loses a space at either end, and a browser
-# refuses to send any other character, or sends it in an encoding of its own.
-# web/src/editToken.ts has the same rule, and tests/edit_token_cases.json
-# holds both to one table.
-_EDIT_TOKEN = re.compile(r"[\x21-\x7e](?:[\x20-\x7e]{0,254}[\x21-\x7e])?")
+def parse_internal_networks(value: object) -> tuple[str, ...]:
+    """Return the networks segl answers, each as ``ipaddress`` writes it.
+
+    An entry is an IPv4 or IPv6 network in CIDR form, such as ``10.0.0.0/8``
+    or ``2001:db8::/32``. One address is a network of that address alone. An
+    empty list is no limit: segl answers every address.
+
+    Raises:
+        ConfigError: When the value is not a list of networks.
+    """
+    if not isinstance(value, list):
+        raise ConfigError(f"internal_networks must be a list of networks, not {value!r}")
+    networks: list[str] = []
+    for entry in value:
+        try:
+            if not isinstance(entry, str):
+                raise ValueError
+            # Strict, as trusted_proxies is: 10.0.0.1/8 names a host, not a network.
+            network = ipaddress.ip_network(entry.strip())
+        except ValueError:
+            raise ConfigError(
+                f"internal_networks entry {entry!r} is not a network such as "
+                "'10.0.0.0/8' or '2001:db8::/32'"
+            ) from None
+        networks.append(str(network))
+    return tuple(networks)
 
 
-def is_edit_token(text: str) -> bool:
-    """Return whether ``text`` can be an edit token (docs/DEPLOY.md)."""
-    return _EDIT_TOKEN.fullmatch(text) is not None
+def parse_access_codes(value: object) -> tuple[str, ...]:
+    """Return the access codes in their normal form, in the list's order.
+
+    A code is a word or a phrase of at least 8 ASCII letters and digits, and
+    no two entries are one code once case and separators are set aside.
+
+    Raises:
+        ConfigError: When the value is not such a list. The message gives an
+            entry's place in the list and never its text: it may be most of a
+            real code.
+    """
+    if not isinstance(value, list):
+        raise ConfigError("access_codes must be a list of codes, [] for none")
+    codes: list[str] = []
+    for place, entry in enumerate(value, start=1):
+        where = f"access_codes entry {place}"
+        if not isinstance(entry, str):
+            raise ConfigError(f"{where} must be text, in quotes")
+        if not entry.isascii():
+            # A letter outside ASCII would count as a separator, and the code
+            # would be a different one from what was written.
+            raise ConfigError(f"{where} has a character outside ASCII")
+        if len(entry) > MAX_CODE_LENGTH:
+            raise ConfigError(f"{where} is longer than {MAX_CODE_LENGTH} characters")
+        code = normalize(entry)
+        if letters_and_digits(code) < MIN_CODE_CHARACTERS:
+            raise ConfigError(
+                f"{where} has fewer than {MIN_CODE_CHARACTERS} letters and digits, "
+                "which is too easy to guess"
+            )
+        if code in codes:
+            raise ConfigError(
+                f"{where} is the same code as entry {codes.index(code) + 1}: "
+                "case, spaces, and punctuation do not tell two codes apart"
+            )
+        codes.append(code)
+    return tuple(codes)
 
 
-def _edit_token(value: object) -> str:
-    # The messages leave the value out: it may be most of a real token.
+_SECRET_HINT = "`openssl rand -base64 32` writes one"
+
+
+def _access_secret(value: object, codes: tuple[str, ...]) -> str:
+    # The messages leave the value out, as those about a code do.
     if not isinstance(value, str):
-        raise ConfigError('edit_token must be a string, "" for none')
-    if value and not is_edit_token(value):
+        raise ConfigError('access_secret must be text, "" for none')
+    if value and len(value) < MIN_SECRET_CHARACTERS:
         raise ConfigError(
-            "edit_token must be 1 to 256 printable ASCII characters, with no space at "
-            'either end, or "" for none: a browser sends it in a request header'
+            f"access_secret must be at least {MIN_SECRET_CHARACTERS} characters: {_SECRET_HINT}"
+        )
+    if codes and not value:
+        raise ConfigError(
+            f"access_codes needs access_secret, which signs the passes: {_SECRET_HINT}"
+        )
+    return value
+
+
+def _pass_hours(value: object) -> float:
+    usable = not isinstance(value, bool) and isinstance(value, int | float)
+    if not usable or not math.isfinite(value) or value < 0:
+        raise ConfigError(
+            f"access_pass_hours must be a number of hours, 0 for no limit, not {value!r}"
+        )
+    return float(value)
+
+
+def _passes_after(value: object) -> datetime | None:
+    if value == "":
+        return None
+    # A time without an offset would mean another moment on another server.
+    if not isinstance(value, datetime) or value.tzinfo is None:
+        raise ConfigError(
+            "access_passes_after must be a time with its offset, such as "
+            f'2026-11-12T15:00:00Z, or "" for none, not {value!r}'
         )
     return value
 
@@ -187,6 +299,10 @@ def _seconds(key: str, value: object) -> float:
     return float(value)
 
 
+# The one static token of an earlier build, which no release shipped (D2-033).
+_REPLACED = "edit_token"
+
+
 def _read(path: Path) -> dict[str, object]:
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
@@ -194,9 +310,15 @@ def _read(path: Path) -> dict[str, object]:
         raise ConfigError(f"{path}: {exc}") from exc
     unknown = sorted(set(data) - set(DEFAULTS))
     if unknown:
-        # A misspelled edit_token would otherwise leave the slots open to edits.
+        # A misspelled access_codes would otherwise leave the slots open to edits.
         known = ", ".join(DEFAULTS)
-        raise ConfigError(f"{path}: unknown key {', '.join(unknown)}. The keys are: {known}")
+        message = f"{path}: unknown key {', '.join(unknown)}. The keys are: {known}"
+        if _REPLACED in unknown:
+            message += (
+                f". {_REPLACED} is gone: list access codes in access_codes, "
+                "with access_secret (docs/DEPLOY.md)"
+            )
+        raise ConfigError(message)
     return data
 
 
@@ -218,11 +340,16 @@ def load_settings(path: Path | None = None) -> Settings:
     if path.is_file():
         values.update(_read(path))
     host, port = parse_bind(values["bind"])
+    codes = parse_access_codes(values["access_codes"])
     return Settings(
         host=host,
         port=port,
         trusted_proxies=parse_trusted_proxies(values["trusted_proxies"]),
-        edit_token=_edit_token(values["edit_token"]),
+        internal_networks=parse_internal_networks(values["internal_networks"]),
+        access_codes=codes,
+        access_secret=_access_secret(values["access_secret"], codes),
+        access_pass_hours=_pass_hours(values["access_pass_hours"]),
+        access_passes_after=_passes_after(values["access_passes_after"]),
         database=_path("database", values["database"]),
         assets_dir=_path("assets_dir", values["assets_dir"]),
         display_names=_path("display_names", values["display_names"]),

@@ -39,8 +39,13 @@ from fastapi.testclient import TestClient
 from harness import (
     BOARD_SITE,
     EMPTY_SCENE,
+    GATED,
+    GATED_TOML,
+    PASS_HEADER,
     ROOT_SITE,
     NginxTools,
+    assert_no_secrets,
+    issue_pass,
     make_settings,
     next_message,
     running_mount,
@@ -64,7 +69,8 @@ from segl.importing import (
 from segl.repository import Repository
 from segl.room import encode
 
-TOKEN = "correct-horse-battery"
+# A pass a segl with ``GATED`` takes, issued as the tests are collected.
+PASS = issue_pass()
 SLOT = 2
 PNG = b"\x89PNG\r\n\x1a\n" + bytes(range(256))
 PNG_HASH = hashlib.sha256(PNG).hexdigest()
@@ -423,11 +429,11 @@ def received(socket: WebSocketTestSession, seconds: float = 5.0) -> dict[str, An
 
 
 def hello(
-    socket: WebSocketTestSession, name: str | None = "Guest1", token: str = ""
+    socket: WebSocketTestSession, name: str | None = "Guest1", edit_pass: str = ""
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Say hello, and return the welcome and the scene."""
     socket.send_json(
-        {"type": "hello", "clientId": "client-1", "displayName": name, "editToken": token}
+        {"type": "hello", "clientId": "client-1", "displayName": name, "editToken": edit_pass}
     )
     return received(socket), received(socket)
 
@@ -457,12 +463,12 @@ def head(client: TestClient, slot: int = SLOT) -> dict[str, Any]:
     return response.json()
 
 
-def headers_for(name: str | None = None, token: str | None = None) -> dict[str, str]:
+def headers_for(name: str | None = None, edit_pass: str | None = None) -> dict[str, str]:
     headers = {"Content-Type": "application/json"}
     if name is not None:
         headers[NAME_HEADER] = quote(name)
-    if token is not None:
-        headers["X-Segl-Edit-Token"] = token
+    if edit_pass is not None:
+        headers[PASS_HEADER] = edit_pass
     return headers
 
 
@@ -471,12 +477,12 @@ def send_file(
     value: object,
     name: str | None = None,
     *,
-    token: str | None = None,
+    edit_pass: str | None = None,
     path: str = IMPORT,
 ) -> Any:
     """Post a document to the import route, as the page posts a chosen file."""
     body = value if isinstance(value, bytes) else body_of(value)
-    return client.post(path, content=body, headers=headers_for(name, token))
+    return client.post(path, content=body, headers=headers_for(name, edit_pass))
 
 
 def test_a_drawing_is_exported_cleared_and_imported_back(
@@ -862,23 +868,23 @@ def test_with_a_token_a_client_without_it_cannot_import(
     repository: Repository, tmp_path: Path
 ) -> None:
     with (
-        application(repository, tmp_path, edit_token=TOKEN) as client,
+        application(repository, tmp_path, **GATED) as client,
         client.websocket_connect(f"/collab?slot={SLOT}") as editor,
         client.websocket_connect(f"/collab?slot={SLOT}") as viewer,
     ):
-        hello(editor, "Guest1", TOKEN)
+        hello(editor, "Guest1", PASS)
         assert hello(viewer, "Staff2")[0]["viewOnly"] is True
         received(editor)
         draw(editor, 1, A)
         assert received(viewer)["elements"] == [A]
 
-        for token in (None, "", "wrong", TOKEN[:-1]):
-            refused = send_file(client, document(C), "Staff2", token=token)
-            assert (refused.status_code, refused.json()["error"]) == (403, "view_only"), token
+        for edit_pass in (None, "", "wrong", PASS[:-1]):
+            refused = send_file(client, document(C), "Staff2", edit_pass=edit_pass)
+            assert (refused.status_code, refused.json()["error"]) == (403, "view_only"), edit_pass
         assert (head(client)["epoch"], rows(client)) == (1, [(1, 1, "Guest1")])
         assert not (tmp_path / "assets").exists()
 
-        allowed = send_file(client, document(C), "Guest1", token=TOKEN)
+        allowed = send_file(client, document(C), "Guest1", edit_pass=PASS)
 
         assert (allowed.status_code, allowed.json()["epoch"]) == (200, 2)
         # The viewer is sent the imported scene too.
@@ -887,18 +893,18 @@ def test_with_a_token_a_client_without_it_cannot_import(
 
 
 def test_without_a_token_configured_anyone_imports(drawn: TestClient) -> None:
-    assert send_file(drawn, document(), token="anything").status_code == 200
+    assert send_file(drawn, document(), edit_pass="anything").status_code == 200
 
 
 def test_the_token_is_checked_before_the_body_is_read(
     repository: Repository, tmp_path: Path
 ) -> None:
-    with application(repository, tmp_path, edit_token=TOKEN, max_scene_bytes=100) as client:
+    with application(repository, tmp_path, **GATED, max_scene_bytes=100) as client:
         # Too large, and not JSON: neither is looked at for a client that may not edit.
         refused = send_file(client, b"x" * 500)
 
         assert (refused.status_code, refused.json()["error"]) == (403, "view_only")
-        assert send_file(client, b"x" * 500, token=TOKEN).status_code == 413
+        assert send_file(client, b"x" * 500, edit_pass=PASS).status_code == 413
 
 
 # With the rooms alone.
@@ -1008,9 +1014,9 @@ def test_an_import_survives_a_kill_and_so_do_its_files(tmp_path: Path) -> None:
 
 
 def test_with_a_token_a_running_server_gates_the_import(tmp_path: Path) -> None:
-    """T-008 from a running process, with the token in the TOML file."""
+    """T-008 from a running process, with the codes in the TOML file."""
     config = (
-        f'edit_token = "{TOKEN}"\nhead_flush_seconds = {SOON}\n'
+        f"{GATED_TOML}head_flush_seconds = {SOON}\n"
         f"history_interval_seconds = {EVERY_FLUSH}\nmax_scene_bytes = 4000\n"
     )
     with running_segl(tmp_path, config) as server:
@@ -1018,7 +1024,7 @@ def test_with_a_token_a_running_server_gates_the_import(tmp_path: Path) -> None:
             server.socket(f"/collab?slot={SLOT}") as editor,
             server.socket(f"/collab?slot={SLOT}") as viewer,
         ):
-            say_hello(editor, "Guest1", token=TOKEN)
+            say_hello(editor, "Guest1", edit_pass=PASS)
             assert say_hello(viewer, "Staff2")[0]["viewOnly"] is True
             next_message(editor)
             send(editor, 1, A)
@@ -1028,12 +1034,12 @@ def test_with_a_token_a_running_server_gates_the_import(tmp_path: Path) -> None:
             assert (refused.status, refused.json()["error"]) == (403, "view_only")
             assert server.get(f"/api/v1/slots/{SLOT}").json()["epoch"] == 1
 
-            # With the token, the configured limit is the one that answers.
+            # With a pass, the configured limit is the one that answers.
             large = body_of(document(element("big", 1, text="x" * 4000)))
-            over = server.post(IMPORT, headers_for("Guest1", TOKEN), large)
+            over = server.post(IMPORT, headers_for("Guest1", PASS), large)
             assert (over.status, over.json()["error"]) == (413, "payload_too_large")
 
-            allowed = server.post(IMPORT, headers_for("Guest1", TOKEN), body_of(document(C)))
+            allowed = server.post(IMPORT, headers_for("Guest1", PASS), body_of(document(C)))
             assert (allowed.status, allowed.json()["epoch"]) == (200, 2)
             for socket in (editor, viewer):
                 assert next_message(socket) == {
@@ -1042,7 +1048,8 @@ def test_with_a_token_a_running_server_gates_the_import(tmp_path: Path) -> None:
                     "elements": [C],
                     "files": [],
                 }
-        assert TOKEN not in server.log()
+        assert PASS not in server.log()
+        assert_no_secrets(server.log())
 
 
 # Through nginx, with the files in deploy/nginx/.

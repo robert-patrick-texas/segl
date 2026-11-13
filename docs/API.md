@@ -2,7 +2,9 @@
 
 Paths below are relative to segl's root. A proxy that mounts segl under a path, such as `/board/`, strips that path first (`ARCHITECTURE.md`, mount and navigation). The service binds `127.0.0.1`. Errors are JSON: `{ "error": "<code>", "message": "<human text>" }`. Clients branch on `error`. The message is for a person and may change.
 
-Mutation routes require the edit token when `edit_token` is non-empty. The header is `X-Segl-Edit-Token`. A view-only call gets `403` and `error: view_only`. An empty configured token ignores the header and allows the write.
+Mutation routes need a pass when `access_codes` has one or more codes (S-008, D2-033). A browser is issued a pass by `POST /api/v1/access`, for an access code, and sends it in the `X-Segl-Edit-Token` header. The header's name is from an earlier build, in which it carried a token. A call without a pass the server takes gets `403` and `error: view_only`. With no codes, the header is ignored and the write is allowed.
+
+With `internal_networks` set, a request or a WebSocket handshake from an address outside those networks gets `403` and `error: outside_network`, whatever its path and before anything else is looked at (`SECURITY.md`, S-018).
 
 A mutation, or a WebSocket upgrade, whose `Origin` header is present and does not match the request's `Host` (host and port) gets `403` and `error: bad_origin` (`SECURITY.md`). A mutation is a request with any method but `GET`, `HEAD`, and `OPTIONS`, whatever its path. A request without `Origin` is not checked.
 
@@ -11,16 +13,17 @@ A mutation, or a WebSocket upgrade, whose `Origin` header is present and does no
 | Method | Path | Function |
 |---|---|---|
 | GET | `/api/v1/health` | `{ "status": "ok" }` |
-| GET | `/api/v1/config` | `{ "editRequired" }`, true when `edit_token` is set. Same fact as the injected script. No token, and the token is never in the response. |
+| GET | `/api/v1/config` | `{ "editRequired" }`, true when `access_codes` has a code. Same fact as the injected script. No pass, and no code is ever in the response. |
+| POST | `/api/v1/access` | Body `{ "code" }`, a JSON object of at most 4096 bytes. Issues a pass for an access code and returns `{ "pass", "expiresAt" }`. No pass is needed to call it. A wrong code is `403` with `wrong_code`. After five wrong codes in a row from one client address, every code from it gets `429` with `rate_limited` for fifteen minutes. |
 | GET | `/api/v1/slots` | `{ "slots": [ ... ] }` with nine entries in number order: number, title, epoch, savedAt. |
 | GET | `/api/v1/slots/{n}` | One slot's metadata, the same object as its entry in the list. |
-| PATCH | `/api/v1/slots/{n}` | Body `{ "title" }`, a JSON object of at most 4096 bytes. The title is trimmed, and is 1–80 characters on one line. Returns the slot's metadata with the title as stored. Edit token when set. Sends a `slot` message to the slot's room. |
+| PATCH | `/api/v1/slots/{n}` | Body `{ "title" }`, a JSON object of at most 4096 bytes. The title is trimmed, and is 1–80 characters on one line. Returns the slot's metadata with the title as stored. A pass when codes are set. Sends a `slot` message to the slot's room. |
 | GET | `/api/v1/slots/{n}/scene` | Head scene, epoch, savedAt, editorLabel, and the head's file list (`id`, `hash`, `mimeType`): the files its images name. |
-| GET | `/api/v1/slots/{n}/revisions` | `{ "revisions": [ ... ] }`, the slot's history, newest first, at most `history_limit` entries (50): revision, epoch, authorLabel, createdAt. Scene bodies stay on the single-revision route. No token. |
-| GET | `/api/v1/slots/{n}/revisions/{revision}` | One revision: the same four fields, its stored scene, and the scene's file list. No token. |
-| POST | `/api/v1/slots/{n}/restore` | Body `{ "revision", "displayName" }`, a JSON object of at most 4096 bytes. Records the scene being replaced, puts the revision's scene in the head at the next epoch, appends a revision for it, and sends `scene` to the slot's room. Returns `{ "revision", "epoch", "savedAt" }`. Edit token when set. |
-| POST | `/api/v1/slots/{n}/import` | The body is an Excalidraw scene document, the file the editor's export writes, of at most `max_scene_bytes`. Records the scene being replaced, puts the document's elements in the head at the next epoch, with the files of its images, appends a revision for it, and sends `scene` to the slot's room. Returns `{ "revision", "epoch", "savedAt" }`. Edit token when set. |
-| POST | `/api/v1/display-name` | Allocates the next `WordN` and returns `{ "displayName" }`. No body and no edit token. At most 30 names per minute per client address (`SECURITY.md`). The next call gets `429` with `rate_limited` and a `Retry-After` header. |
+| GET | `/api/v1/slots/{n}/revisions` | `{ "revisions": [ ... ] }`, the slot's history, newest first, at most `history_limit` entries (50): revision, epoch, authorLabel, createdAt. Scene bodies stay on the single-revision route. No pass. |
+| GET | `/api/v1/slots/{n}/revisions/{revision}` | One revision: the same four fields, its stored scene, and the scene's file list. No pass. |
+| POST | `/api/v1/slots/{n}/restore` | Body `{ "revision", "displayName" }`, a JSON object of at most 4096 bytes. Records the scene being replaced, puts the revision's scene in the head at the next epoch, appends a revision for it, and sends `scene` to the slot's room. Returns `{ "revision", "epoch", "savedAt" }`. A pass when codes are set. |
+| POST | `/api/v1/slots/{n}/import` | The body is an Excalidraw scene document, the file the editor's export writes, of at most `max_scene_bytes`. Records the scene being replaced, puts the document's elements in the head at the next epoch, with the files of its images, appends a revision for it, and sends `scene` to the slot's room. Returns `{ "revision", "epoch", "savedAt" }`. A pass when codes are set. |
+| POST | `/api/v1/display-name` | Allocates the next `WordN` and returns `{ "displayName" }`. No body and no pass. At most 30 names per minute per client address (`SECURITY.md`). The next call gets `429` with `rate_limited` and a `Retry-After` header. |
 
 Paths are exact. A trailing slash, as in `/api/v1/health/`, is a `404` and is not redirected.
 
@@ -32,7 +35,10 @@ Errors that no route names:
 |---|---|---|
 | 400 | `bad_request` | The body of a mutation is not a JSON object. |
 | 403 | `bad_origin` | A mutation, or a WebSocket handshake, with an `Origin` that does not match `Host`. Nothing was changed. |
-| 403 | `view_only` | A mutation without the edit token, or with a wrong one, when `edit_token` is set. |
+| 403 | `outside_network` | Any request, or a WebSocket handshake, from an address outside `internal_networks`, when that is set. Nothing else was looked at. |
+| 403 | `view_only` | A mutation without a pass, or with one the server does not take, when `access_codes` has a code. |
+| 403 | `wrong_code` | `POST /api/v1/access` with text that is not one of the access codes. |
+| 404 | `no_access_codes` | `POST /api/v1/access` on a segl without access codes. Everyone can edit there, and there is no pass to issue. |
 | 404 | `not_found` | No route has this path. |
 | 404 | `revision_not_found` | The slot has no revision with that number. It was never made, or it was the oldest and has been dropped. |
 | 405 | `method_not_allowed` | The path exists and does not take this method. The `Allow` header lists the ones it takes. Slots have no create or delete route. |
@@ -41,7 +47,7 @@ Errors that no route names:
 | 422 | `invalid_title` | A slot title that is not text, is empty once trimmed, is longer than 80 characters, or has a control character, such as a line break. |
 | 422 | `invalid_revision` | A restore whose `revision` is not a whole number, 1 or more. |
 | 422 | `invalid_document` | An import whose body is a JSON object and is not a scene document as the editor writes one. The message says what is wrong, and repeats nothing from the body. |
-| 429 | `rate_limited` | This client address has been given 30 display names in the last minute. `Retry-After` is the whole seconds until it may have another. The refused call takes no name. |
+| 429 | `rate_limited` | This client address has been given 30 display names in the last minute, or has sent five wrong access codes in a row. `Retry-After` is the whole seconds until it may ask again. The refused call takes no name, and its code is not read. |
 | 500 | `internal_error` | segl failed, for example because it could not read the database. The cause is in the server log, not in the response. |
 
 A slot's metadata, from `/api/v1/slots/4`:
@@ -98,7 +104,7 @@ A restore, `POST /api/v1/slots/4/restore` with `{ "revision": 1, "displayName": 
 2. The chosen revision's scene becomes the head, the epoch goes up by one, and a revision records it, in one transaction.
 3. Every connection on the slot, viewers included, is sent `scene` with the new epoch, and puts it in place of its canvas.
 
-`displayName` is who restored, for `authorLabel`: the label the browser stores, taken as written, as `hello` takes it. Left out, or not 1 to 40 characters of text, it is `System`. The token is checked before the body is read. A restore the server cannot write leaves the slot on its scene and its epoch, and is a `500`. An edit that reaches the server while it is writing a restore was made on the scene that is going, and is dropped with it.
+`displayName` is who restored, for `authorLabel`: the label the browser stores, taken as written, as `hello` takes it. Left out, or not 1 to 40 characters of text, it is `System`. The pass is checked before the body is read. A restore the server cannot write leaves the slot on its scene and its epoch, and is a `500`. An edit that reaches the server while it is writing a restore was made on the scene that is going, and is dropped with it.
 
 An import, `POST /api/v1/slots/4/import`, takes as its body the file the editor's export writes (S-011, D2-031):
 
@@ -126,7 +132,7 @@ It answers as a restore does, with `{ "revision", "epoch", "savedAt" }`, after t
 
 Who imported, for `authorLabel`, comes in the `X-Segl-Display-Name` header, because the body is the document: the label the browser stores, percent-encoded as UTF-8, since a header is ASCII. Left out, or not 1 to 40 characters once decoded, it is `System`.
 
-A refused import changes nothing and stores no file. The token is checked before the body is read. A body over `max_scene_bytes` is a `413` with `payload_too_large`, refused from its `Content-Length` before it is read. So is a document whose elements come to more than `max_scene_bytes` as segl stores them, which is ASCII, with an escape for every other character, and one with a named file over `max_asset_bytes`. A body that is not a JSON object is a `400` with `bad_request`. A JSON object that is not a scene document is a `422` with `invalid_document`: an element without an id, two elements with one id, a named file that is not an image in a `data:` URL, or a number JSON cannot write, such as `1e999`.
+A refused import changes nothing and stores no file. The pass is checked before the body is read. A body over `max_scene_bytes` is a `413` with `payload_too_large`, refused from its `Content-Length` before it is read. So is a document whose elements come to more than `max_scene_bytes` as segl stores them, which is ASCII, with an escape for every other character, and one with a named file over `max_asset_bytes`. A body that is not a JSON object is a `400` with `bad_request`. A JSON object that is not a scene document is a `422` with `invalid_document`: an element without an id, two elements with one id, a named file that is not an image in a `data:` URL, or a number JSON cannot write, such as `1e999`.
 
 A display name, from `POST /api/v1/display-name`:
 
@@ -136,12 +142,24 @@ A display name, from `POST /api/v1/display-name`:
 
 Every call takes the next number, so the response is sent with `Cache-Control: no-store`, and a browser calls the route only when it has no stored label (`ARCHITECTURE.md`, display names).
 
+A pass, from `POST /api/v1/access` with `{ "code": "Maple River 42" }`:
+
+```json
+{ "pass": "1800000000.q0h3JYzXb1cR5tUv7wA9-_Bd", "expiresAt": "2027-01-15T20:00:00.000Z" }
+```
+
+`pass` is what the browser stores and sends back: the Unix second it was issued at, a dot, and 24 characters of signature. It is printable ASCII, so a request header carries it whole. `expiresAt` is when it ends, `access_pass_hours` after its issue, in UTC to the millisecond, or `null` when the site set no limit. The server keeps no list of passes. It takes one whose signature fits a code that is still in `access_codes`, that was issued at or after `access_passes_after`, that is not from more than five minutes ahead of the server's clock, and that is younger than `access_pass_hours` as that is set when the pass is checked (`ARCHITECTURE.md`, edit gate). The response is sent with `Cache-Control: no-store`, and sets no cookie.
+
+A code is compared in a normal form: lowercase letters and digits, with any run of other characters as one separator. So `Maple River 42`, `maple.river.42`, and `MAPLE-river  42` are one code. The comparison is constant-time, against every code in the list.
+
+A body that is not a JSON object, or whose `code` is not text, is a `400` with `bad_request`, and is not counted as a wrong code. Any text that is not one of the codes is `403` with `wrong_code`, and is counted for the client address it came from (`SECURITY.md`). The fifth wrong code in a row starts a wait of fifteen minutes, during which every call from that address is `429` with `rate_limited` and a `Retry-After` header, before its body is read. A right code starts the count again, and so does a quarter of an hour without a wrong one. The route is a mutation for the Origin check. On a segl without access codes it is `404` with `no_access_codes`.
+
 Uploaded files, the bytes of the images on the canvases (D2-028):
 
 | Method | Path | Function |
 |---|---|---|
-| POST | `/api/v1/slots/{n}/assets` | The body is the file's bytes, at most `max_asset_bytes`, and `Content-Type` is its image type. Edit token when set. Returns `{ "hash", "mediaType" }`. |
-| GET | `/api/v1/assets/{hash}` | The bytes stored under that SHA-256. No token. |
+| POST | `/api/v1/slots/{n}/assets` | The body is the file's bytes, at most `max_asset_bytes`, and `Content-Type` is its image type. A pass when codes are set. Returns `{ "hash", "mediaType" }`. |
+| GET | `/api/v1/assets/{hash}` | The bytes stored under that SHA-256. No pass. |
 
 An upload stores the bytes once, under `assets_dir`, and answers with their SHA-256 as 64 lowercase hex digits. The same bytes uploaded again, to any slot, give the same answer. The upload alone changes no scene: the browser then names the file on the socket, in a `files` message. `Content-Type` is one of the editor's image types: `image/png`, `image/jpeg`, `image/gif`, `image/webp`, `image/svg+xml`, `image/bmp`, `image/x-icon`, `image/avif`, or `image/jfif`. Anything else, or none, is a `415`. segl does not look inside the bytes. An empty body is a `400` with `bad_request`, and one over the limit a `413`, refused from its `Content-Length` before it is read.
 
@@ -151,12 +169,13 @@ Uploaded files live under `/api/v1/` so they never share a path with the Vite bu
 
 ## WebSocket
 
-`GET /collab?slot={n}` upgraded to a WebSocket. The slot number in the query is not a secret. The edit token is not a query parameter. Each message is one text frame holding a JSON object with a `type`.
+`GET /collab?slot={n}` upgraded to a WebSocket. The slot number in the query is not a secret. The pass is not a query parameter. Each message is one text frame holding a JSON object with a `type`.
 
 The handshake is refused with an HTTP response, in the error shape above, and no socket opens:
 
 | Status | `error` | When |
 |---|---|---|
+| 403 | `outside_network` | The client's address is outside `internal_networks`, when that is set. |
 | 403 | `bad_origin` | `Origin` is present and does not match `Host`. |
 | 404 | `invalid_slot` | `slot` is missing, or is not `1` to `9`. |
 
@@ -164,7 +183,7 @@ The first message must be `hello`, within 10 seconds. Until then the connection 
 
 Client → server:
 
-- `hello` — `{ "type": "hello", "clientId", "displayName", "editToken": "" }`. `clientId` is this browser's own id, 1–64 letters, digits, `_`, and `-`, which it keeps in `localStorage`. `displayName` is the stored label, taken as written and not title-cased, or `null` for a browser that has none yet. `editToken` is this browser's edit token, or `""`: the stored one, or the one of the edit link the page was opened by (`ARCHITECTURE.md`, edit gate). It decides `viewOnly` for the life of the connection, so a page whose token changes says `hello` again on a new socket.
+- `hello` — `{ "type": "hello", "clientId", "displayName", "editToken": "" }`. `clientId` is this browser's own id, 1–64 letters, digits, `_`, and `-`, which it keeps in `localStorage`. `displayName` is the stored label, taken as written and not title-cased, or `null` for a browser that has none yet. `editToken` is this browser's pass, or `""` (`ARCHITECTURE.md`, edit gate). The field's name is from an earlier build, in which it carried a token. The server reads the pass here and nowhere else on the socket: it decides `viewOnly`, and the server keeps the time the pass ends for the life of the connection. A page whose pass changes says `hello` again on a new socket.
 - `elements` — `{ "type": "elements", "epoch", "elements": [ ... ], "seq" }`. Each element is the editor's record, with a text `id` and whole-number `version` and `versionNonce`. The batch is taken whole or refused whole. `seq` is optional: the number this browser gives the message, which the server answers with `saved`. The list may be empty, which with a `seq` asks whether everything the server holds is saved.
 - `presence` — `{ "type": "presence", "cursor": { "x", "y" } }`, in the canvas's own coordinates, or `"cursor": null`.
 - `rename` — `{ "type": "rename", "displayName" }`, a name the person typed.
@@ -186,12 +205,12 @@ Server → client:
 |---|---|
 | `bad_message` | Not JSON text, not an object with a `type`, a second `hello`, or a field of the wrong shape. Nothing was applied. |
 | `unknown_type` | A `type` this segl does not know. |
-| `view_only` | `elements` or `files` from a connection that may not edit. Nothing was applied, and nobody else was told. |
+| `view_only` | `elements` or `files` from a connection that may not edit: one that had no pass the server takes in `hello`, or one whose pass has ended since. Nothing was applied, and nobody else was told. |
 | `scene_too_large` | `elements` that would take the slot's elements over `max_scene_bytes`. Nothing was applied. |
 | `unknown_file` | `files` that named a hash segl has no bytes for. Nothing was applied. The browser uploads the bytes and sends the message again. |
 | `invalid_name` | `rename` with a name that is not 1–40 characters once title-cased. |
 
-The server applies `elements` only when the sender is an editor and `epoch` matches the room. On an epoch mismatch it sends `scene` and does not apply the payload. It keeps the copy of each element with the higher `version`, and on equal versions the one with the lower `versionNonce` (`ARCHITECTURE.md`, collaboration). A deleted element is an element with `isDeleted` true, and is kept.
+The server applies `elements` only when the sender is an editor and `epoch` matches the room. A connection is an editor until its pass ends: the first `elements` or `files` after that time is answered `view_only`, and from then on the connection is a viewer, as one that came without a pass. `welcome` is not sent again. On an epoch mismatch it sends `scene` and does not apply the payload. It keeps the copy of each element with the higher `version`, and on equal versions the one with the lower `versionNonce` (`ARCHITECTURE.md`, collaboration). A deleted element is an element with `isDeleted` true, and is kept.
 
 `files` follows the same two rules. A file id the slot already has keeps the bytes it was first given, and is not sent on. An image element and its file travel apart, in either order: the element goes out as soon as it is placed, and the other browsers draw a placeholder until the file is named and fetched.
 
@@ -218,11 +237,12 @@ Served when `web_dir` holds a build (`DEPLOY.md`). Without one, these paths are 
 | Method | Path | Function |
 |---|---|---|
 | GET | `/` and `/s` | The web application, as a page at segl's root: its files are named `./assets/...`, and `SEGL_CONFIG.root` is `./`. |
+| GET | `/access` | The same page at segl's root. The application shows the access page, where a person enters an access code (`ARCHITECTURE.md`, edit gate). `/access/` and anything under it are not pages. |
 | GET | `/s/{n}` and `/s/` | The same page one level down: `../assets/...`, and `root` is `../`. Any one segment gets it. The page, not this route, sends a segment that is not `1` to `9` to slot 1. |
 | GET | `/assets/...`, `/fonts/...`, `/favicon.svg` | The files of the build, with `ETag` and `Last-Modified`. A file the build lacks is `404` with `not_found`. |
 
-A page is `text/html` with `Cache-Control: no-cache`. It carries `window.SEGL_CONFIG = { "root", "editRequired" }` (`ARCHITECTURE.md`, mount and navigation) and never the edit token. No URL in it starts with `/`. A deeper path, such as `/s/1/x`, is not a page.
+A page is `text/html` with `Cache-Control: no-cache`. It carries `window.SEGL_CONFIG = { "root", "editRequired" }` (`ARCHITECTURE.md`, mount and navigation) and never an access code, the secret, or a pass. No URL in it starts with `/`. A deeper path, such as `/s/1/x`, is not a page.
 
 ## Reserved paths
 
-segl registers only these first segments: `s`, `api`, `collab`, and the folders and files at the top of the Vite build (`assets`, `fonts`, and `favicon.svg`). They are registered after the others, so a build cannot shadow them. Do not register `/{team}/{project}/{board}`.
+segl registers only these first segments: `s`, `access`, `api`, `collab`, and the folders and files at the top of the Vite build (`assets`, `fonts`, and `favicon.svg`). They are registered after the others, so a build cannot shadow them. Do not register `/{team}/{project}/{board}`.

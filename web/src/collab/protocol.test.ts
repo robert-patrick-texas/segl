@@ -119,8 +119,8 @@ describe('parseServerMessage', () => {
 
 	test('an error', () => {
 		expect(
-			parse({ type: 'error', error: 'view_only', message: 'Editing needs the token.' })
-		).toEqual({ type: 'error', error: 'view_only', message: 'Editing needs the token.' });
+			parse({ type: 'error', error: 'view_only', message: 'Editing needs an access code.' })
+		).toEqual({ type: 'error', error: 'view_only', message: 'Editing needs an access code.' });
 		expect(parse({ type: 'error', error: 'view_only' })).toEqual({
 			type: 'error',
 			error: 'view_only',

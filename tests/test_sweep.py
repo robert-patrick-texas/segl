@@ -15,10 +15,10 @@
 """T-012, as one walk over every route segl has (docs/TEST-PLAN.md, S-007).
 
 Each route is asked three ways: as segl's own page asks, as a page of another
-site asks, and as a browser without the edit token asks. No answer sets a
-cookie, and none tells a browser that another site may read it. A mutation
-and a WebSocket upgrade from another site are ``bad_origin``, and a mutation
-without the token is ``view_only``.
+site asks, and as a browser without a pass asks. No answer sets a cookie, and
+none tells a browser that another site may read it. A mutation and a WebSocket
+upgrade from another site are ``bad_origin``, and a mutation without a pass is
+``view_only`` on a segl that asks for an access code.
 
 The walk is a table, ``SWEEP``, and a test holds the table to the routes the
 application registers. A route that is added and not listed here fails it.
@@ -26,7 +26,8 @@ application registers. A route that is added and not listed here fails it.
 The other test files check a cookie beside what they test. This one is the
 sweep: in process over every route, and through nginx, with the files in
 deploy/nginx/, in front of a real ``python -m segl --config`` process that
-has an edit token.
+has access codes. tests/test_networks.py walks the same table from outside
+``internal_networks``.
 """
 
 import hashlib
@@ -41,11 +42,17 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from harness import (
+    ACCESS_CODE,
     BOARD_SITE,
+    GATED,
+    GATED_TOML,
+    PASS_HEADER,
     ROOT_SITE,
     Mount,
     NginxTools,
     Reply,
+    assert_no_secrets,
+    issue_pass,
     make_settings,
     next_message,
     running_mount,
@@ -61,8 +68,9 @@ from segl.app import create_app
 from segl.origin import OriginCheck
 from segl.repository import Repository
 
-TOKEN = "correct horse +/= battery"
-TOKEN_HEADER = "X-Segl-Edit-Token"
+# A pass a segl with ``GATED`` takes, issued as the tests are collected.
+PASS = issue_pass()
+ACCESS_ROUTE = "/api/v1/access"
 
 PNG = b"\x89PNG\r\n\x1a\n" + bytes(range(256))
 PNG_HASH = hashlib.sha256(PNG).hexdigest()
@@ -95,8 +103,10 @@ class Call:
     body: bytes | None = None
     # Whether it changes something: any method but GET, and the upgrade.
     mutation: bool = False
-    # Whether it needs the edit token when one is set.
+    # Whether it needs a pass on a segl that asks for an access code.
     gated: bool = False
+    # What a segl without access codes answers: it has no code to take.
+    open_status: int = 200
 
 
 def _json(body: object) -> bytes:
@@ -131,8 +141,18 @@ MUTATIONS = (
         True,
         True,
     ),
-    # A name needs no token: a viewer has one too.
+    # A name needs no pass: a viewer has one too.
     Call("POST", "/api/v1/display-name", "/api/v1/display-name", mutation=True),
+    # Nor does the route that issues one: it takes a code.
+    Call(
+        "POST",
+        ACCESS_ROUTE,
+        ACCESS_ROUTE,
+        JSON,
+        _json({"code": ACCESS_CODE}),
+        mutation=True,
+        open_status=404,
+    ),
 )
 SOCKET = Call("WS", "/collab", "/collab?slot=1", mutation=True)
 READS = (
@@ -144,9 +164,10 @@ READS = (
     Call("GET", "/api/v1/slots/{n}/revisions", "/api/v1/slots/1/revisions"),
     Call("GET", "/api/v1/slots/{n}/revisions/{revision}", "/api/v1/slots/1/revisions/1"),
     Call("GET", "/api/v1/assets/{name}", f"/api/v1/assets/{PNG_HASH}"),
-    # The web application: its two pages, and the files of its build.
+    # The web application: its pages, and the files of its build.
     Call("GET", "/", "/"),
     Call("GET", "/s", "/s"),
+    Call("GET", "/access", "/access"),
     Call("GET", "/s/", "/s/"),
     Call("GET", "/s/{n}", "/s/1"),
     Call("GET", "/favicon.svg", "/favicon.svg"),
@@ -181,7 +202,7 @@ def client(repository: Repository, tmp_path: Path) -> Iterator[TestClient]:
 
 @pytest.fixture
 def gated(repository: Repository, tmp_path: Path) -> Iterator[TestClient]:
-    with application(repository, tmp_path, edit_token=TOKEN) as client:
+    with application(repository, tmp_path, **GATED) as client:
         yield client
 
 
@@ -193,6 +214,14 @@ def ask(client: TestClient, call: Call, **more: str) -> httpx2.Response:
     return client.request(
         call.method, call.path, headers={**call.headers, **more}, content=call.body
     )
+
+
+def assert_secret_free(call: Call, body: bytes) -> None:
+    """No answer holds a code or the secret, and only the access route's holds a pass."""
+    text = body.decode("utf-8", errors="replace")
+    if call.route == ACCESS_ROUTE:
+        text = text.replace(json.loads(body)["pass"], "")
+    assert_no_secrets(text, call.path)
 
 
 def state(client: TestClient) -> dict[str, Any]:
@@ -227,12 +256,18 @@ def test_the_sweep_names_every_route_the_application_has(client: TestClient) -> 
 
 def test_every_call_that_is_not_a_read_is_marked_a_mutation() -> None:
     assert [call for call in SWEEP if (call.method != "GET") != call.mutation] == []
-    # Every mutation but the name needs the token, and the socket says so in `welcome`.
-    assert [call.path for call in MUTATIONS if not call.gated] == ["/api/v1/display-name"]
+    # Every mutation needs a pass but the name and the route that issues one,
+    # and the socket says so in `welcome`.
+    assert [call.path for call in MUTATIONS if not call.gated] == [
+        "/api/v1/display-name",
+        ACCESS_ROUTE,
+    ]
+    assert [call.path for call in SWEEP if call.open_status != 200] == [ACCESS_ROUTE]
 
 
 def test_the_only_middleware_is_the_origin_check(client: TestClient) -> None:
-    # No session middleware and no CORS middleware (docs/SECURITY.md).
+    # No session middleware and no CORS middleware (docs/SECURITY.md). With
+    # internal_networks set there is a second one (tests/test_networks.py).
     middleware = cast(FastAPI, client.app).user_middleware
 
     assert [each.cls for each in middleware] == [OriginCheck]
@@ -245,7 +280,7 @@ def test_no_answer_to_segls_own_page_sets_a_cookie(client: TestClient) -> None:
     for call in (*MUTATIONS, *READS):
         response = ask(client, call, Origin=OWN)
 
-        assert response.status_code == 200, (call, response.text)
+        assert response.status_code == call.open_status, (call, response.text)
         assert_plain(response.headers, call.path)
 
     with client.websocket_connect(SOCKET.path, headers={"Origin": OWN}) as socket:
@@ -257,7 +292,7 @@ def test_no_answer_to_segls_own_page_sets_a_cookie(client: TestClient) -> None:
 def test_the_walk_did_what_it_asked_for(client: TestClient) -> None:
     # So that the test above is about answers to requests that worked.
     for call in MUTATIONS:
-        assert ask(client, call, Origin=OWN).status_code == 200
+        assert ask(client, call, Origin=OWN).status_code == call.open_status
 
     after = state(client)
     assert after["slot"]["title"] == "Core"
@@ -331,18 +366,24 @@ def test_a_preflight_is_given_no_permission(client: TestClient) -> None:
         assert_plain(response.headers, call.path)
 
 
-# As a browser without the edit token asks.
+# As a browser without a pass asks.
+
+# A pass signed with another secret, as one from another segl is.
+FORGED = issue_pass(secret="another-secret-of-thirty-two-chars!")
 
 
-@pytest.mark.parametrize("sent", [None, "", "wrong", TOKEN[:-1], TOKEN + "x", TOKEN.upper()])
-def test_a_gated_mutation_without_the_token_is_view_only_and_changes_nothing(
+@pytest.mark.parametrize(
+    "sent",
+    [None, "", "wrong", ACCESS_CODE, PASS[:-1], PASS + "x", PASS.swapcase(), f" {PASS}x", FORGED],
+)
+def test_a_gated_mutation_without_a_pass_is_view_only_and_changes_nothing(
     gated: TestClient, sent: str | None
 ) -> None:
     before = state(gated)
-    token = {} if sent is None else {TOKEN_HEADER: sent}
+    edit_pass = {} if sent is None else {PASS_HEADER: sent}
 
     for call in MUTATIONS:
-        response = ask(gated, call, Origin=OWN, **token)
+        response = ask(gated, call, Origin=OWN, **edit_pass)
 
         if call.gated:
             assert (response.status_code, response.json()["error"]) == (403, "view_only"), call
@@ -352,29 +393,32 @@ def test_a_gated_mutation_without_the_token_is_view_only_and_changes_nothing(
     assert state(gated) == before
 
 
-def test_the_token_opens_every_gated_mutation_and_no_answer_sets_a_cookie(
+def test_a_pass_opens_every_gated_mutation_and_no_answer_sets_a_cookie(
     gated: TestClient,
 ) -> None:
     for call in (*MUTATIONS, *READS):
-        response = ask(gated, call, Origin=OWN, **{TOKEN_HEADER: TOKEN})
+        response = ask(gated, call, Origin=OWN, **{PASS_HEADER: PASS})
 
         assert response.status_code == 200, (call, response.text)
         assert_plain(response.headers, call.path)
-        # The token is in no answer, the page and its config among them.
-        assert TOKEN.encode() not in response.content, call.path
+        # No code and no secret is in an answer, the pages and their config
+        # among them, and a pass is in the one answer that issues it.
+        assert_secret_free(call, response.content)
 
 
-def test_the_token_does_not_help_a_page_of_another_site(gated: TestClient) -> None:
+def test_a_pass_does_not_help_a_page_of_another_site(gated: TestClient) -> None:
     before = state(gated)
 
     for call in MUTATIONS:
-        response = ask(gated, call, Origin=ELSEWHERE, **{TOKEN_HEADER: TOKEN})
+        response = ask(gated, call, Origin=ELSEWHERE, **{PASS_HEADER: PASS})
 
         assert (response.status_code, response.json()["error"]) == (403, "bad_origin"), call
     assert state(gated) == before
 
 
-@pytest.mark.parametrize(("sent", "view_only"), [("", True), ("wrong", True), (TOKEN, False)])
+@pytest.mark.parametrize(
+    ("sent", "view_only"), [("", True), ("wrong", True), (ACCESS_CODE, True), (PASS, False)]
+)
 def test_a_handshake_on_a_gated_segl_sets_no_cookie_whoever_asks(
     gated: TestClient, sent: str, view_only: bool
 ) -> None:
@@ -384,7 +428,7 @@ def test_a_handshake_on_a_gated_segl_sets_no_cookie_whoever_asks(
         welcome = socket.receive_json()
 
     assert welcome["viewOnly"] is view_only
-    assert TOKEN not in json.dumps(welcome)
+    assert_no_secrets(json.dumps(welcome))
 
 
 # What segl refuses for other reasons.
@@ -394,6 +438,11 @@ REFUSALS = [
     ("GET", "/api/v1/nope", {}, None, 404),
     ("GET", "/api/v1/health/", {}, None, 404),
     ("GET", "/s/1/x", {}, None, 404),
+    ("GET", "/access/", {}, None, 404),
+    ("GET", "/api/v1/access", {}, None, 405),
+    ("POST", "/access", {}, None, 405),
+    # A segl without access codes has none to take.
+    ("POST", "/api/v1/access", JSON, _json({"code": "anything"}), 404),
     ("GET", "/api/v1/slots/10", {}, None, 404),
     ("GET", "/api/v1/slots/1/revisions/99", {}, None, 404),
     ("GET", "/api/v1/assets/" + "0" * 64, {}, None, 404),
@@ -453,7 +502,21 @@ def test_a_handshake_for_no_slot_sets_no_cookie(client: TestClient, path: str) -
     assert_plain(refused.value.headers, path)
 
 
-# Through nginx, in front of a real process that has an edit token.
+def test_the_refusals_of_the_access_route_set_no_cookie(gated: TestClient) -> None:
+    # A wrong code, five times, and then the wait (tests/test_access.py).
+    asked = [
+        gated.post(ACCESS_ROUTE, json={"code": "a wrong code"}, headers={"Origin": OWN})
+        for _ in range(6)
+    ]
+
+    assert [each.status_code for each in asked] == [403] * 5 + [429]
+    assert [each.json()["error"] for each in asked] == ["wrong_code"] * 5 + ["rate_limited"]
+    for each in asked:
+        assert_plain(each.headers, "a wrong code")
+        assert set(each.json()) == {"error", "message"}
+
+
+# Through nginx, in front of a real process that has access codes.
 
 
 def send(mount: Mount, site: str, prefix: str, call: Call, **more: str) -> Reply:
@@ -472,7 +535,7 @@ def test_the_walk_through_nginx_at_board_and_at_a_host_root(
 ) -> None:
     # T-012 as docs/TEST-PLAN.md words it, on both site examples.
     build = make_build(tmp_path / "dist")
-    config = f'edit_token = "{TOKEN}"\nweb_dir = "{build}"\n'
+    config = f'{GATED_TOML}web_dir = "{build}"\n'
     with running_mount(tools, certificate, tmp_path, config) as mount:
         # nginx's own answers: its redirect, and its 404 outside the mount.
         for path, status in (("/board", 301), ("/api/v1/health", 404), ("/s/1", 404)):
@@ -483,12 +546,12 @@ def test_the_walk_through_nginx_at_board_and_at_a_host_root(
         for site, prefix in ((BOARD_SITE, "/board"), (ROOT_SITE, "")):
             origin = mount.origin(site)
             collab = prefix + SOCKET.path
-            mine = {"Origin": origin, TOKEN_HEADER: TOKEN}
+            mine = {"Origin": origin, PASS_HEADER: PASS}
 
             # Both sites are the one segl, so the second finds what the first left.
             before = mount.get(site, f"{prefix}/api/v1/slots/1").json()
 
-            # A WebSocket handshake: no cookie, and without the token a viewer.
+            # A WebSocket handshake: no cookie, and without a pass a viewer.
             with mount.socket(site, collab, origin=origin) as viewer:
                 assert viewer.response is not None
                 assert viewer.response.status_code == 101
@@ -496,15 +559,17 @@ def test_the_walk_through_nginx_at_board_and_at_a_host_root(
                 welcome, _ = say_hello(viewer, "Guest1")
                 assert welcome["viewOnly"] is True
 
-                # A view-only mutation, each of them, and the one call that needs no token.
+                # A view-only mutation, each of them, and the two calls that need no pass.
                 for call in MUTATIONS:
-                    for token in ({}, {TOKEN_HEADER: "wrong"}):
-                        reply = send(mount, site, prefix, call, Origin=origin, **token)
+                    for edit_pass in ({}, {PASS_HEADER: "wrong"}, {PASS_HEADER: ACCESS_CODE}):
+                        reply = send(mount, site, prefix, call, Origin=origin, **edit_pass)
                         if call.gated:
                             assert (reply.status, reply.json()["error"]) == (403, "view_only"), call
-                        assert_plain(reply.headers, f"{site} {call.path} without the token")
+                        else:
+                            assert reply.status == 200, call
+                        assert_plain(reply.headers, f"{site} {call.path} without a pass")
 
-                # The Origin refusals: with the token, from another site, and
+                # The Origin refusals: with a pass, from another site, and
                 # from the site's name without its port.
                 for other in (ELSEWHERE, f"https://{site}"):
                     for call in MUTATIONS:
@@ -520,23 +585,24 @@ def test_the_walk_through_nginx_at_board_and_at_a_host_root(
                 # Nothing of all that reached the slot.
                 assert mount.get(site, f"{prefix}/api/v1/slots/1").json() == before
 
-                # With the token, from the site's own page: every route there is.
+                # With a pass, from the site's own page: every route there is.
                 for call in (*MUTATIONS, *READS):
                     reply = send(mount, site, prefix, call, **mine)
                     assert reply.status == 200, (site, call, reply.body[:200])
                     assert_plain(reply.headers, f"{site} {call.path}")
-                    assert TOKEN.encode() not in reply.body, call.path
+                    assert_secret_free(call, reply.body)
                 # The viewer on the socket was sent the first of it, the title,
                 # and nothing of what was refused before.
                 assert next_message(viewer) == {"type": "slot", "slot": 1, "title": "Core"}
 
-            # The config says that a token is needed, and not what it is.
+            # The config says that a code is needed, and not what one is.
             assert mount.get(site, f"{prefix}/api/v1/config").json() == {"editRequired": True}
 
-            # The title back, by the token, so the walk changes it again at the next site.
+            # The title back, by the pass, so the walk changes it again at the next site.
             mount.patch(site, f"{prefix}/api/v1/slots/1", {"title": "Workspace 1"}, mine)
 
-        # The token went in a header and in `hello`, and is in no log.
-        assert TOKEN not in mount.segl.log()
+        # The code went in a body, and the pass in a header and in `hello`:
+        # no log has either, or the secret.
+        assert_no_secrets(mount.segl.log())
         for log in ("access.log", "error.log"):
-            assert TOKEN not in (mount.prefix / log).read_text(encoding="utf-8"), log
+            assert_no_secrets((mount.prefix / log).read_text(encoding="utf-8"), log)

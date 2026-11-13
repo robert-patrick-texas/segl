@@ -14,9 +14,10 @@
 
 /**
  * A segl process a test may kill and start again (docs/TEST-PLAN.md T-006,
- * T-007). The other browser tests share the server Playwright starts, which
- * cannot be restarted under them, so `durability.spec.ts` runs this one, on a
- * port and in a folder of its own.
+ * T-007), or give settings of its own. The other browser tests share the
+ * servers Playwright starts, which cannot be restarted under them, so
+ * `durability.spec.ts` runs this one, on a port and in a folder of its own,
+ * and `expiry.spec.ts` runs it with passes that last seconds.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -33,7 +34,8 @@ export class RestartableServer {
 	private readonly config: string;
 	private child: ChildProcess | null = null;
 
-	constructor(baseURL: string) {
+	/** `more` is further lines of the server's TOML, such as its access codes. */
+	constructor(baseURL: string, more: string[] = []) {
 		this.url = baseURL;
 		this.folder = mkdtempSync(join(tmpdir(), 'segl-e2e-restart-'));
 		this.config = join(this.folder, 'segl.toml');
@@ -47,6 +49,7 @@ export class RestartableServer {
 				`display_names = ${JSON.stringify(join(this.folder, 'display-names.txt'))}`,
 				// The tests run from web/, and the build is web/dist.
 				`web_dir = ${JSON.stringify(resolve('dist'))}`,
+				...more,
 				''
 			].join('\n')
 		);

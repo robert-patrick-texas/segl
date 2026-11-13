@@ -12,27 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/** Entry point: take an edit link's token, find segl's root, point the editor at it, and render. */
+/** Entry point: find segl's root, point the editor at it, and render. */
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App.tsx';
 import './app.css';
 import { prepareEditor } from './canvas/environment.ts';
 import { loadConfig } from './config.ts';
-import { takeEditLink } from './editToken.ts';
 
 const container = document.getElementById('root')!;
-
-// First of all, before anything waits or the router reads the address: a
-// token in the fragment leaves the address bar as soon as this script runs.
-const linkToken = takeEditLink(window);
 
 try {
 	const config = await loadConfig(window.SEGL_CONFIG, window.location.href);
 	prepareEditor(config.rootUrl);
 	createRoot(container).render(
 		<StrictMode>
-			<App config={config} linkToken={linkToken} />
+			<App config={config} />
 		</StrictMode>
 	);
 } catch (error) {

@@ -18,4 +18,4 @@ Contributor and operator manual, also published at <https://robert-patrick-texas
 
 Vulnerability reports use the root [`SECURITY.md`](../SECURITY.md), not the product document in this folder.
 
-The repository is public at <https://github.com/robert-patrick-texas/segl>. `draft1/`, `draft2/`, and `docs/` are all committed. Git ignores secrets and build output: a local `segl.toml` (it can hold the edit token), the development `var/` directory, virtualenvs, `node_modules`, databases, and `dist/`.
+The repository is public at <https://github.com/robert-patrick-texas/segl>. `draft1/`, `draft2/`, and `docs/` are all committed. Git ignores secrets and build output: a local `segl.toml` (it can hold access codes and their secret), the development `var/` directory, virtualenvs, `node_modules`, databases, and `dist/`.

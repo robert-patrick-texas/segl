@@ -13,14 +13,19 @@
 // limitations under the License.
 
 /**
- * The edit token in a browser (docs/TEST-PLAN.md T-008, and the browser's
- * part of T-012), against a segl that has one: the `token-` projects of
- * `playwright.config.ts`.
+ * Access codes in a browser (docs/TEST-PLAN.md T-008 and T-019, and the
+ * browser's part of T-012), against a segl that asks for one: the `access-`
+ * projects of `playwright.config.ts`.
  *
- * A test's own `page` is a browser without the token: a viewer. A browser
- * with it is `person(name, { editToken })`, or a page that opens an edit
- * link. The three projects share the one server and its slots, so a test
- * asserts on what it drew itself.
+ * A test's own `page` is a browser without a pass: a viewer. A browser with
+ * one is `person(name, { editor: true })`, which buys a pass as the access
+ * page does, or a page on which a code is entered. The three projects share
+ * the one server and its slots, so a test asserts on what it drew itself.
+ *
+ * Every test here comes from 127.0.0.1, and five wrong codes in a row make an
+ * address wait fifteen minutes. So a test that enters a wrong code enters a
+ * right one afterwards, which starts the count again, and the wait itself is
+ * shown with an answer the test puts in the server's place.
  */
 import { expect, type APIRequestContext, type Page } from '@playwright/test';
 import {
@@ -38,6 +43,7 @@ import {
 	expectLive,
 	expectPainted,
 	expectSaved,
+	buyPass,
 	importControl,
 	joinSlot,
 	nameButton,
@@ -48,18 +54,19 @@ import {
 	restoreRow,
 	sceneDocument,
 	SLOTS,
+	passKey,
 	switchSlot,
 	test,
-	tokenKey,
 	type Rgb
 } from './pages.ts';
-import { EDIT_TOKEN } from './sites.ts';
+import { ACCESS_CODE, ACCESS_SECRET, PASS_SHAPE } from './sites.ts';
 
-const HEADER = { 'X-Segl-Edit-Token': EDIT_TOKEN };
+/** The header a pass travels in. Its name is from when it carried a token. */
+const PASS_HEADER = 'X-Segl-Edit-Token';
 
-/** `token-board` runs at the mount `board` runs at. */
+/** `access-board` runs at the mount `board` runs at. */
 function mount(): 'direct' | 'root' | 'board' {
-	return test.info().project.name.replace(/^token-/, '') as 'direct' | 'root' | 'board';
+	return test.info().project.name.replace(/^access-/, '') as 'direct' | 'root' | 'board';
 }
 
 /** Each project draws in a row of its own, so its rectangles are not under another's. */
@@ -74,9 +81,11 @@ const COLORS: Record<string, Rgb> = {
 	board: [160, 40, 220]
 };
 
-const NEEDS_TOKEN = 'Editing is locked: it needs the edit token.';
-const TOKEN_REFUSED = 'Editing is locked: this segl did not take the edit token this browser has.';
-const HAS_TOKEN = 'This browser has the edit token and can edit.';
+const SHARED = 'Shared workspace. Anyone who can open this page can see it.';
+const NEEDS_CODE = 'Editing is locked: it needs an access code.';
+const ACCESS_ENDED = 'Editing is locked: the access this browser had has ended.';
+const HAS_ACCESS = 'This browser entered an access code and can edit.';
+const WRONG_CODE = "That is not one of this segl's access codes.";
 
 function notice(page: Page) {
 	return page.locator('header.segl-bar .segl-bar__notice');
@@ -86,26 +95,60 @@ function rectangleTool(page: Page) {
 	return page.locator('[data-testid="toolbar-rectangle"]');
 }
 
-/** This page may look and not edit, for want of a token, and its bar says so. */
+/** The way to the access page, by the notice, for a browser that may not edit. */
+function accessLink(page: Page) {
+	return notice(page).getByRole('link', { name: 'Enter access code' });
+}
+
+/** This page may look and not edit, for want of a pass, and its bar says so and offers the way. */
 async function expectLocked(page: Page): Promise<void> {
 	await expect(notice(page)).toHaveAttribute('data-editing', 'locked');
-	await expect(notice(page)).toHaveText(
-		`Shared workspace. Anyone who can open this page can see it. ${NEEDS_TOKEN}`
-	);
+	await expect(notice(page)).toHaveText(`${SHARED} ${NEEDS_CODE} Enter access code`);
+	await expect(accessLink(page)).toBeVisible();
 	await expect(rectangleTool(page)).toHaveCount(0);
 }
 
-/** This page may edit: the server took its token, the bar says so, and the tools are there. */
+/** This page may edit: the server took its pass, the bar says so, and the tools are there. */
 async function expectUnlocked(page: Page): Promise<void> {
 	await expect(notice(page)).toHaveAttribute('data-editing', 'unlocked');
-	await expect(notice(page)).toHaveText(
-		`Shared workspace. Anyone who can open this page can see it. ${HAS_TOKEN}`
-	);
+	await expect(notice(page)).toHaveText(`${SHARED} ${HAS_ACCESS}`);
+	await expect(accessLink(page)).toHaveCount(0);
 	await expect(rectangleTool(page)).toBeVisible();
 }
 
-async function storedToken(page: Page, baseURL: string | undefined): Promise<string | null> {
-	return page.evaluate((key) => localStorage.getItem(key), tokenKey(baseURL));
+/** This page has a pass the server does not take, and its bar says so and offers the way. */
+async function expectEnded(page: Page): Promise<void> {
+	await expect(notice(page)).toHaveAttribute('data-editing', 'refused');
+	await expect(notice(page)).toHaveText(`${SHARED} ${ACCESS_ENDED} Enter access code`);
+	await expect(accessLink(page)).toBeVisible();
+	await expect(rectangleTool(page)).toHaveCount(0);
+}
+
+async function storedPass(page: Page, baseURL: string | undefined): Promise<string | null> {
+	return page.evaluate((key) => localStorage.getItem(key), passKey(baseURL));
+}
+
+function codeField(page: Page) {
+	return page.getByRole('textbox', { name: 'Access code' });
+}
+
+/** What the access page answered, in words. */
+function answer(page: Page) {
+	return page.locator('.segl-access__answer');
+}
+
+/** The access page is showing, under the mount. */
+async function expectAccessPage(page: Page, baseURL: string | undefined): Promise<void> {
+	await expect(page).toHaveURL(new URL('access', baseURL).href);
+	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Access code');
+	await expect(page).toHaveTitle('Access code · segl');
+	await expect(codeField(page)).toBeFocused();
+}
+
+/** Type a code into the access page's field and press Enter. */
+async function enterCode(page: Page, code: string): Promise<void> {
+	await codeField(page).fill(code);
+	await page.keyboard.press('Enter');
 }
 
 async function expectElement(page: Page, id: string): Promise<void> {
@@ -143,28 +186,39 @@ function watch(page: Page): Traffic {
 	return traffic;
 }
 
-/** The addresses that carry the token, or a recognizable part of it, raw or encoded. */
-function withToken(urls: string[]): string[] {
-	const parts = ['S3gl+e2e', 'S3gl%2Be2e', 'e2e/Token', 'e2e%2FToken', 'Token==', 'Token%3D'];
+/**
+ * The addresses that carry a code, the secret, or a pass: the code as
+ * written, encoded, and as the server compares it, and the signature of
+ * each given pass.
+ */
+function withSecrets(urls: string[], passes: (string | null)[] = []): string[] {
+	const parts = [
+		'Maple',
+		'maple',
+		'River',
+		'river.42',
+		ACCESS_SECRET,
+		...passes.filter((pass) => pass !== null).map((pass) => pass.split('.')[1]!)
+	];
 	return urls.filter((url) => parts.some((part) => url.includes(part)));
 }
 
 /**
  * Ask the server for something from inside a page, as a script on that page
- * could: with the page's own origin, and without the token unless given.
+ * could: with the page's own origin, and without a pass unless given.
  * `path` is under segl's root.
  */
 async function forced(
 	page: Page,
 	baseURL: string | undefined,
 	path: string,
-	options: { method: string; type?: string; body?: string; token?: string }
+	options: { method: string; type?: string; body?: string; pass?: string }
 ): Promise<{ status: number; error: string | undefined }> {
 	return page.evaluate(
-		async ([url, method, type, body, token]) => {
+		async ([url, method, type, body, pass]) => {
 			const headers: Record<string, string> = {};
 			if (type !== null) headers['Content-Type'] = type;
-			if (token !== null) headers['X-Segl-Edit-Token'] = token;
+			if (pass !== null) headers['X-Segl-Edit-Token'] = pass;
 			const response = await fetch(url, { method, headers, body: body ?? undefined });
 			const answer = (await response.json()) as { error?: string };
 			return { status: response.status, error: answer.error };
@@ -174,7 +228,7 @@ async function forced(
 			options.method,
 			options.type ?? null,
 			options.body ?? null,
-			options.token ?? null
+			options.pass ?? null
 		] as const
 	);
 }
@@ -182,16 +236,11 @@ async function forced(
 const VIEW_ONLY = { status: 403, error: 'view_only' };
 
 /**
- * Say `hello` on a socket of the page's own, with `token`, and try to add an
+ * Say `hello` on a socket of the page's own, with `pass`, and try to add an
  * element. Returns what the server answered: `welcome` with its `viewOnly`,
  * `scene`, and the error, if any.
  */
-async function forcedElement(
-	page: Page,
-	url: string,
-	token: string,
-	id: string
-): Promise<string[]> {
+async function forcedElement(page: Page, url: string, pass: string, id: string): Promise<string[]> {
 	return page.evaluate(
 		([address, editToken, elementId]) =>
 			new Promise<string[]>((resolve) => {
@@ -248,11 +297,11 @@ async function forcedElement(
 				socket.onclose = () => resolve(answers);
 				setTimeout(done, 5000);
 			}),
-		[url, token, id] as const
+		[url, pass, id] as const
 	);
 }
 
-test('a browser without the token watches live and cannot change the canvas', async ({
+test('a browser without a pass watches live and cannot change the canvas', async ({
 	page,
 	person,
 	request,
@@ -262,7 +311,7 @@ test('a browser without the token watches live and cannot change the canvas', as
 	// T-008, the elements.
 	const slot = SLOTS.drawing;
 	const traffic = watch(page);
-	const editor = await person('Edna', { editToken: EDIT_TOKEN });
+	const editor = await person('Edna', { editor: true });
 	const editorTraffic = watch(editor);
 	await joinSlot(page, slot);
 	await joinSlot(editor, slot);
@@ -327,10 +376,13 @@ test('a browser without the token watches live and cannot change the canvas', as
 	await expect(connectionStatus(page)).toHaveText('Live');
 
 	// A script on the viewer's page, with a socket of its own, is refused by
-	// the server: without a token, and with one that is a character short.
-	for (const [index, token] of ['', EDIT_TOKEN.slice(0, -1)].entries()) {
+	// the server: without a pass, with the editor's pass a character short,
+	// and with the code itself where a pass goes.
+	const editorPass = await storedPass(editor, baseURL);
+	expect(editorPass).toMatch(PASS_SHAPE);
+	for (const [index, sent] of ['', editorPass!.slice(0, -1), ACCESS_CODE].entries()) {
 		const id = `forced-${mount()}-${index}-${Date.now()}`;
-		const answers = await forcedElement(page, collabUrl(baseURL, slot), token, id);
+		const answers = await forcedElement(page, collabUrl(baseURL, slot), sent, id);
 		expect(answers).toEqual(['welcome true', 'scene', 'error view_only']);
 		expect(await elementIds(editor)).not.toContain(id);
 	}
@@ -345,8 +397,8 @@ test('a browser without the token watches live and cannot change the canvas', as
 	const next = await drawRectangle(editor, -100, -200 + row() * 120);
 	await expectElement(page, next);
 
-	// T-012 in a browser: nothing set a cookie, and the token is in no address
-	// either browser asked for.
+	// T-012 in a browser: nothing set a cookie, and no code and no pass is in
+	// an address either browser asked for.
 	await page.waitForLoadState('networkidle');
 	expect(traffic.cookies).toEqual([]);
 	expect(editorTraffic.cookies).toEqual([]);
@@ -355,11 +407,11 @@ test('a browser without the token watches live and cannot change the canvas', as
 	expect(await page.evaluate(() => document.cookie)).toBe('');
 	expect(await editor.evaluate(() => document.cookie)).toBe('');
 	expect(editorTraffic.urls.length).toBeGreaterThan(5);
-	expect(withToken(editorTraffic.urls)).toEqual([]);
-	expect(withToken(traffic.urls)).toEqual([]);
+	expect(withSecrets(editorTraffic.urls, [editorPass])).toEqual([]);
+	expect(withSecrets(traffic.urls, [editorPass])).toEqual([]);
 });
 
-test('a browser without the token cannot change the title, and sees the change of one that has it', async ({
+test('a browser without a pass cannot change the title, and sees the change of one that has one', async ({
 	page,
 	person,
 	request,
@@ -368,7 +420,7 @@ test('a browser without the token cannot change the title, and sees the change o
 	// T-008, the title.
 	const slot = SLOTS.title;
 	const title = `Gated ${mount()}`;
-	const editor = await person('Edna', { editToken: EDIT_TOKEN });
+	const editor = await person('Edna', { editor: true });
 	await joinSlot(page, slot);
 	await joinSlot(editor, slot);
 	const before = await slotOf(request, slot);
@@ -377,12 +429,15 @@ test('a browser without the token cannot change the title, and sees the change o
 		// For the viewer the title is text, with nothing to press.
 		await expect(page.getByRole('heading', { level: 1 })).toHaveText(before.title);
 		await expect(page.getByRole('heading', { level: 1 }).getByRole('button')).toHaveCount(0);
-		// A script on its page is refused: without the token, and with a wrong one.
+		// A script on its page is refused: without a pass, and with what is not one.
 		const body = JSON.stringify({ title: 'Taken over' });
 		const patch = { method: 'PATCH', type: 'application/json', body };
 		expect(await forced(page, baseURL, `api/v1/slots/${slot}`, patch)).toEqual(VIEW_ONLY);
 		expect(
-			await forced(page, baseURL, `api/v1/slots/${slot}`, { ...patch, token: 'not-the-token' })
+			await forced(page, baseURL, `api/v1/slots/${slot}`, { ...patch, pass: 'not-a-pass' })
+		).toEqual(VIEW_ONLY);
+		expect(
+			await forced(page, baseURL, `api/v1/slots/${slot}`, { ...patch, pass: ACCESS_CODE })
 		).toEqual(VIEW_ONLY);
 		expect(await slotOf(request, slot)).toEqual(before);
 
@@ -401,13 +456,13 @@ test('a browser without the token cannot change the title, and sees the change o
 		// The next project finds the slot as this one did.
 		const restored = await request.patch(`api/v1/slots/${slot}`, {
 			data: { title: before.title },
-			headers: HEADER
+			headers: { [PASS_HEADER]: await buyPass(request) }
 		});
 		expect(restored.status()).toBe(200);
 	}
 });
 
-test('a browser without the token reads the history and cannot restore, and follows a restore', async ({
+test('a browser without a pass reads the history and cannot restore, and follows a restore', async ({
 	page,
 	person,
 	request,
@@ -415,7 +470,7 @@ test('a browser without the token reads the history and cannot restore, and foll
 }) => {
 	// T-008, the history.
 	const slot = SLOTS.history;
-	const editor = await person('Edna', { editToken: EDIT_TOKEN });
+	const editor = await person('Edna', { editor: true });
 	await joinSlot(page, slot);
 	await joinSlot(editor, slot);
 
@@ -443,7 +498,7 @@ test('a browser without the token reads the history and cannot restore, and foll
 	await expect(rows.and(page.locator(`[data-revision="${kept}"]`))).toHaveCount(1);
 	const panel = page.getByRole('group', { name: 'History of this slot' });
 	await expect(panel.getByRole('button')).toHaveCount(0);
-	await expect(panel).toContainText('Restoring needs the edit token.');
+	await expect(panel).toContainText('Restoring needs an access code.');
 	// A script on its page is refused.
 	const body = JSON.stringify({ revision: kept, displayName: 'Viewer' });
 	expect(
@@ -469,7 +524,7 @@ test('a browser without the token reads the history and cannot restore, and foll
 	await expect(panel.getByRole('button')).toHaveCount(0);
 });
 
-test('a browser without the token cannot import, and follows an import', async ({
+test('a browser without a pass cannot import, and follows an import', async ({
 	page,
 	person,
 	request,
@@ -477,7 +532,7 @@ test('a browser without the token cannot import, and follows an import', async (
 }) => {
 	// T-008, the import.
 	const slot = SLOTS.importing;
-	const editor = await person('Edna', { editToken: EDIT_TOKEN });
+	const editor = await person('Edna', { editor: true });
 	await joinSlot(page, slot);
 	await joinSlot(editor, slot);
 	const epoch = (await slotOf(request, slot)).epoch;
@@ -509,7 +564,7 @@ test('a browser without the token cannot import, and follows an import', async (
 	page.on('filechooser', () => choosers.push('opened'));
 	const control = importControl(page);
 	await control.getByRole('button', { name: 'Import', exact: true }).click();
-	await expect(control.getByRole('group')).toHaveText('Importing needs the edit token.');
+	await expect(control.getByRole('group')).toHaveText('Importing needs an access code.');
 	await page.waitForTimeout(300);
 	expect(choosers).toEqual([]);
 	// A scene file dropped on its canvas is named, with the same words and nothing to press.
@@ -520,7 +575,7 @@ test('a browser without the token cannot import, and follows an import', async (
 		300
 	);
 	await expect(control.getByRole('group')).toContainText('network.excalidraw');
-	await expect(control.getByRole('group')).toContainText('Importing needs the edit token.');
+	await expect(control.getByRole('group')).toContainText('Importing needs an access code.');
 	await expect(control.getByRole('button', { name: 'Import it' })).toHaveCount(0);
 	// A script on its page is refused.
 	expect(
@@ -537,12 +592,12 @@ test('a browser without the token cannot import, and follows an import', async (
 	expect((await slotOf(request, slot)).epoch).toBe(epoch + 1);
 });
 
-test('a browser without the token cannot upload, and paints the image of one that has it', async ({
+test('a browser without a pass cannot upload, and paints the image of one that has one', async ({
 	page,
 	person,
 	baseURL
 }) => {
-	// T-008, the uploaded files (S-008: "asset writes require the token").
+	// T-008, the uploaded files (S-008: "asset writes need a pass").
 	const slot = SLOTS.images;
 	const color = COLORS[mount()]!;
 	const uploads: string[] = [];
@@ -550,7 +605,7 @@ test('a browser without the token cannot upload, and paints the image of one tha
 		if (request.method() === 'POST' && request.url().includes('/assets'))
 			uploads.push(request.url());
 	});
-	const editor = await person('Edna', { editToken: EDIT_TOKEN });
+	const editor = await person('Edna', { editor: true });
 	await joinSlot(page, slot);
 	await joinSlot(editor, slot);
 
@@ -573,13 +628,13 @@ test('a browser without the token cannot upload, and paints the image of one tha
 	await expect(connectionStatus(page)).toHaveAttribute('data-state', 'live');
 });
 
-test('a browser without the token is still someone on the slot, with a name of its own', async ({
+test('a browser without a pass is still someone on the slot, with a name of its own', async ({
 	page,
 	person
 }) => {
-	// Presence and rename need no token (docs/ARCHITECTURE.md, edit gate).
+	// Presence and rename need no pass (docs/ARCHITECTURE.md, edit gate).
 	const slot = SLOTS.presence;
-	const editor = await person('Edna', { editToken: EDIT_TOKEN });
+	const editor = await person('Edna', { editor: true });
 	await joinSlot(page, slot);
 	await joinSlot(editor, slot);
 
@@ -596,29 +651,57 @@ test('a browser without the token is still someone on the slot, with a name of i
 	await expectLocked(page);
 });
 
-test('an edit link makes a browser an editor, is taken out of the address, and is in no request', async ({
+test('a viewer follows the link in the bar, enters the code, and edits', async ({
 	page,
 	request,
 	baseURL,
 	context
 }) => {
-	// T-008, the fragment link: as someone copies the token out of segl.toml.
+	// T-008 and T-019: the access page, from the bar and back to the slot.
 	const slot = SLOTS.tools;
 	const traffic = watch(page);
+	const posted: { url: string; body: string | null; headers: Record<string, string> }[] = [];
+	page.on('request', (sent) => {
+		if (sent.method() === 'POST' && sent.url().endsWith('/api/v1/access')) {
+			posted.push({ url: sent.url(), body: sent.postData(), headers: sent.headers() });
+		}
+	});
+	await joinSlot(page, slot);
+	await expectLocked(page);
+	await page.evaluate(() => {
+		(window as unknown as { samePage: boolean }).samePage = true;
+	});
 
-	await page.goto(`s/${slot}#e=${EDIT_TOKEN}`);
+	// The link is by the notice, and goes to the access page under the mount.
+	await accessLink(page).click();
+	await expectAccessPage(page, baseURL);
+	// One field, named for what it takes. It is not a login.
+	await expect(page.getByRole('textbox')).toHaveCount(1);
+	await expect(page.locator('input[type="password"]')).toHaveCount(0);
+	await expect(page.locator('main')).toContainText(
+		'Enter an access code to edit on this segl. Looking needs none.'
+	);
+	await expect(page.locator('main')).not.toContainText(/log ?in|sign ?in|password|user/i);
+	await expect(page.getByRole('button', { name: 'Enter' })).toBeDisabled();
+
+	// As a person types it: another case, other separators.
+	await enterCode(page, 'maple river-42');
+
+	// Back on the slot the person came from, as an editor, with no page load.
+	await expect(page).toHaveURL(new URL(`s/${slot}`, baseURL).href);
 	await expectEditor(page);
 	await expectLive(page);
-
-	// The fragment went, and nothing was added to the tab's history for it.
-	await expect(page).toHaveURL(new URL(`s/${slot}`, baseURL).href);
-	expect(await page.evaluate(() => location.hash)).toBe('');
-	expect(await page.evaluate(() => history.length)).toBeLessThanOrEqual(2);
-	// The server took the token, so the browser keeps it, under the mount's key.
 	await expectUnlocked(page);
-	expect(await storedToken(page, baseURL)).toBe(EDIT_TOKEN);
+	expect(await page.evaluate(() => (window as unknown as { samePage?: boolean }).samePage)).toBe(
+		true
+	);
+	// The pass is this browser's, under the mount's key.
+	const pass = await storedPass(page, baseURL);
+	expect(pass).toMatch(PASS_SHAPE);
+	// The access page is not left in the tab's history for Back to return to.
+	expect(await page.evaluate(() => history.length)).toBeLessThanOrEqual(3);
 
-	// It edits: the canvas, and the title, which goes with the token in a header.
+	// It edits: the canvas, and the title, which goes with the pass in a header.
 	const drawn = await drawRectangle(page, 250, -200 + row() * 120);
 	await expectSaved(page);
 	const head = (await (await request.get(`api/v1/slots/${slot}/scene`)).json()) as {
@@ -628,15 +711,18 @@ test('an edit link makes a browser an editor, is taken out of the address, and i
 	const before = await slotOf(request, slot);
 	try {
 		await page.getByRole('heading', { level: 1 }).getByRole('button').click();
-		await page.getByRole('textbox', { name: 'Slot title' }).fill(`Linked ${mount()}`);
+		await page.getByRole('textbox', { name: 'Slot title' }).fill(`Entered ${mount()}`);
 		await page.keyboard.press('Enter');
-		await expect(page.getByRole('heading', { level: 1 })).toHaveText(`Linked ${mount()}`);
-		expect((await slotOf(request, slot)).title).toBe(`Linked ${mount()}`);
+		await expect(page.getByRole('heading', { level: 1 })).toHaveText(`Entered ${mount()}`);
+		expect((await slotOf(request, slot)).title).toBe(`Entered ${mount()}`);
 	} finally {
-		await request.patch(`api/v1/slots/${slot}`, { data: { title: before.title }, headers: HEADER });
+		await request.patch(`api/v1/slots/${slot}`, {
+			data: { title: before.title },
+			headers: { [PASS_HEADER]: pass! }
+		});
 	}
 
-	// It is still an editor after a reload, which has no fragment to read,
+	// It is still an editor after a reload,
 	await page.reload();
 	await expectEditor(page);
 	await expectLive(page);
@@ -646,108 +732,188 @@ test('an edit link makes a browser an editor, is taken out of the address, and i
 	await switchSlot(page, SLOTS.empty, `Workspace ${SLOTS.empty}`);
 	await expectUnlocked(page);
 
-	// The token went to the server in a header and in `hello`, and in no address.
+	// The code went to the server once, in the body of a POST from this page.
+	expect(posted).toHaveLength(1);
+	expect(JSON.parse(posted[0]!.body ?? '')).toEqual({ code: 'maple river-42' });
+	expect(posted[0]!.headers['x-segl-edit-token']).toBeUndefined();
+	// No code and no pass is in an address, and nothing set a cookie.
 	await page.waitForLoadState('networkidle');
 	expect(traffic.urls.length).toBeGreaterThan(10);
-	expect(withToken(traffic.urls)).toEqual([]);
-	expect(traffic.urls.filter((url) => url.includes('#'))).toEqual([]);
+	expect(withSecrets(traffic.urls, [pass])).toEqual([]);
 	expect(traffic.cookies).toEqual([]);
 	expect(await context.cookies()).toEqual([]);
+	expect(await page.evaluate(() => document.cookie)).toBe('');
 });
 
-test("a link at segl's root, percent-encoded, works the same", async ({ page, baseURL }) => {
-	await page.goto(`./#e=${encodeURIComponent(EDIT_TOKEN)}`);
-
-	// The root sends a new browser on to slot 1, and the fragment does not come along.
-	await expect(page).toHaveURL(new URL('s/1', baseURL).href);
-	await expectEditor(page);
-	await expectLive(page);
-	await expectUnlocked(page);
-	expect(await storedToken(page, baseURL)).toBe(EDIT_TOKEN);
-});
-
-test('a link with a wrong token is taken out of the address and is not stored', async ({
+test('a wrong code is answered in words, and the right one then lets the browser edit', async ({
 	page,
 	baseURL
 }) => {
 	const slot = SLOTS.empty;
+	await joinSlot(page, slot);
+	await accessLink(page).click();
+	await expectAccessPage(page, baseURL);
 
-	await page.goto(`s/${slot}#e=not-the-token`);
-	await expectEditor(page);
-	await expectLive(page);
+	await enterCode(page, 'Maple River 43');
+
+	// Still on the access page, told so in words, with the field empty again.
+	await expect(answer(page)).toHaveText(WRONG_CODE);
+	await expect(answer(page)).toHaveAttribute('role', 'alert');
+	await expect(page).toHaveURL(new URL('access', baseURL).href);
+	await expect(codeField(page)).toHaveValue('');
+	await expect(codeField(page)).toBeFocused();
+	await expect(codeField(page)).toHaveAttribute('aria-invalid', 'true');
+	expect(await storedPass(page, baseURL)).toBeNull();
+	await expect(page.locator('body')).not.toContainText('Maple River 43');
+
+	// The right one, which also starts the server's count of wrong codes again.
+	await enterCode(page, ACCESS_CODE);
 
 	await expect(page).toHaveURL(new URL(`s/${slot}`, baseURL).href);
-	// The bar says that the token is wrong, not that there is none.
-	await expect(notice(page)).toHaveAttribute('data-editing', 'refused');
-	await expect(notice(page)).toContainText(TOKEN_REFUSED);
-	await expect(rectangleTool(page)).toHaveCount(0);
-	expect(await storedToken(page, baseURL)).toBeNull();
+	await expectEditor(page);
+	await expectLive(page);
+	await expectUnlocked(page);
+	expect(await storedPass(page, baseURL)).toMatch(PASS_SHAPE);
+});
 
-	// After a reload the browser has no token at all.
-	await page.reload();
+test('a browser that has to wait is told for how long, and one the server cannot answer to try again', async ({
+	page,
+	baseURL
+}) => {
+	// The server's own wait is fifteen minutes for every test from this
+	// address, so here an answer is put in its place (tests/test_access.py
+	// has the real one).
+	await page.goto('access');
+	await expectAccessPage(page, baseURL);
+	await page.route('**/api/v1/access', (route) =>
+		route.fulfill({
+			status: 429,
+			contentType: 'application/json',
+			headers: { 'Retry-After': '840' },
+			body: JSON.stringify({ error: 'rate_limited', message: 'Too many.' })
+		})
+	);
+
+	await enterCode(page, ACCESS_CODE);
+
+	await expect(answer(page)).toHaveText(
+		'Too many wrong codes came from this address. Try again in 14 minutes.'
+	);
+	// What was typed stays: it may be right, and is to be sent again later.
+	await expect(codeField(page)).toHaveValue(ACCESS_CODE);
+	expect(await storedPass(page, baseURL)).toBeNull();
+
+	await page.unroute('**/api/v1/access');
+	await page.route('**/api/v1/access', (route) => route.abort());
+	await page.keyboard.press('Enter');
+
+	await expect(answer(page)).toHaveText('segl could not be asked. Try again.');
+	await expect(page).toHaveURL(new URL('access', baseURL).href);
+	expect(await storedPass(page, baseURL)).toBeNull();
+
+	// And once the server answers, the same code works.
+	await page.unroute('**/api/v1/access');
+	await page.keyboard.press('Enter');
+	await expect(page).toHaveURL(new URL('s/1', baseURL).href);
+	await expectEditor(page);
+	await expectUnlocked(page);
+});
+
+test('the access page, opened by its address, goes back to the last slot this browser used', async ({
+	page,
+	baseURL
+}) => {
+	// A browser that has used no slot goes to slot 1.
+	await page.goto('access');
+	await expectAccessPage(page, baseURL);
+	await expect(page.getByRole('link', { name: 'Back to slot 1' })).toBeVisible();
+
+	// One that was on a slot goes back there: by the link, without a code,
+	await joinSlot(page, SLOTS.empty);
+	await page.goto('access');
+	await expectAccessPage(page, baseURL);
+	await page.getByRole('link', { name: `Back to slot ${SLOTS.empty}` }).click();
+	await expect(page).toHaveURL(new URL(`s/${SLOTS.empty}`, baseURL).href);
 	await expectEditor(page);
 	await expectLive(page);
 	await expectLocked(page);
-	expect(await storedToken(page, baseURL)).toBeNull();
+
+	// and with one.
+	await page.goto('access');
+	await enterCode(page, ACCESS_CODE);
+	await expect(page).toHaveURL(new URL(`s/${SLOTS.empty}`, baseURL).href);
+	await expectEditor(page);
+	await expectUnlocked(page);
 });
 
-test('a link with a wrong token does not take the place of a token that works', async ({
-	person,
+test('the access page goes back to the slot its link was on, whatever another tab has opened since', async ({
+	page,
+	context,
 	baseURL
 }) => {
-	// Any page on the web can make a browser open such a link (D2-032).
+	// The slot comes with the link, not from the last slot this browser
+	// stored, which another tab may have changed.
 	const slot = SLOTS.empty;
-	const editor = await person('Edna', { editToken: EDIT_TOKEN });
+	await joinSlot(page, slot);
+	await expectLocked(page);
+	const tab = await context.newPage();
+	await joinSlot(tab, SLOTS.tools);
+	await expectLocked(tab);
+
+	await accessLink(page).click();
+	await expectAccessPage(page, baseURL);
+	await expect(page.getByRole('link', { name: `Back to slot ${slot}` })).toBeVisible();
+	await enterCode(page, ACCESS_CODE);
+
+	await expect(page).toHaveURL(new URL(`s/${slot}`, baseURL).href);
+	await expectEditor(page);
+	await expectUnlocked(page);
+	// The other tab stayed where it was, and edits too.
+	await expect(tab).toHaveURL(new URL(`s/${SLOTS.tools}`, baseURL).href);
+	await expectUnlocked(tab);
+});
+
+test('an address that ends in #e= and something is an address like any other', async ({
+	page,
+	baseURL
+}) => {
+	// The edit link of an earlier build is gone (D2-033): nothing reads the
+	// fragment, so what it carries opens nothing and is stored nowhere.
+	const slot = SLOTS.empty;
 	const hellos: string[] = [];
-	editor.on('websocket', (socket) =>
+	page.on('websocket', (socket) =>
 		socket.on('framesent', (frame) => {
 			const message = JSON.parse(String(frame.payload)) as { type: string; editToken?: string };
 			if (message.type === 'hello') hellos.push(message.editToken ?? '');
 		})
 	);
 
-	await editor.goto(`s/${slot}#e=not-the-token`);
-	await expectEditor(editor);
+	// Even a real pass in the fragment makes no editor.
+	const pass = await buyPass(page.request);
+	for (const carried of ['an-old-token', ACCESS_CODE, pass]) {
+		await page.goto(`s/${slot}#e=${encodeURIComponent(carried)}`);
+		await expectEditor(page);
+		await expectLive(page);
 
-	await expect(editor).toHaveURL(new URL(`s/${slot}`, baseURL).href);
-	await expectUnlocked(editor);
-	expect(await storedToken(editor, baseURL)).toBe(EDIT_TOKEN);
-	// The link's token was tried, refused, and given up for the stored one.
-	expect(hellos).toEqual(['not-the-token', EDIT_TOKEN]);
+		await expectLocked(page);
+		expect(await storedPass(page, baseURL)).toBeNull();
+		// The page left the address as it was.
+		expect(await page.evaluate(() => location.hash)).toBe(`#e=${encodeURIComponent(carried)}`);
+		// So that the next address is a page load, and not a change of fragment.
+		await page.goto('about:blank');
+	}
+	expect(hellos).toEqual(['', '', '']);
 
-	await editor.reload();
-	await expectEditor(editor);
-	await expectLive(editor);
-	await expectUnlocked(editor);
-});
-
-test('a link opened in a tab that is already on the slot unlocks it without a page load', async ({
-	page,
-	baseURL
-}) => {
-	const slot = SLOTS.empty;
-	await joinSlot(page, slot);
-	await expectLocked(page);
-	await page.evaluate(() => {
-		(window as unknown as { sameDocument: boolean }).sameDocument = true;
-	});
-
-	// The same address with a fragment: the browser loads nothing.
-	await page.goto(`s/${slot}#e=${encodeURIComponent(EDIT_TOKEN)}`);
-
-	await expectUnlocked(page);
+	// Nor at segl's root, which sends the browser on to the slot it used last.
+	await page.goto(`./#e=${encodeURIComponent(pass)}`);
 	await expect(page).toHaveURL(new URL(`s/${slot}`, baseURL).href);
-	expect(await storedToken(page, baseURL)).toBe(EDIT_TOKEN);
-	expect(
-		await page.evaluate(() => (window as unknown as { sameDocument?: boolean }).sameDocument)
-	).toBe(true);
-	// Back does not bring the link back.
-	await page.goBack();
-	expect(await page.evaluate(() => location.hash)).toBe('');
-	expect(withToken([page.url()])).toEqual([]);
+	await expectEditor(page);
+	await expectLive(page);
+	await expectLocked(page);
+	expect(await storedPass(page, baseURL)).toBeNull();
 });
 
-test('a link opened in one tab unlocks the other tabs of that browser', async ({
+test('a code entered in one tab lets the other tabs of that browser edit', async ({
 	page,
 	context,
 	baseURL
@@ -755,26 +921,123 @@ test('a link opened in one tab unlocks the other tabs of that browser', async ({
 	const slot = SLOTS.empty;
 	await joinSlot(page, slot);
 	await expectLocked(page);
+	await page.evaluate(() => {
+		(window as unknown as { samePage: boolean }).samePage = true;
+	});
 
 	const tab = await context.newPage();
-	await tab.goto(`s/${SLOTS.tools}#e=${EDIT_TOKEN}`);
+	await joinSlot(tab, SLOTS.tools);
+	await accessLink(tab).click();
+	await enterCode(tab, ACCESS_CODE);
 	await expectEditor(tab);
 	await expectUnlocked(tab);
 
-	// The first tab says hello again with the stored token, and may edit.
+	// The first tab says hello again with the stored pass, and may edit,
+	// without a page load.
 	await expectUnlocked(page);
-	expect(await storedToken(page, baseURL)).toBe(EDIT_TOKEN);
+	expect(await storedPass(page, baseURL)).toMatch(PASS_SHAPE);
+	expect(await page.evaluate(() => (window as unknown as { samePage?: boolean }).samePage)).toBe(
+		true
+	);
 });
 
-test('the notice of a locked browser stays inside a narrow page', async ({ page }) => {
+test('a browser whose pass the server does not take is told that its access has ended', async ({
+	person,
+	baseURL
+}) => {
+	// A pass of the right shape that no code of this segl signed: one from
+	// before the site changed its codes or its secret, or one that has ended.
+	const stale = '1700000000.AAAAAAAAAAAAAAAAAAAAAAAA';
+	const visitor = await person('Vera', { pass: stale });
+	const slot = SLOTS.empty;
+	await joinSlot(visitor, slot);
+
+	await expectEnded(visitor);
+	// It still watches, as any viewer.
+	await expect(connectionStatus(visitor)).toHaveText('Live');
+
+	// The same way in: the link, and a code.
+	await accessLink(visitor).click();
+	await expectAccessPage(visitor, baseURL);
+	await enterCode(visitor, ACCESS_CODE);
+	await expect(visitor).toHaveURL(new URL(`s/${slot}`, baseURL).href);
+	await expectEditor(visitor);
+	await expectUnlocked(visitor);
+	// The new pass took the place of the old one.
+	const pass = await storedPass(visitor, baseURL);
+	expect(pass).toMatch(PASS_SHAPE);
+	expect(pass).not.toBe(stale);
+});
+
+test('a pass stamped now that no code of this segl signed is not taken', async ({ person }) => {
+	// Its age is right, so the signature is the one reason to refuse it.
+	const forged = `${Math.floor(Date.now() / 1000)}.AAAAAAAAAAAAAAAAAAAAAAAA`;
+	expect(forged).toMatch(PASS_SHAPE);
+	const visitor = await person('Vera', { pass: forged });
+	await joinSlot(visitor, SLOTS.empty);
+
+	await expectEnded(visitor);
+});
+
+test('what an earlier build stored as a token is not a pass', async ({ person }) => {
+	// The key is the one a token was stored under before access codes (T10).
+	const visitor = await person('Vera', { pass: 'S3gl+e2e/Token==' });
+	await joinSlot(visitor, SLOTS.empty);
+
+	await expectEnded(visitor);
+});
+
+for (const width of [390, 800]) {
+	test(`the notice of a locked browser, with its link, stays inside a page ${width} wide`, async ({
+		page
+	}) => {
+		await page.setViewportSize({ width, height: 800 });
+		await joinSlot(page, SLOTS.empty);
+		await expectLocked(page);
+
+		const widths = await page.evaluate(() => [
+			document.documentElement.scrollWidth,
+			document.documentElement.clientWidth
+		]);
+		expect(widths).toEqual([width, width]);
+		await expect(notice(page)).toBeVisible();
+		const link = (await accessLink(page).boundingBox())!;
+		expect(link.x).toBeGreaterThanOrEqual(0);
+		expect(link.x + link.width).toBeLessThanOrEqual(width);
+	});
+}
+
+test('the access page stays inside a narrow page, and asks for nothing outside the mount', async ({
+	page,
+	baseURL
+}) => {
+	const traffic = watch(page);
 	await page.setViewportSize({ width: 390, height: 800 });
-	await joinSlot(page, SLOTS.empty);
-	await expectLocked(page);
+
+	await page.goto('access');
+	await expectAccessPage(page, baseURL);
 
 	const widths = await page.evaluate(() => [
 		document.documentElement.scrollWidth,
 		document.documentElement.clientWidth
 	]);
 	expect(widths).toEqual([390, 390]);
-	await expect(notice(page)).toBeVisible();
+	await enterCode(page, 'not one of them');
+	await expect(answer(page)).toHaveText(WRONG_CODE);
+	expect(
+		await page.evaluate(() => [
+			document.documentElement.scrollWidth,
+			document.documentElement.clientWidth
+		])
+	).toEqual([390, 390]);
+	// Every address it asked for is under segl's root, and none set a cookie.
+	await page.waitForLoadState('networkidle');
+	expect(traffic.urls.length).toBeGreaterThan(2);
+	expect(traffic.urls.filter((url) => !url.startsWith(baseURL!))).toEqual([]);
+	expect(traffic.cookies).toEqual([]);
+
+	// The right code, so that the server's count of wrong ones starts again.
+	await enterCode(page, ACCESS_CODE);
+	await expectEditor(page);
+	await expectUnlocked(page);
 });

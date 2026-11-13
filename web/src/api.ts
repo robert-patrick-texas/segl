@@ -101,19 +101,45 @@ export async function fetchSlots(config: AppConfig, signal?: AbortSignal): Promi
 	return body.slots;
 }
 
-/** The header a mutation carries when this browser has the edit token. */
-export const EDIT_TOKEN_HEADER = 'X-Segl-Edit-Token';
+/**
+ * The header a mutation carries when this browser has a pass. Its name is
+ * from when it carried a token.
+ */
+export const PASS_HEADER = 'X-Segl-Edit-Token';
+
+/**
+ * Enter an access code. A right one buys a pass (docs/API.md), which the
+ * server answers with. A wrong one, an address that has to wait, and a segl
+ * without codes are each an `ApiError` with the server's code.
+ */
+export async function requestPass(
+	config: AppConfig,
+	code: string,
+	signal?: AbortSignal
+): Promise<string> {
+	const url = apiUrl(config, 'access');
+	const body = (await requestJson(url, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ code }),
+		signal
+	})) as { pass?: unknown } | null;
+	if (typeof body?.pass !== 'string' || body.pass === '') {
+		throw new ApiError(200, 'unexpected', `${url.pathname} did not return a pass`);
+	}
+	return body.pass;
+}
 
 /**
  * Give a slot a new title. The server trims it, stores it, and tells every
- * browser on the slot. Returns the slot as stored. `editToken` is this
- * browser's stored token, or `''`. It goes in a header, never in the URL.
+ * browser on the slot. Returns the slot as stored. `pass` is this
+ * browser's stored pass, or `''`. It goes in a header, never in the URL.
  */
 export async function renameSlot(
 	config: AppConfig,
 	slot: number,
 	title: string,
-	editToken: string,
+	pass: string,
 	signal?: AbortSignal
 ): Promise<SlotInfo> {
 	const url = apiUrl(config, `slots/${slot}`);
@@ -121,7 +147,7 @@ export async function renameSlot(
 		method: 'PATCH',
 		headers: {
 			'Content-Type': 'application/json',
-			...(editToken === '' ? {} : { [EDIT_TOKEN_HEADER]: editToken })
+			...(pass === '' ? {} : { [PASS_HEADER]: pass })
 		},
 		body: JSON.stringify({ title }),
 		signal
@@ -173,15 +199,15 @@ export async function fetchRevisions(
  * Put one of a slot's revisions in place of its scene. The server keeps the
  * scene that is replaced as a revision first, and then sends the restored one
  * to every browser on the slot, this one included, over the socket.
- * `displayName` is who restored, for the history. `editToken` is this
- * browser's stored token, or `''`. It goes in a header, never in the URL.
+ * `displayName` is who restored, for the history. `pass` is this
+ * browser's stored pass, or `''`. It goes in a header, never in the URL.
  */
 export async function restoreRevision(
 	config: AppConfig,
 	slot: number,
 	revision: number,
 	displayName: string | null,
-	editToken: string,
+	pass: string,
 	signal?: AbortSignal
 ): Promise<{ revision: number; epoch: number }> {
 	const url = apiUrl(config, `slots/${slot}/restore`);
@@ -189,7 +215,7 @@ export async function restoreRevision(
 		method: 'POST',
 		headers: {
 			'Content-Type': 'application/json',
-			...(editToken === '' ? {} : { [EDIT_TOKEN_HEADER]: editToken })
+			...(pass === '' ? {} : { [PASS_HEADER]: pass })
 		},
 		body: JSON.stringify({ revision, displayName }),
 		signal
@@ -216,15 +242,15 @@ export const DISPLAY_NAME_HEADER = 'X-Segl-Display-Name';
  * file goes as it is, with the files of its images inside it. The server
  * keeps the scene that is replaced as a revision first, and then sends the
  * imported one to every browser on the slot, this one included, over the
- * socket. `displayName` is who imported, for the history. `editToken` is this
- * browser's stored token, or `''`. It goes in a header, never in the URL.
+ * socket. `displayName` is who imported, for the history. `pass` is this
+ * browser's stored pass, or `''`. It goes in a header, never in the URL.
  */
 export async function importScene(
 	config: AppConfig,
 	slot: number,
 	file: Blob,
 	displayName: string | null,
-	editToken: string,
+	pass: string,
 	signal?: AbortSignal
 ): Promise<{ revision: number; epoch: number }> {
 	const url = apiUrl(config, `slots/${slot}/import`);
@@ -233,7 +259,7 @@ export async function importScene(
 		headers: {
 			'Content-Type': 'application/json',
 			...(displayName === null ? {} : { [DISPLAY_NAME_HEADER]: nameHeader(displayName) }),
-			...(editToken === '' ? {} : { [EDIT_TOKEN_HEADER]: editToken })
+			...(pass === '' ? {} : { [PASS_HEADER]: pass })
 		},
 		body: file,
 		signal
@@ -250,7 +276,7 @@ export async function uploadAsset(
 	slot: number,
 	bytes: Uint8Array,
 	mimeType: string,
-	editToken: string,
+	pass: string,
 	signal?: AbortSignal
 ): Promise<string> {
 	const url = apiUrl(config, `slots/${slot}/assets`);
@@ -258,7 +284,7 @@ export async function uploadAsset(
 		method: 'POST',
 		headers: {
 			'Content-Type': mimeType,
-			...(editToken === '' ? {} : { [EDIT_TOKEN_HEADER]: editToken })
+			...(pass === '' ? {} : { [PASS_HEADER]: pass })
 		},
 		// A copy in a buffer of its own: `bytes` may be a view into a larger one.
 		body: new Blob([bytes.slice()]),

@@ -17,7 +17,7 @@ an absolute redirect."""
 
 import pytest
 from fastapi.testclient import TestClient
-from harness import make_settings
+from harness import GATED, assert_no_secrets, make_settings
 
 from segl.app import create_app
 from segl.repository import Repository
@@ -43,14 +43,14 @@ def test_config_says_no_token_is_needed_by_default(client: TestClient) -> None:
     assert response.json() == {"editRequired": False}
 
 
-def test_config_says_a_token_is_needed_and_does_not_send_it(repository: Repository) -> None:
-    client = TestClient(create_app(make_settings(edit_token="correct-horse"), repository))
+def test_config_says_a_code_is_needed_and_sends_none(repository: Repository) -> None:
+    client = TestClient(create_app(make_settings(**GATED), repository))
 
     response = client.get("/api/v1/config")
 
     assert response.json() == {"editRequired": True}
-    assert "correct-horse" not in response.text
-    assert "correct-horse" not in str(response.headers)
+    assert_no_secrets(response.text)
+    assert_no_secrets(str(response.headers))
 
 
 @pytest.mark.parametrize("path", [*ROUTES, "/api/v1/absent", "/api/v1/slots/0"])

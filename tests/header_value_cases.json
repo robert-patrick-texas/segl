@@ -1,5 +1,5 @@
 {
-	"comment": "What segl takes as an edit token: 1 to 256 printable ASCII characters, space to tilde, with no space at either end (docs/DEPLOY.md). A browser sends the token in a request header, which carries nothing else whole. true: a token. false: not one. tests/test_config.py and web/src/editToken.test.ts both read this file.",
+	"comment": "What a page can send whole in a request header: 1 to 256 printable ASCII characters, space to tilde, with no space at either end (docs/SECURITY.md). A browser refuses to send any other character in a header, and drops a space at an end. The pass a code buys is sent in the X-Segl-Edit-Token header, so the page takes nothing else from its storage. true: sendable. false: not. tests/test_access.py and web/src/pass.test.ts both read this file.",
 	"cases": [
 		[
 			"a",

@@ -48,6 +48,7 @@ import pytest
 from websockets.sync.client import ClientConnection, connect
 from websockets.typing import Origin
 
+from segl.access import Access, normalize
 from segl.config import DEFAULT_BIND, Settings, load_settings
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -102,6 +103,47 @@ http {
     include sites-enabled/*;
 }
 """
+
+
+# A segl that asks for an access code (S-008): one code, as a person might
+# write it down, and the secret that signs its passes.
+ACCESS_CODE = "Maple River 42"
+ACCESS_SECRET = "segl-tests-secret-3f1c9a7e5b2d4f60-not-a-real-one"
+# The settings of such a segl, for ``make_settings(**GATED)``.
+GATED: Mapping[str, Any] = {
+    "access_codes": (normalize(ACCESS_CODE),),
+    "access_secret": ACCESS_SECRET,
+}
+# The same two keys, as lines of a TOML file.
+GATED_TOML = f'access_codes = ["{ACCESS_CODE}"]\naccess_secret = "{ACCESS_SECRET}"\n'
+# What must be in no answer, no page, and no log: the code as written and as
+# compared, and the secret.
+SECRETS = (ACCESS_CODE, normalize(ACCESS_CODE), ACCESS_SECRET)
+
+# The header a pass travels in. Its name is from when it carried a token.
+PASS_HEADER = "X-Segl-Edit-Token"
+
+
+def issue_pass(
+    code: str = ACCESS_CODE, *, secret: str = ACCESS_SECRET, at: float | None = None
+) -> str:
+    """Return a pass as a segl with ``GATED`` issues one for ``code``, now or at ``at``.
+
+    Two calls in one second give the same pass: it is the second of its
+    issue and a signature over that second and the code.
+    """
+    clock = time.time if at is None else (lambda: at)
+    return Access((normalize(code),), secret, clock=clock).issue(normalize(code))[0]
+
+
+def assert_no_secrets(text: str | bytes, what: str = "") -> None:
+    """Fail when ``text`` holds an access code, the secret, or a pass issued today."""
+    if isinstance(text, bytes):
+        text = text.decode("utf-8", errors="replace")
+    for secret in SECRETS:
+        assert secret not in text, what
+    # A pass ends in its signature, which the secret makes.
+    assert issue_pass().partition(".")[2] not in text, what
 
 
 def make_settings(**changes: Any) -> Settings:
@@ -211,11 +253,13 @@ def open_socket(
     site: str | None = None,
     tls: ssl.SSLContext | None = None,
     origin: str | None = None,
+    headers: Mapping[str, str] | None = None,
     logs: Mapping[str, Path] | None = None,
 ) -> ClientConnection:
     """Open a WebSocket to 127.0.0.1:``port`` at ``path``, as ``fetch`` asks for a page.
 
-    ``origin`` is the ``Origin`` header a browser would send. A handshake that
+    ``origin`` is the ``Origin`` header a browser would send, and ``headers``
+    are any others, such as the ``X-Forwarded-For`` of a proxy. A handshake that
     is refused raises ``websockets.exceptions.InvalidStatus``, which carries
     the HTTP response. One that is not answered in time fails the test with
     the end of each of ``logs``: what the servers on the way had written.
@@ -232,6 +276,7 @@ def open_socket(
                 ssl=tls,
                 server_hostname=site,
                 origin=sent_from,
+                additional_headers=headers,
                 proxy=None,
                 open_timeout=HANDSHAKE_SECONDS,
             )
@@ -239,6 +284,7 @@ def open_socket(
             f"ws://127.0.0.1:{port}{path}",
             sock=plain,
             origin=sent_from,
+            additional_headers=headers,
             proxy=None,
             open_timeout=HANDSHAKE_SECONDS,
         )
@@ -254,11 +300,14 @@ def say_hello(
     connection: ClientConnection,
     name: str | None = "Guest1",
     *,
-    token: str = "",
+    edit_pass: str = "",
     client_id: str = "client-1",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Send ``hello`` on a new socket, and return the ``welcome`` and the ``scene``."""
-    hello = {"type": "hello", "clientId": client_id, "displayName": name, "editToken": token}
+    """Send ``hello`` on a new socket, and return the ``welcome`` and the ``scene``.
+
+    ``edit_pass`` goes in the field the protocol still calls ``editToken``.
+    """
+    hello = {"type": "hello", "clientId": client_id, "displayName": name, "editToken": edit_pass}
     connection.send(json.dumps(hello))
     return next_message(connection), next_message(connection)
 
@@ -339,8 +388,12 @@ class SeglServer:
         sent = json.dumps(body).encode()
         return fetch(self.port, path, method="PATCH", headers=headers, body=sent)
 
-    def socket(self, path: str, origin: str | None = None) -> ClientConnection:
-        return open_socket(self.port, path, origin=origin, logs={"segl": self.log_file})
+    def socket(
+        self, path: str, origin: str | None = None, headers: Mapping[str, str] | None = None
+    ) -> ClientConnection:
+        return open_socket(
+            self.port, path, origin=origin, headers=headers, logs={"segl": self.log_file}
+        )
 
     def log(self) -> str:
         return self.log_file.read_text(encoding="utf-8")

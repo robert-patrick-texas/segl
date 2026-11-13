@@ -91,19 +91,19 @@ describe('upload', () => {
 			body: PNG
 		});
 		expect(calls[0]!.headers['Content-Type']).toBe('image/png');
-		// No token is stored, so no token header is sent, and never a query string.
+		// No pass is stored, so its header is not sent, and never a query string.
 		expect(calls[0]!.headers).not.toHaveProperty('X-Segl-Edit-Token');
 	});
 
-	test('the stored edit token goes in the header, read at the time of the upload', async () => {
+	test('the stored pass goes in the header, read at the time of the upload', async () => {
 		const calls = json(200, { hash: HASH, mediaType: 'image/png' });
-		let token = '';
-		const transport = httpTransport(CONFIG, 3, () => token);
-		token = 'correct-horse';
+		let pass = '';
+		const transport = httpTransport(CONFIG, 3, () => pass);
+		pass = '1800000000.q0h3JYzXb1cR5tUv7wA9-_Bd';
 
 		await transport.upload(FILE);
 
-		expect(calls[0]!.headers['X-Segl-Edit-Token']).toBe('correct-horse');
+		expect(calls[0]!.headers['X-Segl-Edit-Token']).toBe('1800000000.q0h3JYzXb1cR5tUv7wA9-_Bd');
 		expect(calls[0]!.url).not.toContain('correct-horse');
 	});
 
@@ -154,7 +154,7 @@ describe('download', () => {
 		expect(dataURL).toBe(FILE.dataURL);
 		expect(calls).toHaveLength(1);
 		expect(calls[0]!.url).toBe(`https://dev.example.com/board/api/v1/assets/${HASH}`);
-		// Reading a file needs no token, and none is sent.
+		// Reading a file needs no pass, and none is sent.
 		expect(calls[0]!.headers).toEqual({});
 	});
 

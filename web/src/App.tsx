@@ -15,14 +15,16 @@
 /**
  * Routes, under segl's root (docs/ARCHITECTURE.md, "Mount and navigation"):
  * the root opens the last slot this browser used, or slot 1. `s/N` opens
- * slot N. Anything else, such as `s/0` or `s/abc`, goes to slot 1.
+ * slot N. `access` is the access page, where a person enters an access code.
+ * Anything else, such as `s/0` or `s/abc`, goes to slot 1.
  */
 import { BrowserRouter, Navigate, Route, Routes, useParams } from 'react-router';
+import { AccessPage } from './AccessPage.tsx';
 import { routerBasename, storageKey, type AppConfig } from './config.ts';
 import { SlotPage } from './SlotPage.tsx';
 import { browserStorage, FIRST_SLOT, parseSlot, readLastSlot } from './slots.ts';
 import { useDisplayName, type DisplayName } from './useDisplayName.ts';
-import { useEditToken, type EditToken } from './useEditToken.ts';
+import { usePass, type Pass } from './usePass.ts';
 
 function LastSlot({ config }: { config: AppConfig }) {
 	const last = readLastSlot(browserStorage(), storageKey(config, 'lastSlot'));
@@ -32,35 +34,34 @@ function LastSlot({ config }: { config: AppConfig }) {
 interface SlotRouteProps {
 	config: AppConfig;
 	displayName: DisplayName;
-	editToken: EditToken;
+	editPass: Pass;
 }
 
-function SlotRoute({ config, displayName, editToken }: SlotRouteProps) {
+function SlotRoute({ config, displayName, editPass }: SlotRouteProps) {
 	const slot = parseSlot(useParams()['slot']);
 	if (slot === null) return <Navigate to={`/s/${FIRST_SLOT}`} replace />;
-	return <SlotPage config={config} slot={slot} displayName={displayName} editToken={editToken} />;
+	return <SlotPage config={config} slot={slot} displayName={displayName} editPass={editPass} />;
 }
 
 export interface AppProps {
 	config: AppConfig;
-	/** The token of the edit link this page was opened by, or null (`editToken.ts`). */
-	linkToken: string | null;
 }
 
-export function App({ config, linkToken }: AppProps) {
+export function App({ config }: AppProps) {
 	// Here, above the routes, so that moving between slots keeps the label
 	// and never asks the server for another.
 	const displayName = useDisplayName(config);
-	// Here too: a link's token is this browser's on every slot.
-	const editToken = useEditToken(config, linkToken);
+	// Here too: the access page stores a pass, and it is this browser's on every slot.
+	const editPass = usePass(config);
 	return (
 		<BrowserRouter basename={routerBasename(config)}>
 			<Routes>
 				<Route path="/" element={<LastSlot config={config} />} />
 				<Route
 					path="/s/:slot"
-					element={<SlotRoute config={config} displayName={displayName} editToken={editToken} />}
+					element={<SlotRoute config={config} displayName={displayName} editPass={editPass} />}
 				/>
+				<Route path="/access" element={<AccessPage config={config} onPass={editPass.store} />} />
 				<Route path="*" element={<Navigate to={`/s/${FIRST_SLOT}`} replace />} />
 			</Routes>
 		</BrowserRouter>

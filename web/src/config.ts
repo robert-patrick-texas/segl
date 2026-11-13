@@ -24,7 +24,7 @@
  * come from that URL.
  */
 
-/** What Python writes into the page. The edit token is never part of it. */
+/** What Python writes into the page. No access code and no pass is ever part of it. */
 export interface InjectedConfig {
 	root: string;
 	editRequired: boolean;
@@ -35,7 +35,7 @@ export interface AppConfig {
 	rootUrl: URL;
 	/** The path of the root URL: `/board/`, or `/` at a host root. */
 	basePath: string;
-	/** True when the server has an edit token. */
+	/** True when the server asks for an access code before a browser edits. */
 	editRequired: boolean;
 }
 

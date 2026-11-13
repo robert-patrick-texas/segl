@@ -21,11 +21,13 @@ import { crc32, deflateSync } from 'node:zlib';
 import {
 	test as base,
 	expect,
+	type APIRequestContext,
 	type BrowserContext,
 	type Locator,
 	type Page,
 	type WebSocketRoute
 } from '@playwright/test';
+import { ACCESS_CODE } from './sites.ts';
 
 export interface Mount {
 	/** `https://127.0.0.1:18951`. */
@@ -44,9 +46,19 @@ export function nameKey(baseURL: string | undefined): string {
 	return `segl:${mountOf(baseURL).basePath}:displayName`;
 }
 
-/** The `localStorage` key of this mount's edit token. */
-export function tokenKey(baseURL: string | undefined): string {
+/** The `localStorage` key of this mount's pass. Its last part is from when it held a token. */
+export function passKey(baseURL: string | undefined): string {
 	return `segl:${mountOf(baseURL).basePath}:editToken`;
+}
+
+/**
+ * Buy a pass from the server of this project, as the access page does: with
+ * an access code. `request` is the test's own, which asks under the mount.
+ */
+export async function buyPass(request: APIRequestContext, code = ACCESS_CODE): Promise<string> {
+	const reply = await request.post('api/v1/access', { data: { code } });
+	expect(reply.status(), await reply.text()).toBe(200);
+	return ((await reply.json()) as { pass: string }).pass;
 }
 
 /** The address of a slot's collaboration socket under this mount. */
@@ -107,8 +119,10 @@ async function store(context: BrowserContext, key: string, value: string): Promi
 }
 
 export interface PersonOptions {
-	/** An edit token this browser already has stored, as after an edit link. */
-	editToken?: string;
+	/** This browser has a pass stored, as after a code entered on the access page. */
+	editor?: boolean;
+	/** What this browser has stored where a pass goes, whatever it is. */
+	pass?: string;
 }
 
 interface Fixtures {
@@ -135,15 +149,14 @@ export const test = base.extend<Fixtures>({
 		if (storedName !== null) await store(context, nameKey(baseURL), storedName);
 		await use(context);
 	},
-	person: async ({ browser, baseURL }, use) => {
+	person: async ({ browser, baseURL, request }, use) => {
 		const contexts: BrowserContext[] = [];
 		await use(async (name, options = {}) => {
 			const context = await browser.newContext();
 			contexts.push(context);
 			await store(context, nameKey(baseURL), name);
-			if (options.editToken !== undefined) {
-				await store(context, tokenKey(baseURL), options.editToken);
-			}
+			const pass = options.editor ? await buyPass(request) : options.pass;
+			if (pass !== undefined) await store(context, passKey(baseURL), pass);
 			return context.newPage();
 		});
 		for (const context of contexts) await context.close();

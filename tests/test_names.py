@@ -33,10 +33,12 @@ from fastapi.testclient import TestClient
 from harness import (
     BOARD_SITE,
     DISPLAY_NAMES_FILE,
+    GATED,
     ROOT,
     ROOT_SITE,
     Mount,
     NginxTools,
+    assert_no_secrets,
     make_settings,
 )
 
@@ -244,14 +246,14 @@ def test_the_packaged_list_starts_alpha1_bravo2_charlie3(repository: Repository)
     ]
 
 
-def test_a_name_needs_no_edit_token(repository: Repository, words_file: Path) -> None:
-    settings = make_settings(edit_token="correct-horse", display_names=words_file)
+def test_a_name_needs_no_pass(repository: Repository, words_file: Path) -> None:
+    settings = make_settings(**GATED, display_names=words_file)
     client = TestClient(create_app(settings, repository))
 
     reply = client.post(ROUTE)
 
     assert (reply.status_code, reply.json()) == (200, {"displayName": "Guest1"})
-    assert "correct-horse" not in reply.text
+    assert_no_secrets(reply.text)
 
 
 def test_a_name_is_not_read_with_get(client: TestClient) -> None:

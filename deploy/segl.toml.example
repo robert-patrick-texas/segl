@@ -11,13 +11,37 @@ bind = "127.0.0.1:8888"
 # X-Forwarded-Proto headers segl believes. Keep it to the nginx host.
 trusted_proxies = ["127.0.0.1", "::1"]
 
-# Empty: anyone who can open a slot can edit it. Set a value and only browsers
-# that hold it can edit; everyone else still watches. When you set one, make
-# this file mode 0640, owner root, group segl. A token is 1 to 256 printable
-# ASCII characters with no space at either end: `openssl rand -base64 24`
-# writes a good one. Give it to an editor as a link to a slot that ends in
-# #e=<token> (docs/DEPLOY.md).
-edit_token = ""
+# The networks segl answers, in CIDR form, IPv4 and IPv6, such as
+# ["10.0.0.0/8", "2001:db8::/32"]. Empty: segl answers every address. With one
+# or more, a client outside them gets 403 for every page and every request.
+# Loopback is always inside. segl sees a client's own address only through a
+# proxy listed in trusted_proxies: through any other proxy, every client looks
+# like the proxy (docs/DEPLOY.md). A firewall can do the same. This is the
+# second check behind it.
+internal_networks = []
+
+# Access codes: words or phrases, each with at least 8 letters and digits,
+# such as ["maple river 42", "Night shift 1836"]. Empty: anyone who can open a
+# slot can edit it. With one or more, a browser edits once a person has
+# entered one of them on the access page, and everyone else still watches.
+# Case, spaces, and punctuation do not matter when a code is typed. This is
+# not a login: it knows no user (docs/SECURITY.md). When you set codes, make
+# this file mode 0640, owner root, group segl.
+access_codes = []
+
+# The secret that signs the pass a code buys. Needed with access_codes, and at
+# least 32 characters: `openssl rand -base64 32` writes one. A new secret ends
+# every pass.
+access_secret = ""
+
+# How many hours a pass lasts before the person enters a code again. 0 is no
+# limit.
+access_pass_hours = 12
+
+# A pass issued before this time is refused, as in 2026-11-12T15:00:00Z. Set
+# it and restart to end every pass issued so far, while the codes still work.
+# `date -u +%Y-%m-%dT%H:%M:%SZ` writes the time now. "" is no such time.
+access_passes_after = ""
 
 # Where segl keeps its data. The segl user needs to write the first two.
 database = "/opt/segl/var/segl.sqlite"

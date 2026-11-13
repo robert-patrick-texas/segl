@@ -35,8 +35,8 @@ If a task is blocked, leave Next task unchanged, set `Blocked: yes`, and log the
 6. Embed the upstream package. Do not modify or vendor its source.
 7. Releases follow `docs/RELEASING.md`: every component moves to its newest release, and one is held back only after it fails the tests. Versions live only in `versions.toml`. Add a `CHANGELOG.md` bullet for a source or document change a contributor needs to know about. Write a `journal/YYYY-MM-DD-short-title.md` entry for a story or a lesson, not for every task.
 8. The browser application stores preferences in `localStorage`. It does not use cookies. Do not add `Set-Cookie`, session middleware, or credentialed CORS.
-9. The edit token, when configured, lives in the server TOML file. Do not put it in scene JSON, logs, the injected page config, or a query string. T10b replaces the token with access codes, a server secret, and passes (D2-033), and the same holds for each of them.
-10. Slot numbers 1–9 are the only workspaces in this phase. Do not add login, inventory, network symbols, PostgreSQL, a base-path setting, or a production container image. The access page of T10b is not a login: it takes a code, knows no user, and keeps no account (D2-033).
+9. Access codes and their secret, when configured, live in the server TOML file (D2-033). Do not put a code, the secret, or a pass in scene JSON, logs, the injected page config, or a query string. A pass is in one answer, the access route's, and nowhere else.
+10. Slot numbers 1–9 are the only workspaces in this phase. Do not add login, inventory, network symbols, PostgreSQL, a base-path setting, or a production container image. The access page is not a login: it takes a code, knows no user, and keeps no account (D2-033).
 11. Parameterized SQL only. Internal ids are allocated by the server. A hostname or an Excalidraw element id is not a domain identity.
 12. Node builds the frontend. It is not a runtime service. systemd starts Python only.
 13. Do not claim a test passed unless that command was run in this session.

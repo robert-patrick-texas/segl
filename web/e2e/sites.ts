@@ -14,23 +14,23 @@
 
 /**
  * Where the browser tests' servers listen (`playwright.config.ts` starts
- * them), and the edit token one of them has. The config and the specs both
- * read this file.
+ * them), and the access code one of them asks for. The config and the specs
+ * both read this file.
  */
 
 const PORT = Number(process.env['SEGL_E2E_PORT'] ?? 18950);
 
 export const PORTS = {
-	/** segl with no edit token, and nginx in front of it at `/board/` and at a host root. */
+	/** segl with no access codes, and nginx in front of it at `/board/` and at a host root. */
 	direct: PORT,
 	board: PORT + 1,
 	root: PORT + 2,
-	/** The server `durability.spec.ts` starts, kills, and starts again. */
+	/** The server a spec starts for itself: `durability.spec.ts` and `expiry.spec.ts`. */
 	restart: PORT + 3,
-	/** segl with `EDIT_TOKEN`, and its own nginx at `/board/` and at a host root. */
-	token: PORT + 4,
-	tokenBoard: PORT + 5,
-	tokenRoot: PORT + 6
+	/** segl with `ACCESS_CODE`, and its own nginx at `/board/` and at a host root. */
+	access: PORT + 4,
+	accessBoard: PORT + 5,
+	accessRoot: PORT + 6
 } as const;
 
 /** The base URL of each project. Each ends in a slash, and the specs open paths relative to it. */
@@ -39,16 +39,22 @@ export const SITES = {
 	root: `https://127.0.0.1:${PORTS.root}/`,
 	board: `https://127.0.0.1:${PORTS.board}/board/`,
 	restart: `http://127.0.0.1:${PORTS.restart}/`,
-	'token-direct': `http://127.0.0.1:${PORTS.token}/`,
-	'token-root': `https://127.0.0.1:${PORTS.tokenRoot}/`,
-	'token-board': `https://127.0.0.1:${PORTS.tokenBoard}/board/`
+	'access-direct': `http://127.0.0.1:${PORTS.access}/`,
+	'access-root': `https://127.0.0.1:${PORTS.accessRoot}/`,
+	'access-board': `https://127.0.0.1:${PORTS.accessBoard}/board/`
 } as const;
 
 export type ProjectName = keyof typeof SITES;
 
 /**
- * The token of the server the `token-` projects run against. It has the
- * characters of a base64 secret, as `openssl rand -base64` writes one: a plus
- * that must not be read as a space, a slash, and equals signs.
+ * An access code of the server the `access-` projects run against, as the
+ * site wrote it in `access_codes`: a phrase. A person may type it in any case
+ * and with any separators.
  */
-export const EDIT_TOKEN = 'S3gl+e2e/Token==';
+export const ACCESS_CODE = 'Maple River 42';
+
+/** The secret that signs that server's passes. Not a real one. */
+export const ACCESS_SECRET = 'segl-e2e-secret-7c1e5b9d3f0a2468-not-a-real-one';
+
+/** What such a server issues: the second of its issue, a dot, and a signature. */
+export const PASS_SHAPE = /^[0-9]{10}\.[A-Za-z0-9_-]{24}$/;

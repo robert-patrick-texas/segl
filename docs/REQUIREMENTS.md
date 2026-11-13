@@ -12,8 +12,8 @@ Priority **M** is required for the MVP gate. **L** is recorded so it is not buil
 | S-004 | M | Restart recovery | After the process is killed once the UI says saved, the head scene returns on reload. |
 | S-005 | M | History | The latest 50 revisions per slot can be listed and restored. Restore updates every connected browser and can itself be restored. |
 | S-006 | M | Mount path | The same build works at a host root (`/s/1`) and under a path a proxy strips (`https://dev.example.com/board/s/1`). No setting names the path, and the page requests nothing outside it. |
-| S-007 | M | No cookies | No MVP response sets `Set-Cookie`. Preferences and the edit token live in `localStorage`. |
-| S-008 | M | Optional edit token | With an empty token, every viewer can edit. With a token set, viewers still follow live, and scene, title, restore, and asset writes require the token. |
+| S-007 | M | No cookies | No MVP response sets `Set-Cookie`. Preferences and the pass an access code buys live in `localStorage`. |
+| S-008 | M | Optional access codes | With no access codes, every viewer can edit. With one or more, viewers still follow live, and scene, title, restore, import, and asset writes need a pass. A browser is issued a pass when a person enters one of the codes on the access page, and enters a code again when the pass has ended. Nobody is authenticated: a pass says that someone knew a code (D2-033). |
 | S-009 | M | Display labels | A new browser receives `WordN` from the name file and the server counter, keeps it, and can rename it with title case. |
 | S-010 | M | Presence list | The menu count equals current WebSocket connections on this slot. Activating it lists their labels. |
 | S-011 | M | JSON round-trip | A scene exported to Excalidraw JSON and imported back restores the drawing, bumps the epoch, and writes a revision. |
@@ -23,6 +23,7 @@ Priority **M** is required for the MVP gate. **L** is recorded so it is not buil
 | S-015 | M | Ubuntu install | A `.deb` installs uv-pinned CPython and the app under `/opt/segl`. systemd runs it. nginx proxies TLS to it. |
 | S-016 | M | Shared notice | Every slot shows that the workspace is shared and open. View-only clients also show that editing is locked. |
 | S-017 | M | Dev container | The dev container runs the automated test suite, including the two-browser cases, under rootful Docker, rootless Docker, or rootless Podman. |
+| S-018 | M | Internal networks | With `internal_networks` set, segl answers no request and no WebSocket handshake from an address outside those networks. Loopback is inside. With the list empty, segl answers every address. |
 
 ## Later — do not implement in P0
 

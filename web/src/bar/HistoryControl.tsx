@@ -24,7 +24,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import {
 	historyRows,
 	NEEDS_CONNECTION,
-	NEEDS_TOKEN,
+	NEEDS_CODE,
 	restoreProblem,
 	whenLabel,
 	type HistoryRow,
@@ -223,9 +223,7 @@ export function HistoryControl({
 							})}
 						</ol>
 					)}
-					{rows.length > 0 && !canRestore && (
-						<p className="segl-bar__history-note">{NEEDS_TOKEN}</p>
-					)}
+					{rows.length > 0 && !canRestore && <p className="segl-bar__history-note">{NEEDS_CODE}</p>}
 					{rows.length > 0 && canRestore && !connected && (
 						<p className="segl-bar__history-note">{NEEDS_CONNECTION}</p>
 					)}

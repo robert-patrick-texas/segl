@@ -17,10 +17,12 @@
  * buttons, the shared title (S-003), who is on the slot (S-010), the state of
  * the connection (S-013), the slot's history (S-005), JSON import (S-011),
  * this browser's display name (S-009), and the notice that the workspace is
- * shared (S-016).
+ * shared (S-016), with the way to the access page for a browser that may not
+ * edit (S-008).
  */
-import { NavLink } from 'react-router';
+import { Link, NavLink } from 'react-router';
 import type { Participant } from '../collab/protocol.ts';
+import type { CameFrom } from '../access.ts';
 import type { ConnectionStatus } from '../collab/session.ts';
 import type { RevisionInfo } from '../history.ts';
 import { SLOT_NUMBERS } from '../slots.ts';
@@ -28,7 +30,7 @@ import './bar.css';
 import { HistoryControl } from './HistoryControl.tsx';
 import { ImportControl } from './ImportControl.tsx';
 import { NameControl } from './NameControl.tsx';
-import { sharedNotice, type Editing } from './notice.ts';
+import { ENTER_CODE, offersAccess, sharedNotice, type Editing } from './notice.ts';
 import { PresenceControl } from './PresenceControl.tsx';
 import { statusLabel } from './status.ts';
 import { TitleControl } from './TitleControl.tsx';
@@ -90,6 +92,8 @@ export function SeglBar({
 	// In the slot's room: a restore or an import reaches this canvas over the socket.
 	const connected = status === 'live' || status === 'saving' || status === 'saved';
 	const notice = sharedNotice(editing);
+	// Where the access page sends the person back to.
+	const cameFrom: CameFrom = { slot };
 	return (
 		<header className="segl-bar">
 			<span className="segl-bar__brand">segl</span>
@@ -145,6 +149,14 @@ export function SeglBar({
 			<p className="segl-bar__notice" role="note" data-editing={editing}>
 				{notice.shared}
 				{notice.editing !== '' && <span className="segl-bar__editing"> {notice.editing}</span>}
+				{offersAccess(editing) && (
+					<>
+						{' '}
+						<Link className="segl-bar__access" to="/access" state={cameFrom}>
+							{ENTER_CODE}
+						</Link>
+					</>
+				)}
 			</p>
 			<span className="segl-bar__version" title="segl version">
 				segl {version}

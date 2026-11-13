@@ -4,4 +4,4 @@ Report a vulnerability privately through GitHub: open the repository's Security 
 
 There is no security mailing list.
 
-The product model for the open slots (what they store, the edit token, and what they must not expose) is [`docs/SECURITY.md`](docs/SECURITY.md). That document is design guidance, not the reporting channel.
+The product model for the open slots (what they store, access codes, and what they must not expose) is [`docs/SECURITY.md`](docs/SECURITY.md). That document is design guidance, not the reporting channel.

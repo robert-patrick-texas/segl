@@ -15,7 +15,7 @@
 import { expect, test } from 'vitest';
 import {
 	historyRows,
-	NEEDS_TOKEN,
+	NEEDS_CODE,
 	parseRevisions,
 	restoreProblem,
 	whenLabel,
@@ -161,8 +161,8 @@ class Refused extends Error {
 }
 
 test('a refused restore is put in words by its code', () => {
-	expect(restoreProblem(new Refused('view_only', 'Editing needs the edit token.'))).toBe(
-		NEEDS_TOKEN
+	expect(restoreProblem(new Refused('view_only', 'Editing needs an access code.'))).toBe(
+		NEEDS_CODE
 	);
 	expect(restoreProblem(new Refused('revision_not_found', 'The slot has no such revision.'))).toBe(
 		'That version is no longer kept.'

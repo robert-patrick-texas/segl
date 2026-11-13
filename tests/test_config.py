@@ -14,10 +14,11 @@
 
 """Settings: every key in docs/DEPLOY.md, the two sets of defaults, and refusals."""
 
-import json
 import re
+import time
 import tomllib
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import ClassVar, Self
 
@@ -31,9 +32,10 @@ from segl.config import (
     DEFAULTS,
     ConfigError,
     Settings,
-    is_edit_token,
     load_settings,
+    parse_access_codes,
     parse_bind,
+    parse_internal_networks,
     parse_trusted_proxies,
 )
 
@@ -44,7 +46,11 @@ PRODUCTION = Settings(
     host="127.0.0.1",
     port=8888,
     trusted_proxies=("127.0.0.1", "::1"),
-    edit_token="",
+    internal_networks=(),
+    access_codes=(),
+    access_secret="",
+    access_pass_hours=12.0,
+    access_passes_after=None,
     database=Path("/opt/segl/var/segl.sqlite"),
     assets_dir=Path("/opt/segl/var/assets"),
     display_names=Path("/opt/segl/etc/display-names.txt"),
@@ -76,6 +82,8 @@ def test_a_missing_config_file_gives_the_production_defaults(tmp_path: Path) -> 
     assert settings == PRODUCTION
     assert settings.bind == DEFAULT_BIND
     assert not settings.edit_required
+    assert settings.access_pass_seconds == 12 * 3600
+    assert settings.access_passes_after_seconds is None
 
 
 def test_an_empty_config_file_gives_the_production_defaults(tmp_path: Path) -> None:
@@ -111,7 +119,7 @@ def test_no_config_flag_gives_the_development_defaults(empty_directory: Path) ->
 
 
 def test_a_local_segl_toml_overrides_the_development_defaults(empty_directory: Path) -> None:
-    write(empty_directory, 'bind = "127.0.0.1:9001"\nedit_token = "local"\n')
+    write(empty_directory, f'bind = "127.0.0.1:9001"\naccess_codes = ["local code"]\n{SECRET_LINE}')
 
     settings = load_settings()
 
@@ -132,7 +140,11 @@ def test_every_key_comes_from_the_file(tmp_path: Path) -> None:
         """
         bind = "[::1]:9001"
         trusted_proxies = ["10.0.0.5", "192.168.0.0/24", "2001:DB8::1"]
-        edit_token = "s3cret"
+        internal_networks = ["10.0.0.0/8", "2001:DB8::/32", "192.0.2.7"]
+        access_codes = ["Maple River 42", "night-shift-1836"]
+        access_secret = "0123456789abcdef0123456789abcdef"
+        access_pass_hours = 0.5
+        access_passes_after = 2026-11-12T15:00:00+01:00
         database = "data/segl.sqlite"
         assets_dir = "/srv/segl/assets"
         display_names = "names.txt"
@@ -149,7 +161,11 @@ def test_every_key_comes_from_the_file(tmp_path: Path) -> None:
         host="::1",
         port=9001,
         trusted_proxies=("10.0.0.5", "192.168.0.0/24", "2001:db8::1"),
-        edit_token="s3cret",
+        internal_networks=("10.0.0.0/8", "2001:db8::/32", "192.0.2.7/32"),
+        access_codes=("maple.river.42", "night.shift.1836"),
+        access_secret="0123456789abcdef0123456789abcdef",
+        access_pass_hours=0.5,
+        access_passes_after=datetime(2026, 11, 12, 14, 0, tzinfo=UTC),
         database=Path("data/segl.sqlite"),
         assets_dir=Path("/srv/segl/assets"),
         display_names=Path("names.txt"),
@@ -162,11 +178,14 @@ def test_every_key_comes_from_the_file(tmp_path: Path) -> None:
     )
 
 
-def test_the_edit_token_is_not_in_the_settings_repr(tmp_path: Path) -> None:
-    settings = load_settings(write(tmp_path, 'edit_token = "s3cret"\n'))
+def test_the_codes_and_the_secret_are_not_in_the_settings_repr(tmp_path: Path) -> None:
+    settings = load_settings(write(tmp_path, f'access_codes = ["Maple River 42"]\n{SECRET_LINE}'))
 
     assert settings.edit_required
-    assert "s3cret" not in repr(settings)
+    assert settings.access_codes == ("maple.river.42",)
+    assert settings.access_secret == SECRET
+    for hidden in ("maple", "Maple", SECRET):
+        assert hidden not in repr(settings)
 
 
 def test_an_ipv6_bind_uses_brackets() -> None:
@@ -198,7 +217,25 @@ def test_an_unusable_proxy_list_is_refused(value: object) -> None:
 @pytest.mark.parametrize(
     "line",
     [
-        "edit_token = 5",
+        "access_codes = 5",
+        'access_codes = "maple river 42"',
+        "access_codes = [12345678]",
+        "access_secret = 5",
+        "access_pass_hours = -1",
+        "access_pass_hours = true",
+        'access_pass_hours = "12"',
+        "access_pass_hours = nan",
+        "access_pass_hours = inf",
+        'access_passes_after = "yesterday"',
+        'access_passes_after = "2026-11-12T15:00:00Z"',
+        # Without an offset, and a day without a time.
+        "access_passes_after = 2026-11-12T15:00:00",
+        "access_passes_after = 2026-11-12",
+        "access_passes_after = 15:00:00",
+        "access_passes_after = 0",
+        'internal_networks = "10.0.0.0/8"',
+        'internal_networks = ["inside"]',
+        "internal_networks = [10]",
         'database = ""',
         "assets_dir = 3",
         "display_names = []",
@@ -223,91 +260,229 @@ def test_an_unusable_value_is_refused_by_key(tmp_path: Path, line: str) -> None:
 
 
 def test_an_unknown_key_is_refused_by_name(tmp_path: Path) -> None:
-    # base_path was removed (D2-007). A misspelled edit_token must not pass quietly.
-    config = write(tmp_path, 'base_path = "/board"\nedit_tokn = "s3cret"\n')
+    # base_path was removed (D2-007). A misspelled access_codes must not pass quietly.
+    config = write(tmp_path, 'base_path = "/board"\naccess_code = ["s3cret phrase"]\n')
 
-    with pytest.raises(ConfigError, match=r"unknown key base_path, edit_tokn") as refused:
+    with pytest.raises(ConfigError, match=r"unknown key access_code, base_path") as refused:
         load_settings(config)
 
     assert "s3cret" not in str(refused.value)
+    assert "edit_token" not in str(refused.value)
 
 
-def test_a_bad_edit_token_is_not_echoed(tmp_path: Path) -> None:
-    with pytest.raises(ConfigError) as refused:
-        load_settings(write(tmp_path, "edit_token = 12345678\n"))
+def test_the_token_of_an_earlier_build_stops_segl_and_points_at_the_codes(tmp_path: Path) -> None:
+    # D2-033: edit_token is gone, and no release shipped with it.
+    with pytest.raises(ConfigError, match="unknown key edit_token") as refused:
+        load_settings(write(tmp_path, 'edit_token = "s3cret-token"\n'))
 
-    assert "12345678" not in str(refused.value)
-
-
-# What is, and is not, an edit token. web/src/editToken.test.ts reads the same file.
-TOKEN_CASES: list[tuple[str, bool]] = [
-    (text, usable)
-    for text, usable in json.loads(
-        (ROOT / "tests" / "edit_token_cases.json").read_text(encoding="utf-8")
-    )["cases"]
-]
+    message = str(refused.value)
+    assert message.endswith(
+        "edit_token is gone: list access codes in access_codes, with access_secret (docs/DEPLOY.md)"
+    )
+    assert "s3cret" not in message
 
 
-def toml_string(text: str) -> str:
-    """Return ``text`` as a TOML basic string, with every awkward character escaped."""
-    plain = set(range(0x20, 0x7F)) - {ord('"'), ord("\\")}
-    return '"' + "".join(c if ord(c) in plain else f"\\U{ord(c):08x}" for c in text) + '"'
+# Access codes (D2-033, S-008).
 
 
-# The whole message. Nothing of the value is in it: it may be most of a real token.
-NOT_A_TOKEN = (
-    "edit_token must be 1 to 256 printable ASCII characters, with no space at either end, "
-    'or "" for none: a browser sends it in a request header'
+def codes_from(tmp_path: Path, toml_list: str) -> tuple[str, ...]:
+    return load_settings(write(tmp_path, f"access_codes = {toml_list}\n{SECRET_LINE}")).access_codes
+
+
+@pytest.mark.parametrize(
+    ("written", "kept"),
+    [
+        ("Maple River 42", "maple.river.42"),
+        ("maple.river.42", "maple.river.42"),
+        ("  MAPLE--river__42!  ", "maple.river.42"),
+        ("mapleriver42", "mapleriver42"),
+        ("12345678", "12345678"),
+        ("a b c d e f g h", "a.b.c.d.e.f.g.h"),
+        ("x" * 256, "x" * 256),
+    ],
 )
+def test_a_code_is_kept_in_its_normal_form(tmp_path: Path, written: str, kept: str) -> None:
+    assert codes_from(tmp_path, f'["{written}"]') == (kept,)
 
 
-def test_the_token_table_has_both_kinds() -> None:
-    assert sum(usable for _, usable in TOKEN_CASES) >= 5
-    assert sum(not usable for _, usable in TOKEN_CASES) >= 5
+def test_the_codes_keep_the_lists_order(tmp_path: Path) -> None:
+    codes = codes_from(tmp_path, '["zebra crossing", "apple orchard", "Maple River 42"]')
+
+    assert codes == ("zebra.crossing", "apple.orchard", "maple.river.42")
 
 
-@pytest.mark.parametrize(("text", "usable"), TOKEN_CASES)
-def test_an_edit_token_is_what_a_request_header_carries_whole(text: str, usable: bool) -> None:
-    assert is_edit_token(text) is usable
-
-
-@pytest.mark.parametrize("text", [text for text, usable in TOKEN_CASES if usable])
-def test_a_usable_edit_token_is_kept_as_written(tmp_path: Path, text: str) -> None:
-    settings = load_settings(write(tmp_path, f"edit_token = {toml_string(text)}\n"))
-
-    assert settings.edit_token == text
-    assert settings.edit_required
-
-
-@pytest.mark.parametrize("text", [text for text, usable in TOKEN_CASES if not usable and text])
-def test_a_token_no_browser_could_send_stops_segl_and_is_not_echoed(
-    tmp_path: Path, text: str
+@pytest.mark.parametrize(
+    ("toml_list", "reason"),
+    [
+        # Fewer than 8 letters and digits, however long it is written.
+        ('["maple river 42", "short 1"]', "entry 2 has fewer than 8 letters and digits"),
+        ('["a.b.c.d.e.f.g"]', "entry 1 has fewer than 8 letters and digits"),
+        ('["- - - - - - - - - -"]', "entry 1 has fewer than 8 letters and digits"),
+        ('[""]', "entry 1 has fewer than 8 letters and digits"),
+        # The same code twice, as it is compared.
+        ('["maple river 42", "other code 77", "Maple-River-42"]', "entry 3 is the same code as"),
+        ('["maple river 42", "maple river 42"]', "entry 2 is the same code as entry 1"),
+        # A letter a person could not be sure to type the same way.
+        ('["lykilor\\u00f0 1234"]', "entry 1 has a character outside ASCII"),
+        ('["maple river 42", 7]', "entry 2 must be text"),
+        ('["maple river 42", ["nested code"]]', "entry 2 must be text"),
+        (f'["{"x" * 257}"]', "entry 1 is longer than 256 characters"),
+    ],
+)
+def test_a_code_segl_cannot_use_stops_it_by_its_place_and_is_not_echoed(
+    tmp_path: Path, toml_list: str, reason: str
 ) -> None:
-    # Such a token would let a browser draw, over the socket, and fail at every
-    # title, restore, import, and upload, which carry it in a header.
-    with pytest.raises(ConfigError) as refused:
-        load_settings(write(tmp_path, f"edit_token = {toml_string(text)}\n"))
+    with pytest.raises(ConfigError, match=f"access_codes {reason}") as refused:
+        codes_from(tmp_path, toml_list)
 
-    assert str(refused.value) == NOT_A_TOKEN
+    message = str(refused.value).lower()
+    for part in ("maple", "short", "lykilor", "other", "nested", "a.b.c", "xxxx"):
+        assert part not in message
 
 
-def test_an_empty_edit_token_is_none(tmp_path: Path) -> None:
-    settings = load_settings(write(tmp_path, 'edit_token = ""\n'))
+def test_no_codes_is_an_open_segl(tmp_path: Path) -> None:
+    settings = load_settings(write(tmp_path, "access_codes = []\n"))
 
-    assert settings.edit_token == ""
+    assert settings.access_codes == ()
     assert not settings.edit_required
 
 
-def test_the_command_refuses_a_token_no_browser_could_send(
+def test_codes_are_parsed_without_a_file() -> None:
+    assert parse_access_codes(["Maple River 42"]) == ("maple.river.42",)
+    assert parse_access_codes([]) == ()
+
+
+SECRET = "0123456789abcdef0123456789abcdef"
+SECRET_LINE = f'access_secret = "{SECRET}"\n'
+
+
+def test_codes_without_a_secret_stop_segl(tmp_path: Path) -> None:
+    for more in ("", 'access_secret = ""\n'):
+        with pytest.raises(ConfigError) as refused:
+            load_settings(write(tmp_path, f'access_codes = ["maple river 42"]\n{more}'))
+
+        assert str(refused.value) == (
+            "access_codes needs access_secret, which signs the passes: "
+            "`openssl rand -base64 32` writes one"
+        )
+
+
+@pytest.mark.parametrize("secret", ["x", "short-secret-1234", "0123456789abcdef0123456789abcde"])
+def test_a_short_secret_stops_segl_and_is_not_echoed(tmp_path: Path, secret: str) -> None:
+    # With codes and without them: a mistake is found when it is made.
+    for codes in ("", 'access_codes = ["maple river 42"]\n'):
+        with pytest.raises(ConfigError) as refused:
+            load_settings(write(tmp_path, f'{codes}access_secret = "{secret}"\n'))
+
+        assert str(refused.value) == (
+            "access_secret must be at least 32 characters: `openssl rand -base64 32` writes one"
+        )
+
+
+def test_a_secret_without_codes_changes_nothing(tmp_path: Path) -> None:
+    settings = load_settings(write(tmp_path, SECRET_LINE))
+
+    assert settings.access_secret == SECRET
+    assert not settings.edit_required
+
+
+@pytest.mark.parametrize(
+    ("hours", "seconds"),
+    [("12", 43200.0), ("0.5", 1800.0), ("1", 3600.0), ("0.001", 3.6), ("0", None), ("0.0", None)],
+)
+def test_the_pass_hours_are_a_length_or_no_limit(
+    tmp_path: Path, hours: str, seconds: float | None
+) -> None:
+    settings = load_settings(write(tmp_path, f"access_pass_hours = {hours}\n"))
+
+    assert settings.access_pass_seconds == pytest.approx(seconds)
+
+
+@pytest.mark.parametrize(
+    ("written", "moment"),
+    [
+        ("2026-11-12T15:00:00Z", datetime(2026, 11, 12, 15, tzinfo=UTC)),
+        ("2026-11-12 15:00:00Z", datetime(2026, 11, 12, 15, tzinfo=UTC)),
+        ("2026-11-12T15:00:00-06:00", datetime(2026, 11, 12, 21, tzinfo=UTC)),
+        ("2026-11-12T15:00:00.250+00:00", datetime(2026, 11, 12, 15, 0, 0, 250000, tzinfo=UTC)),
+    ],
+)
+def test_the_time_passes_ended_at_is_a_moment(
+    tmp_path: Path, written: str, moment: datetime
+) -> None:
+    settings = load_settings(write(tmp_path, f"access_passes_after = {written}\n"))
+
+    assert settings.access_passes_after == moment
+    assert settings.access_passes_after_seconds == moment.timestamp()
+
+
+def test_no_time_is_no_end_of_passes(tmp_path: Path) -> None:
+    settings = load_settings(write(tmp_path, 'access_passes_after = ""\n'))
+
+    assert settings.access_passes_after is None
+    assert settings.access_passes_after_seconds is None
+
+
+def test_internal_networks_are_networks_of_either_family() -> None:
+    assert parse_internal_networks([]) == ()
+    assert parse_internal_networks(
+        ["10.0.0.0/8", " 192.168.4.0/24 ", "2001:DB8::/32", "203.0.113.9", "::1"]
+    ) == ("10.0.0.0/8", "192.168.4.0/24", "2001:db8::/32", "203.0.113.9/32", "::1/128")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "10.0.0.0/8",
+        ["*"],
+        ["inside.example"],
+        # A host with a mask is not a network: the site meant something else.
+        ["10.0.0.1/8"],
+        ["2001:db8::1/32"],
+        ["10.0.0.0/33"],
+        [""],
+        [7],
+        ["10.0.0.0/8", "nope"],
+        [["10.0.0.0/8"]],
+    ],
+)
+def test_an_entry_that_is_not_a_network_is_refused(value: object) -> None:
+    with pytest.raises(ConfigError, match="internal_networks"):
+        parse_internal_networks(value)
+
+
+def test_the_command_refuses_codes_without_a_secret(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    config = write(tmp_path, 'edit_token = "lykilor\u00f0 "\n')
+    config = write(tmp_path, 'access_codes = ["Maple River 42"]\n')
 
     assert cli.main(["--config", str(config)]) == 2
 
     printed = capsys.readouterr().err
-    assert NOT_A_TOKEN in printed
-    assert "lykilor" not in printed
+    assert "segl: access_codes needs access_secret" in printed
+    assert "maple" not in printed.lower()
+
+
+def test_the_command_refuses_a_short_code_by_its_place(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = write(tmp_path, f'access_codes = ["Maple River 42", "pass 1"]\n{SECRET_LINE}')
+
+    assert cli.main(["--config", str(config)]) == 2
+
+    printed = capsys.readouterr().err
+    assert "segl: access_codes entry 2 has fewer than 8 letters and digits" in printed
+    assert "pass 1" not in printed
+    assert "maple" not in printed.lower()
+
+
+def test_the_command_refuses_an_entry_that_is_not_a_network(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = write(tmp_path, 'internal_networks = ["10.0.0.0/8", "the office"]\n')
+
+    assert cli.main(["--config", str(config)]) == 2
+    assert "internal_networks entry 'the office' is not a network" in capsys.readouterr().err
 
 
 def test_invalid_toml_is_a_config_error(tmp_path: Path) -> None:
@@ -395,3 +570,48 @@ def test_the_command_reports_a_bad_config_and_exits_2(
 ) -> None:
     assert cli.main(["--config", str(write(tmp_path, 'bind = "nowhere"\n'))]) == 2
     assert "is not host:port" in capsys.readouterr().err
+
+
+AHEAD_WARNING = (
+    "segl: access_passes_after is ahead of this server's clock: "
+    "no pass lets a browser edit until then"
+)
+
+
+def toml_time(moment: datetime) -> str:
+    return moment.isoformat(timespec="seconds")
+
+
+@pytest.mark.parametrize(
+    ("ahead", "warned"),
+    [
+        # Five minutes is what a pass may be ahead of the clock (segl.access).
+        (timedelta(hours=6), True),
+        (timedelta(minutes=10), True),
+        (timedelta(minutes=2), False),
+        (timedelta(0), False),
+        (timedelta(days=-1), False),
+    ],
+)
+def test_the_command_says_when_passes_are_ended_from_a_time_still_to_come(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    ahead: timedelta,
+    warned: bool,
+) -> None:
+    monkeypatch.setattr(cli.uvicorn, "run", lambda app, **options: None)
+    monkeypatch.setattr(cli, "Repository", OpenedDatabase)
+    # A time written in another zone is the same moment.
+    moment = (datetime.fromtimestamp(time.time(), UTC) + ahead).astimezone(
+        timezone(timedelta(hours=1))
+    )
+    config = write(
+        tmp_path,
+        f"access_passes_after = {toml_time(moment)}\n"
+        f'display_names = "{DISPLAY_NAMES_FILE}"\nassets_dir = "{tmp_path / "assets"}"\n',
+    )
+
+    # It starts either way: the setting is usable, and may be meant.
+    assert cli.main(["--config", str(config)]) == 0
+    assert (AHEAD_WARNING in capsys.readouterr().err) is warned

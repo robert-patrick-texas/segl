@@ -25,11 +25,12 @@ Routes at segl's root:
 
 - `/` serves the app, which opens the last slot in `localStorage`, or `s/1` when none is stored.
 - `/s/1` … `/s/9` are the slots. The app sends any other `/s/...` value to slot 1.
+- `/access` is the access page, where a person enters an access code (edit gate, below).
 - `/api/v1/...` is HTTP.
 - `/collab` is the WebSocket.
 - `/assets/...`, `/fonts/...` (the editor's canvas fonts), and `/favicon.svg` are the Vite build output.
 
-Python reads the build from `web_dir` (`DEPLOY.md`) when it starts: `web/dist` in a checkout. Vite builds with `base: './'`, so the built `index.html` names its files `./assets/...` and code-split chunks find each other relative to themselves. Python serves `index.html` for `/` and for `/s/{n}`. A slot page is one level down, so for it Python rewrites those `./` URLs to `../`. Any one segment after `/s/` gets the slot page, and so does `/s/` itself, because sending a wrong slot to slot 1 is the app's job. `/s` gets the root page. Pages are sent with `Cache-Control: no-cache`, since they name the other files by content hash. After the page routes, Python registers only the folders and files the build holds, so a build cannot shadow `/api`, `/s`, or `/collab`. Without a build, segl serves the API alone and says so when it starts.
+Python reads the build from `web_dir` (`DEPLOY.md`) when it starts: `web/dist` in a checkout. Vite builds with `base: './'`, so the built `index.html` names its files `./assets/...` and code-split chunks find each other relative to themselves. Python serves `index.html` for `/`, for `/access`, and for `/s/{n}`. A slot page is one level down, so for it Python rewrites those `./` URLs to `../`. The access page is at the root's own level, and is served as `/` is. Any one segment after `/s/` gets the slot page, and so does `/s/` itself, because sending a wrong slot to slot 1 is the app's job. `/s` gets the root page. Pages are sent with `Cache-Control: no-cache`, since they name the other files by content hash. After the page routes, Python registers only the folders and files the build holds, so a build cannot shadow `/api`, `/s`, or `/collab`. Without a build, segl serves the API alone and says so when it starts.
 
 Both pages get, at the end of `<head>`:
 
@@ -37,14 +38,14 @@ Both pages get, at the end of `<head>`:
 <script>window.SEGL_CONFIG = { "root": "../", "editRequired": false };</script>
 ```
 
-`root` is the path from this page to segl's root: `./` on `/`, `../` on `/s/N`. A later, deeper route gets the matching number of `../`. The app resolves it once, `new URL(SEGL_CONFIG.root, location.href)`, to get its root URL, such as `https://dev.example.com/board/`. Everything else comes from that URL:
+`root` is the path from this page to segl's root: `./` on `/` and on `/access`, `../` on `/s/N`. A later, deeper route gets the matching number of `../`. The app resolves it once, `new URL(SEGL_CONFIG.root, location.href)`, to get its root URL, such as `https://dev.example.com/board/`. Everything else comes from that URL:
 
 - `basePath` is its path: `/board/`, or `/` at a host root. It is the React Router basename.
 - API calls are `new URL("api/v1/...", root)`.
 - The WebSocket is `new URL("collab?slot=N", root)` with `ws:` or `wss:` to match the page, so TLS follows the page.
 - `window.EXCALIDRAW_ASSET_PATH` is the root URL, so the editor loads its fonts from `fonts/` under segl's root and not from a public CDN (D2-026).
 
-`editRequired` is true when `edit_token` is non-empty. The token value is never injected. In the Vite dev server, which serves the page itself at the host root, a missing `SEGL_CONFIG` means `root` is the host root, and `editRequired` comes from `GET api/v1/config`.
+`editRequired` is true when `access_codes` has a code. No code, no pass, and no secret is ever injected. In the Vite dev server, which serves the page itself at the host root, a missing `SEGL_CONFIG` means `root` is the host root, and `editRequired` comes from `GET api/v1/config`.
 
 segl's own redirects are relative. It sends none today: the framework's trailing-slash redirect is absolute and is turned off, so `/api/v1/health/` is a `404`. nginx's `/board` to `/board/` redirect is in `deploy/nginx/segl-board.conf`, and is relative too.
 
@@ -52,7 +53,7 @@ segl's own redirects are relative. It sends none today: the framework's trailing
 
 - `segl:{basePath}:lastSlot`, such as `segl:/board/:lastSlot`
 - `segl:{basePath}:displayName`
-- `segl:{basePath}:editToken`
+- `segl:{basePath}:editToken`, which holds the pass. The key's name is from an earlier build, in which it held a token.
 - `segl:{basePath}:clientId`
 
 ## Request path
@@ -62,7 +63,7 @@ segl's own redirects are relative. It sends none today: the framework's trailing
 3. Python returns `index.html` with `../` asset URLs and `SEGL_CONFIG`.
 4. The app stores last-slot `1`, loads the head scene from `api/v1/slots/1/scene` under its root, and mounts Excalidraw. The scene comes with its file list, and the app fetches the file of each image from `api/v1/assets/{hash}`.
 5. If `displayName` is missing, the app asks the server for the next label (`POST api/v1/display-name`) and stores it.
-6. Once the canvas is mounted with that scene, the app opens the WebSocket and sends `hello` with `clientId`, the display name, and the edit token when the browser has one.
+6. Once the canvas is mounted with that scene, the app opens the WebSocket and sends `hello` with `clientId`, the display name, and the pass when the browser has one.
 7. The server joins the connection to the in-memory room for slot 1 and sends `welcome`, with the epoch, the title, and the participant list, and then `scene`, the room's elements. The app merges them into the canvas.
 8. An edit in the canvas sends the changed elements, with a number. The server reconciles them into the room scene, broadcasts the winners, and writes the head within `head_flush_seconds`. It then answers `saved` with that number, and the bar goes from `Saving…` to `Saved`.
 9. Other browsers on slot 1 apply those elements. Slot 2 is a different room and a different SQLite head.
@@ -118,44 +119,57 @@ Import is segl's, because the editor's would be wrong on a shared slot. The edit
 
 The bar's Import control (`web/src/bar/ImportControl.tsx`) takes a file from the browser's file dialog, or the one that was dropped, and asks before anything happens: an import replaces the canvas of everyone on the slot, so it takes a second press, as a restore does. The page then posts the file as it is to `api/v1/slots/{n}/import`, with this browser's display name in a header, and changes nothing itself. The imported scene arrives on the socket, as it does in every other browser, and each browser fetches the files of its images from `api/v1/assets/{hash}`. The scene that was replaced is in the history, one row under the import's.
 
-The control waits while the page is not in the slot's room, where it would not see the result, and tells a view-only browser that importing needs the edit token. A file the server refuses is answered in words: it is not an Excalidraw file, or it is larger than this segl takes.
+The control waits while the page is not in the slot's room, where it would not see the result, and tells a view-only browser that importing needs an access code. A file the server refuses is answered in words: it is not an Excalidraw file, or it is larger than this segl takes.
 
 One of the editor's ways in is still open. The editor can export an image, a PNG or an SVG, with the scene embedded in it, and it opens that scene when such an image is dropped on the canvas, in that browser alone. Telling such an image from any other takes reading the file, and a drop has to be decided before that.
 
 ## Edit gate
 
-Viewing, cursors, and receiving elements require no token.
+Viewing, cursors, and receiving elements need nothing: a browser that can open the page watches live.
 
-When `edit_token` is empty, every connection may mutate the scene, the title, the history (restore), and uploaded files.
+When `access_codes` is empty, every connection may mutate the scene, the title, the history (restore and import), and uploaded files.
 
-When `edit_token` is set:
+When `access_codes` has one or more codes, editing needs a pass (S-008, D2-033). This is texas2step's access code in its simplest form, and it is not authentication: there are no users and no accounts, and a pass says only that someone knew a code. It keeps honest people on an internal network from changing a board by mistake.
 
-- Mutations include the token from `localStorage`: the HTTP header `X-Segl-Edit-Token`, and the same value in the WebSocket `hello`, which settles the connection as an editor or a viewer until it closes.
-- A missing or wrong token joins as view-only. The server drops scene, title, restore, and file mutations: `elements` gets an `error` with `view_only`, and a `PATCH`, a restore, or an upload gets `403` with `view_only`. Presence and rename still work, and so does reading the history.
-- The comparison is constant-time. Logs record the slot and the byte size, not the token and not the scene body.
-- A shared link carries the token in the URL fragment, on any slot or on segl's root: `https://dev.example.com/board/s/1#e=<token>` (`DEPLOY.md` says how to write one). Everything after `#e=` is the token, percent-decoded. A browser does not send a fragment to the server. The page takes the fragment out of the address with `history.replaceState` before it does anything else, whether or not the token turns out to be right, and keeps the token for that page.
-- The page says `hello` with a link's token, and writes it to `localStorage` once `welcome` says that the connection may edit (D2-032). A token the server refuses is not stored. If the browser has a stored token, the page goes back to that one and says `hello` again. So a link with a wrong token, which any page on the web can make a browser open, cannot take the place of a token that works.
-- The server reads the token in `hello` alone (D2-027), so the page says `hello` again, on a new socket, whenever its token changes. A link opened in a tab that is already on a slot changes the fragment and loads nothing, and the page hears `hashchange`. A token stored by another tab of the same browser arrives as a `storage` event, and that tab may then edit too.
-- The token goes to the server in the header and in `hello`, and in no URL. It is not in the page Python serves, and not in a log.
+- **A code** is a word or a phrase the site lists in the TOML file, with at least 8 letters and digits. It is compared in a normal form, lowercase letters and digits with any run of other characters as one separator, so `Maple River 42` and `maple.river.42` are one code. The comparison is constant-time, against every code in the list.
+- **A pass** is what a right code buys from `POST api/v1/access`: the Unix second it was issued at, and a signature over that second and the code under `access_secret`, as `<issued>.<signature>`. The code goes into what is signed, so taking a code out of the list ends the passes it bought. The pass holds neither the code nor the secret.
+- **The server keeps no list of passes.** It takes one when the signature fits a code that is in the list, when the pass was issued at or after `access_passes_after`, when it is not from more than five minutes ahead of the server's clock, and when it is younger than `access_pass_hours` as that is set now. So a restart with a shorter limit shortens the passes already issued, a new `access_passes_after` ends every pass issued before it while the codes still work, and a new secret ends them all.
+- **Where a pass is checked.** In the HTTP header `X-Segl-Edit-Token` of a title change, a restore, an import, and an upload, and in the `editToken` field of the WebSocket's `hello`. Both names are from an earlier build, in which they carried a token. The server reads the pass in `hello` alone (D2-027), which settles the connection as an editor or a viewer.
+- **A pass can end while its socket is open.** The connection keeps the time its pass ends, from `hello`. The first `elements` or `files` message after that time is answered `view_only`, and the connection is a viewer from then on. The page turns view-only when it is told so. It is not told before: what a person draws in the moment after the end stays on that one canvas, and is gone when the page next loads the slot.
+- A missing pass, or one the server does not take, joins as view-only. The server drops scene, title, restore, import, and file mutations: `elements` gets an `error` with `view_only`, and a `PATCH`, a restore, an import, or an upload gets `403` with `view_only`. Presence and rename still work, and so does reading the history.
+- **Wrong codes are counted** per client address, in memory. After five in a row, every code from that address is `429` with `rate_limited` for fifteen minutes, and a right code starts the count again (`SECURITY.md`).
+- Logs record the slot and the byte size, not a code, the secret, a pass, or the scene body. A code goes to the server in the body of one `POST`, and a pass in the header and in `hello`: neither is in a URL, in the page Python serves, or in a log.
+
+The access page is where a person enters a code. It is `access` under segl's root, and Python serves it as it serves `/`. It is called the access page and not a login: a login has a user, and that name is kept for the later phase (`ROADMAP.md`).
+
+- A browser that may not edit has a link by the notice in the bar, `Enter access code`. It goes to the access page without a page load, and takes along the slot the person is on.
+- The page has one field. A right code stores the pass in `localStorage`, under the `basePath` key, and goes back to that slot, where the page says `hello` with the pass and may edit. Opened by its address, the page goes back to the last slot the browser used, or to slot 1.
+- A wrong code is answered in words, and the field is emptied. An address that has to wait is told for how long. On a segl without codes the page says that everyone can edit, and has no field.
+- A pass stored by another tab of the same browser arrives as a `storage` event. The page then says `hello` again, on a new socket, and that tab may edit too.
+- Nothing hands a pass from one browser to another. An earlier build had a link that carried a token in its fragment, `#e=`. It is gone: the page reads no fragment, and an address that ends in `#e=` and something opens the slot as any address does.
 
 The server is the gate. What the page does for a view-only browser is so that nobody draws something only they can see:
 
-- The editor runs in its view mode, the title in the bar is text, not a button, the history list has no restore buttons, and the Import control says that importing needs the edit token. The server says whether a connection is view-only in `welcome`. Until it has, a browser may edit unless a token is configured.
+- The editor runs in its view mode, the title in the bar is text, not a button, the history list has no restore buttons, and the Import control says that importing needs an access code. The server says whether a connection is view-only in `welcome`. Until it has, a browser may edit unless codes are set.
 - Nothing dropped on a viewer's canvas reaches the editor. The pinned editor's drop handler does not ask about its view mode, and would place a dropped image, or embed a dropped link, on that one canvas. The canvas adapter decides a drop before the editor is given it (`dropGoesTo` in `web/src/importing.ts`). A scene file still goes to the Import control, which says what importing needs.
 
 The segl bar always states that the slot is a shared workspace that anyone who can open the page can see (S-016). The rest of the notice says where this browser stands with the gate:
 
-| State | When | The notice goes on |
-|---|---|---|
-| `open` | No token is configured. | "…can see it and edit it." |
-| `unlocked` | The server took this browser's token. | "This browser has the edit token and can edit." |
-| `locked` | A token is needed, and this browser has none. | "Editing is locked: it needs the edit token." |
-| `refused` | The server did not take this browser's token. | "Editing is locked: this segl did not take the edit token this browser has." |
-| `waiting` | This browser has a token, and the server has not answered yet. | "Editing needs the edit token." |
+| State | When | The notice goes on | Link to the access page |
+|---|---|---|---|
+| `open` | No access codes are set. | "…can see it and edit it." | No |
+| `unlocked` | The server took this browser's pass. | "This browser entered an access code and can edit." | No |
+| `locked` | Codes are set, and this browser has no pass. | "Editing is locked: it needs an access code." | Yes |
+| `refused` | The server did not take this browser's pass: it has ended, or the site ended it. | "Editing is locked: the access this browser had has ended." | Yes |
+| `waiting` | This browser has a pass, and the server has not answered yet. | "Editing needs an access code." | No |
 
-The server's answer in `welcome` comes before the page's own `editRequired`, which is from when the page loaded: a token may have been set, or taken away, since. A view-only browser shows the sentence about editing in the bar's amber.
+The server's answer in `welcome` comes before the page's own `editRequired`, which is from when the page loaded: the site may have set codes, or taken them away, since. A view-only browser shows the sentence about editing in the bar's amber.
 
-`web/src/editToken.ts` is the link, the stored token, and the rule for which token a page sends. `web/src/useEditToken.ts` is its React state, above the routes, since the token belongs to the browser and not to a slot. `web/src/bar/notice.ts` is the notice.
+`src/segl/access.py` is the codes, the pass, and the count of wrong codes. `web/src/pass.ts` is the stored pass, and `web/src/usePass.ts` is its React state, above the routes, since the pass belongs to the browser and not to a slot. `web/src/access.ts` and `web/src/AccessPage.tsx` are the access page. `web/src/bar/notice.ts` is the notice.
+
+### Internal networks
+
+`internal_networks` is a second thing, apart from the codes (S-018). The codes decide who edits. The networks decide who is answered at all. With the list set, a request or a WebSocket handshake from an address outside it is `403` with `outside_network`: the pages and the health route among them, before the Origin check and before any route (`src/segl/networks.py`). Loopback is always inside, and an IPv4 address written as IPv6 is read as IPv4. The address is the one segl already believes, which is the `X-Forwarded-For` value only from `trusted_proxies` (`SECURITY.md`). A firewall, or nginx's `allow` and `deny`, can do the same, and this is the second check behind them.
 
 ## Display names
 
@@ -175,4 +189,4 @@ SQLite holds slots, the head scene, revisions, each slot's file list, and the na
 
 ## What is intentionally absent
 
-No second collaboration process, no Redis, no PostgreSQL, no cookie session, no user accounts, no board create/delete, no inventory tables, no base-path setting, and no route under `/{team}/{project}/{board}`. The repository interface is the seam those later stores will implement. Slot handlers do not call a protected-data function, because that function does not exist in this phase.
+No second collaboration process, no Redis, no PostgreSQL, no cookie session, no user accounts, no login, no board create/delete, no inventory tables, no base-path setting, and no route under `/{team}/{project}/{board}`. The repository interface is the seam those later stores will implement. Slot handlers do not call a protected-data function, because that function does not exist in this phase.

@@ -4,9 +4,9 @@ Phases are dependency order, not dates. P0 is the task list in `draft2/TASKS.md`
 
 ## P0 — Collaborative slots
 
-Nine Excalidraw slots, live sync, SQLite durability, history, optional edit token, display labels, the relative mount, dev container, and the `/opt/segl` `.deb`.
+Nine Excalidraw slots, live sync, SQLite durability, history, optional access codes, an optional list of internal networks, display labels, the relative mount, dev container, and the `/opt/segl` `.deb`.
 
-**Gate:** `TEST-PLAN.md` rows T-001 through T-018 pass and `draft2/STATUS.md` records the evidence. Next task becomes `NONE`.
+**Gate:** `TEST-PLAN.md` rows T-001 through T-020 pass and `draft2/STATUS.md` records the evidence. Next task becomes `NONE`.
 
 ## P1 — Network objects on a canvas (L-001)
 
@@ -22,7 +22,7 @@ A PostgreSQL implementation of the repository interface when a deployment outgro
 
 ## P4 — Enterprise hardening
 
-SSO, encryption at rest, audit retention, and the other deferred controls listed in `draft1/SECURITY.md`. Basic perimeter control, TLS, the edit token, and the ban on cookies are already in P0 and stay.
+SSO, encryption at rest, audit retention, and the other deferred controls listed in `draft1/SECURITY.md`. Basic perimeter control, TLS, access codes, `internal_networks`, and the ban on cookies are already in P0 and stay.
 
 ## Held until a dependency moves
 

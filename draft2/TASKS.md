@@ -302,6 +302,19 @@ Tests:
 
 Documents: reword S-008 and T-008 from the token to codes and a pass. Add S-018, and test-plan rows after T-018 for codes and passes and for `internal_networks`. Take the new rows into T11's and T13's ranges and into the gate line of `docs/ROADMAP.md`. Update `docs/API.md`, `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/DEPLOY.md` (its operator notes name `edit_token`, and it says how to write a link), `docs/DEVELOPMENT.md`, rule 9 of `draft2/AGENTS.md`, `README.md` (its status names the link), and `CHANGELOG.md`. Each of them describes the link today.
 
+As built, where the text above left a choice open:
+
+- `access_secret` has at least 32 characters. The pass is left in a browser's storage, and without a strong secret it would be a way to test guesses at a code offline.
+- A code is ASCII, and at most 256 characters as written. A letter outside ASCII would count as a separator, and the code would not be the one that was written.
+- `access_passes_after` is a TOML time with its offset, and `""` for none. A time more than five minutes ahead of the server's clock is said on a line of output at startup, and segl still starts.
+- A count of wrong codes is forgotten fifteen minutes after its last one. A body that is not a code is `bad_request` and is not counted. An address that starts to wait is logged, once, without what it sent.
+- On a segl without codes the access route is `404` with `no_access_codes`, and the access page says that everyone can edit.
+- The refusals' codes are `wrong_code` and `outside_network`. A client with no address, or with text that is not one, is outside.
+- The bar's way to the access page is a link, `Enter access code`, which takes the slot along in the router's history entry. Opened by its address, the page goes back to the last slot the browser used. The field is plain text, not a password field.
+- The page does not know when its pass ends. It is told at its next edit, and what was drawn in that moment stays on that one canvas until the slot is loaded again.
+- The page's modules are `web/src/pass.ts`, `usePass.ts`, `access.ts`, and `AccessPage.tsx`. `editToken.ts`, `useEditToken.ts`, and the session's `onGate` are gone. The browser spec is `web/e2e/access.spec.ts` in the projects `access-direct`, `access-root`, and `access-board`, and the pass that ends is `web/e2e/expiry.spec.ts`, in the `restart` project. The table of what a header carries is `tests/header_value_cases.json`.
+- The bar wraps at any width. The new link showed that between 721 and about 1,100 pixels the notice had been squeezed into a column a word wide.
+
 Acceptance: T-008 as reworded, the new rows, and T-012 with the new route. ruff, ty, and the web checks pass.
 
 ## T11 — P0 browser matrix in the dev container
@@ -311,9 +324,9 @@ Acceptance: T-008 as reworded, the new rows, and T-012 with the new route. ruff,
 - Requirements: S-017 and the browser rows of `docs/TEST-PLAN.md`
 - Read: `docs/TEST-PLAN.md`, `docs/DEVELOPMENT.md` (browsers)
 
-Make T-001 through T-016 runnable as one command inside the dev container, under rootful Docker and under rootless Docker or Podman. If Chromium cannot run in the Ubuntu 26.04 container, use the Playwright image through `PW_WS_ENDPOINT` and record why. Try a 10-editor stretch once, record the observation in `STATUS.md`, and do not block on it. Run the 1,000-element load once and record it the same way.
+Make T-001 through T-016, T-019, and T-020 runnable as one command inside the dev container, under rootful Docker and under rootless Docker or Podman. If Chromium cannot run in the Ubuntu 26.04 container, use the Playwright image through `PW_WS_ENDPOINT` and record why. Try a 10-editor stretch once, record the observation in `STATUS.md`, and do not block on it. Run the 1,000-element load once and record it the same way.
 
-Acceptance: that container command exits 0 on T-001 through T-016. Evidence goes into the STATUS log.
+Acceptance: that container command exits 0 on T-001 through T-016, T-019, and T-020. Evidence goes into the STATUS log.
 
 ## T12 — Debian package and systemd
 
@@ -345,6 +358,6 @@ Out of scope: the production container image (L-005).
 - Requirements: all S-001–S-017
 - Read: `docs/TEST-PLAN.md` evidence section
 
-Re-run T-001 through T-018. Append the evidence block to `STATUS.md`. On full pass, set Next task to `NONE` and Completed to T00–T13. On a failure, set Next task to the task that owns the defect and do not open P1.
+Re-run T-001 through T-020. Append the evidence block to `STATUS.md`. On full pass, set Next task to `NONE` and Completed to T00–T13. On a failure, set Next task to the task that owns the defect and do not open P1.
 
 This task does not add features.

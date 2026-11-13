@@ -20,7 +20,7 @@
  * "Another site" is this project's own page: the three projects reach one
  * segl at three origins, so a page of one is a cross-site page to the next.
  * The browser itself writes the `Origin` header, which no script can set.
- * This segl has no edit token, so the check is all that stands in the way.
+ * This segl asks for no access code, so the check is all that stands in the way.
  */
 import { expect, type APIRequestContext, type Page } from '@playwright/test';
 import { collabUrl, openSlot, SLOTS, test } from './pages.ts';
@@ -84,7 +84,7 @@ test('a request from a page of another site is refused with bad_origin, and chan
 	const before = await (await request.get(slotUrl)).json();
 
 	// An import: it would replace the slot's scene for everyone. This segl
-	// has no edit token, so the only thing it answers `403` for is the origin:
+	// asks for no access code, so the only thing it answers `403` for is the origin:
 	// the browser sent this page's, and it was refused.
 	const imported = await crossSitePost(page, `${slotUrl}/import`, EMPTY_SCENE);
 	expect(imported.status).toBe(403);

@@ -22,7 +22,7 @@
  * here, with the same question. The export is the editor's own, in its menu.
  */
 import { useEffect, useId, useRef, useState } from 'react';
-import { IMPORT_NEEDS_CONNECTION, IMPORT_NEEDS_TOKEN, importProblem } from '../importing.ts';
+import { IMPORT_NEEDS_CONNECTION, IMPORT_NEEDS_CODE, importProblem } from '../importing.ts';
 import { useShiftIntoView } from './inView.ts';
 import { useDismiss } from './useDismiss.ts';
 
@@ -98,7 +98,7 @@ export function ImportControl({
 		}
 	};
 
-	const why = !canImport ? IMPORT_NEEDS_TOKEN : !connected ? IMPORT_NEEDS_CONNECTION : null;
+	const why = !canImport ? IMPORT_NEEDS_CODE : !connected ? IMPORT_NEEDS_CONNECTION : null;
 
 	return (
 		<div ref={wrapper} className="segl-bar__import" data-testid="import">

@@ -37,8 +37,13 @@ from fastapi.testclient import TestClient
 from harness import (
     BOARD_SITE,
     EMPTY_SCENE,
+    GATED,
+    GATED_TOML,
+    PASS_HEADER,
     ROOT_SITE,
     NginxTools,
+    assert_no_secrets,
+    issue_pass,
     make_settings,
     next_message,
     running_mount,
@@ -53,7 +58,8 @@ from segl.assets import AssetStore
 from segl.collab import Rooms
 from segl.repository import Repository, RevisionNotFound
 
-TOKEN = "correct-horse-battery"
+# A pass a segl with ``GATED`` takes, issued as the tests are collected.
+PASS = issue_pass()
 SLOT = 2
 PNG = b"\x89PNG\r\n\x1a\n" + bytes(range(256))
 PNG_HASH = hashlib.sha256(PNG).hexdigest()
@@ -128,11 +134,11 @@ def received(socket: WebSocketTestSession, seconds: float = 5.0) -> dict[str, An
 
 
 def hello(
-    socket: WebSocketTestSession, name: str | None = "Guest1", token: str = ""
+    socket: WebSocketTestSession, name: str | None = "Guest1", edit_pass: str = ""
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Say hello, and return the welcome and the scene."""
     socket.send_json(
-        {"type": "hello", "clientId": "client-1", "displayName": name, "editToken": token}
+        {"type": "hello", "clientId": "client-1", "displayName": name, "editToken": edit_pass}
     )
     return received(socket), received(socket)
 
@@ -496,12 +502,12 @@ def test_a_slot_nobody_has_open_can_be_restored(stored: TestClient) -> None:
 
 def test_a_viewer_is_sent_the_restored_scene_too(written: Repository, tmp_path: Path) -> None:
     with (
-        application(written, tmp_path, edit_token=TOKEN) as client,
+        application(written, tmp_path, **GATED) as client,
         client.websocket_connect(f"/collab?slot={SLOT}") as viewer,
     ):
         assert hello(viewer)[0]["viewOnly"] is True
 
-        client.post(RESTORE, json={"revision": 1}, headers={"X-Segl-Edit-Token": TOKEN})
+        client.post(RESTORE, json={"revision": 1}, headers={PASS_HEADER: PASS})
 
         assert received(viewer) == {"type": "scene", "epoch": 2, "elements": [A], "files": []}
 
@@ -615,20 +621,20 @@ def test_a_restore_from_another_site_changes_nothing(stored: TestClient) -> None
 def test_with_a_token_a_client_without_it_reads_the_history_and_cannot_restore(
     written: Repository, tmp_path: Path
 ) -> None:
-    with application(written, tmp_path, edit_token=TOKEN) as client:
+    with application(written, tmp_path, **GATED) as client:
         with (
             client.websocket_connect(f"/collab?slot={SLOT}") as editor,
             client.websocket_connect(f"/collab?slot={SLOT}") as viewer,
         ):
-            assert hello(editor, "Guest1", TOKEN)[0]["viewOnly"] is False
+            assert hello(editor, "Guest1", PASS)[0]["viewOnly"] is False
             assert hello(viewer, "Staff2")[0]["viewOnly"] is True
             received(editor)
 
-            # Reading needs no token.
+            # Reading needs no pass.
             assert len(rows(client)) == 3
             assert client.get(f"{REVISIONS}/1").json()["scene"]["elements"] == [A]
 
-            for headers in ({}, {"X-Segl-Edit-Token": "wrong"}, {"X-Segl-Edit-Token": ""}):
+            for headers in ({}, {PASS_HEADER: "wrong"}, {PASS_HEADER: ""}):
                 refused = client.post(RESTORE, json={"revision": 1}, headers=headers)
 
                 assert (refused.status_code, refused.json()["error"]) == (403, "view_only")
@@ -643,24 +649,24 @@ def test_with_a_token_a_client_without_it_reads_the_history_and_cannot_restore(
             allowed = client.post(
                 RESTORE,
                 json={"revision": 1, "displayName": "Guest1"},
-                headers={"X-Segl-Edit-Token": TOKEN},
+                headers={PASS_HEADER: PASS},
             )
 
             assert (allowed.status_code, allowed.json()["epoch"]) == (200, 2)
             for socket in (editor, viewer):
                 assert received(socket)["elements"] == [A]
-        assert TOKEN not in json.dumps(client.get(REVISIONS).json())
+        assert PASS not in json.dumps(client.get(REVISIONS).json())
 
 
 def test_without_a_token_configured_anyone_restores(stored: TestClient) -> None:
     # A header nobody asked for is ignored.
-    response = stored.post(RESTORE, json={"revision": 1}, headers={"X-Segl-Edit-Token": "anything"})
+    response = stored.post(RESTORE, json={"revision": 1}, headers={PASS_HEADER: "anything"})
 
     assert response.status_code == 200
 
 
 def test_the_token_is_checked_before_the_body_is_read(written: Repository, tmp_path: Path) -> None:
-    with application(written, tmp_path, edit_token=TOKEN) as client:
+    with application(written, tmp_path, **GATED) as client:
         response = client.post(RESTORE, content=b"{")
 
         assert response.json()["error"] == "view_only"
@@ -822,17 +828,14 @@ def test_a_restore_survives_a_kill_and_so_does_the_scene_it_replaced(tmp_path: P
 
 
 def test_with_a_token_a_running_server_gates_the_restore(tmp_path: Path) -> None:
-    """T-008 from a running process, with the token in the TOML file."""
-    config = (
-        f'edit_token = "{TOKEN}"\nhead_flush_seconds = {SOON}\n'
-        f"history_interval_seconds = {EVERY_FLUSH}\n"
-    )
+    """T-008 from a running process, with the codes in the TOML file."""
+    config = f"{GATED_TOML}head_flush_seconds = {SOON}\nhistory_interval_seconds = {EVERY_FLUSH}\n"
     with running_segl(tmp_path, config) as server:
         with (
             server.socket(f"/collab?slot={SLOT}") as editor,
             server.socket(f"/collab?slot={SLOT}") as viewer,
         ):
-            say_hello(editor, "Guest1", token=TOKEN)
+            say_hello(editor, "Guest1", edit_pass=PASS)
             assert say_hello(viewer, "Staff2")[0]["viewOnly"] is True
             next_message(editor)
             send(editor, 1, A)
@@ -846,7 +849,7 @@ def test_with_a_token_a_running_server_gates_the_restore(tmp_path: Path) -> None
             assert (refused.status, refused.json()["error"]) == (403, "view_only")
             assert server.get(f"/api/v1/slots/{SLOT}").json()["epoch"] == 1
 
-            allowed = server.post(RESTORE, {"X-Segl-Edit-Token": TOKEN}, restore_body(1, "Guest1"))
+            allowed = server.post(RESTORE, {PASS_HEADER: PASS}, restore_body(1, "Guest1"))
             assert (allowed.status, allowed.json()["epoch"]) == (200, 2)
             # The first thing either hears after the drawing is the restored scene.
             for socket in (editor, viewer):
@@ -856,7 +859,8 @@ def test_with_a_token_a_running_server_gates_the_restore(tmp_path: Path) -> None
                     "elements": [A],
                     "files": [],
                 }
-        assert TOKEN not in server.log()
+        assert PASS not in server.log()
+        assert_no_secrets(server.log())
         # The log has the route, and no scene and no name.
         server.logged_line(f"POST {RESTORE}")
         assert "rectangle" not in server.log() and "Guest1" not in server.log()

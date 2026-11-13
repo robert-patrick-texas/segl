@@ -87,8 +87,8 @@ def load_web_build(folder: Path) -> WebBuild | None:
 def page_config(root: str, edit_required: bool) -> str:
     """Return the script element that sets ``window.SEGL_CONFIG``.
 
-    It holds the path to segl's root and whether a token is needed. The token
-    itself is never written into a page.
+    It holds the path to segl's root and whether editing needs an access
+    code. No code, no pass, and no secret is ever written into a page.
     """
     config = json.dumps({"root": root, "editRequired": edit_required})
     # No "</script>" can come out of these two values. Escaped anyway, so that

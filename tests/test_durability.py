@@ -35,8 +35,11 @@ from fastapi.testclient import TestClient
 from harness import (
     BOARD_SITE,
     EMPTY_SCENE,
+    GATED,
+    PASS_HEADER,
     NginxTools,
     SeglServer,
+    issue_pass,
     make_settings,
     next_message,
     running_mount,
@@ -50,7 +53,8 @@ from segl.app import create_app
 from segl.repository import Repository
 from segl.room import Connection, Hello
 
-TOKEN = "correct-horse-battery"
+# A pass a segl with ``GATED`` takes, issued as the tests are collected.
+PASS = issue_pass()
 PNG = b"\x89PNG\r\n\x1a\n" + bytes(range(256))
 PNG_HASH = hashlib.sha256(PNG).hexdigest()
 FILE_ID = "f" * 40
@@ -95,10 +99,10 @@ def received(socket: WebSocketTestSession, seconds: float = 5.0) -> dict[str, An
 
 
 def hello(
-    socket: WebSocketTestSession, name: str | None = "Guest1", token: str = ""
+    socket: WebSocketTestSession, name: str | None = "Guest1", edit_pass: str = ""
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     socket.send_json(
-        {"type": "hello", "clientId": "client-1", "displayName": name, "editToken": token}
+        {"type": "hello", "clientId": "client-1", "displayName": name, "editToken": edit_pass}
     )
     return received(socket), received(socket)
 
@@ -302,10 +306,10 @@ def test_a_scene_over_the_limit_is_refused_and_not_saved(
 # Images: the bytes are uploaded, and the socket says which file id they are.
 
 
-def upload(client: TestClient, slot: int = 6, token: str | None = None) -> str:
+def upload(client: TestClient, slot: int = 6, edit_pass: str | None = None) -> str:
     headers = {"Content-Type": "image/png"}
-    if token is not None:
-        headers["X-Segl-Edit-Token"] = token
+    if edit_pass is not None:
+        headers[PASS_HEADER] = edit_pass
     response = client.post(f"/api/v1/slots/{slot}/assets", content=PNG, headers=headers)
     assert response.status_code == 200
     return response.json()["hash"]
@@ -387,26 +391,26 @@ def test_a_file_that_was_not_uploaded_cannot_be_named(client: TestClient) -> Non
 def test_with_a_token_a_viewer_gets_the_files_and_cannot_name_one(
     repository: Repository, tmp_path: Path
 ) -> None:
-    """S-008: asset writes need the token, at the route and on the socket."""
+    """S-008: asset writes need a pass, at the route and on the socket."""
     with (
-        application(repository, tmp_path, edit_token=TOKEN) as client,
+        application(repository, tmp_path, **GATED) as client,
         client.websocket_connect("/collab?slot=6") as editor,
         client.websocket_connect("/collab?slot=6") as viewer,
     ):
-        hello(editor, "Guest1", TOKEN), hello(viewer, "Staff2")
+        hello(editor, "Guest1", PASS), hello(viewer, "Staff2")
         received(editor)
         refused = client.post(
             "/api/v1/slots/6/assets", content=PNG, headers={"Content-Type": "image/png"}
         )
         assert refused.json()["error"] == "view_only"
-        upload(client, token=TOKEN)
+        upload(client, edit_pass=PASS)
 
         viewer.send_json({"type": "files", "epoch": 1, "files": [FILE]})
         assert received(viewer)["error"] == "view_only"
 
         editor.send_json({"type": "files", "epoch": 1, "files": [FILE]})
         assert received(viewer) == {"type": "files", "epoch": 1, "files": [FILE]}
-        # A viewer fetches the bytes without a token.
+        # A viewer fetches the bytes without a pass.
         assert client.get(f"/api/v1/assets/{PNG_HASH}").content == PNG
 
 

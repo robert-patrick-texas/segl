@@ -15,10 +15,13 @@
 """The segl ASGI application. Routes follow docs/API.md."""
 
 import json
+import logging
 import re
+import time
 import unicodedata
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import unquote
@@ -29,11 +32,13 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 from starlette.staticfiles import StaticFiles
 
+from segl.access import LOCK_SECONDS, Access, CodeLimit
 from segl.assets import MEDIA_TYPES, AssetStore
 from segl.collab import Rooms, serve
 from segl.config import Settings
 from segl.importing import ImportedFile, InvalidDocument, NotJson, TooLarge, read_document
 from segl.names import AllocationLimit, load_display_names, retry_after
+from segl.networks import InternalNetworks
 from segl.origin import OriginCheck
 from segl.repository import (
     SYSTEM_LABEL,
@@ -43,9 +48,11 @@ from segl.repository import (
     RevisionSummary,
     Slot,
 )
-from segl.room import FileEntry, encode, may_edit, named_files, stored_name
+from segl.room import NEEDS_CODE, FileEntry, encode, named_files, stored_name
 from segl.versions import app_version
 from segl.web import ROOT_PAGE, SLOT_PAGE, WebBuild, load_web_build, render_page
+
+logger = logging.getLogger("segl.access")
 
 # The only texts that name a slot. int() would also take "01", "+1", and the
 # digits of other scripts.
@@ -58,6 +65,9 @@ _TITLE_BODY_BYTES = 4096
 
 # The largest body of a restore: a revision number and a display name.
 _RESTORE_BODY_BYTES = 4096
+
+# The largest body of an access code. A code is at most 256 characters.
+_ACCESS_BODY_BYTES = 4096
 
 # The texts that can name a revision: a whole number from 1, as the server
 # writes it. Sixteen digits is more than a slot will ever count, and fits the
@@ -163,6 +173,14 @@ def _store(assets: AssetStore, files: list[ImportedFile]) -> list[FileEntry]:
     ]
 
 
+def _expires_at(until: float | None) -> str | None:
+    """Return when a pass ends as a response carries it: UTC, to the millisecond."""
+    if until is None:
+        return None
+    moment = datetime.fromtimestamp(until, UTC)
+    return moment.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
 def _slot_json(slot: Slot) -> dict[str, object]:
     return {
         "number": slot.number,
@@ -208,7 +226,7 @@ def _ascii_json(body: dict[str, object]) -> Response:
 
 def _add_web_routes(app: FastAPI, build: WebBuild, edit_required: bool) -> None:
     """Serve the web application: the pages, then the files the build emitted."""
-    # Made once. A new build, or a new token, takes a restart.
+    # Made once. A new build, or a changed list of access codes, takes a restart.
     pages = {
         root: render_page(build.index, root=root, edit_required=edit_required)
         for root in (ROOT_PAGE, SLOT_PAGE)
@@ -219,8 +237,12 @@ def _add_web_routes(app: FastAPI, build: WebBuild, edit_required: bool) -> None:
         # a browser must ask for again after an upgrade.
         return HTMLResponse(pages[root], headers={"Cache-Control": "no-cache"})
 
+    # The access page, where a browser enters an access code, is at segl's
+    # root as `/` is (docs/ARCHITECTURE.md, edit gate). It is the same
+    # application, and the app's own router shows the page.
     @app.get("/", include_in_schema=False)
     @app.get("/s", include_in_schema=False)
+    @app.get("/access", include_in_schema=False)
     def root_page() -> HTMLResponse:
         return page(ROOT_PAGE)
 
@@ -246,8 +268,13 @@ def _add_web_routes(app: FastAPI, build: WebBuild, edit_required: bool) -> None:
         app.mount(f"/{name}", StaticFiles(directory=build.folder / name), name=f"web-{name}")
 
 
-def create_app(settings: Settings, repository: Repository) -> FastAPI:
+def create_app(
+    settings: Settings, repository: Repository, *, clock: Callable[[], float] = time.time
+) -> FastAPI:
     """Build the application for these settings, over a bootstrapped repository.
+
+    ``clock`` gives the time in Unix seconds, which a pass is issued at and
+    ends by. A test moves it.
 
     The application closes the repository when it shuts down. It serves the
     web application when ``settings.web_dir`` holds a build, and the API alone
@@ -261,6 +288,18 @@ def create_app(settings: Settings, repository: Repository) -> FastAPI:
     """
     words = load_display_names(settings.display_names)
     allocation_limit = AllocationLimit()
+    access = Access(
+        settings.access_codes,
+        settings.access_secret,
+        pass_seconds=settings.access_pass_seconds,
+        passes_after=settings.access_passes_after_seconds,
+        clock=clock,
+    )
+    code_limit = CodeLimit()
+
+    def may_edit(request: Request) -> bool:
+        # The header's name is from when it carried a token. It carries the pass.
+        return access.admit(request.headers.get("x-segl-edit-token")).may_edit
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
@@ -291,6 +330,8 @@ def create_app(settings: Settings, repository: Repository) -> FastAPI:
     )
     app.state.settings = settings
     app.state.display_names = words
+    app.state.access = access
+    app.state.code_limit = code_limit
     assets = AssetStore(settings.assets_dir)
     app.state.assets = assets
     rooms = Rooms(repository, settings, assets)
@@ -298,6 +339,10 @@ def create_app(settings: Settings, repository: Repository) -> FastAPI:
     # Before every route: a mutation or a WebSocket handshake from a page on
     # another site is refused with bad_origin (docs/SECURITY.md).
     app.add_middleware(OriginCheck)
+    if settings.internal_networks:
+        # Added last, so it runs first: an address outside the site's networks
+        # is answered outside_network, and nothing else is looked at.
+        app.add_middleware(InternalNetworks, networks=settings.internal_networks)
     web_build = load_web_build(settings.web_dir)
     app.state.web_build = web_build
 
@@ -331,8 +376,49 @@ def create_app(settings: Settings, repository: Repository) -> FastAPI:
 
     @app.get("/api/v1/config")
     def config() -> dict[str, bool]:
-        # The fact only. The token itself is never sent to a browser.
-        return {"editRequired": settings.edit_required}
+        # The fact only: that editing needs an access code, and none of them.
+        return {"editRequired": access.required}
+
+    @app.post("/api/v1/access")
+    async def enter_code(request: Request) -> JSONResponse:
+        if not access.required:
+            return _error(
+                404, "no_access_codes", "This segl asks for no access code. Everyone can edit."
+            )
+        # The address uvicorn settled on, as the name limit counts by.
+        client = request.client.host if request.client else ""
+        wait = code_limit.wait(client)
+        if wait > 0:
+            # Before the body is read: while an address waits, no code of its is looked at.
+            return _error(
+                429,
+                "rate_limited",
+                "Too many wrong access codes came from this address. Try again later.",
+                {"Retry-After": retry_after(wait)},
+            )
+        body = await _json_object(request, _ACCESS_BODY_BYTES)
+        if isinstance(body, JSONResponse):
+            return body
+        given = body.get("code")
+        if not isinstance(given, str):
+            return _error(400, "bad_request", 'The body is { "code" }, and a code is text.')
+        code = access.code(given)
+        if code is None:
+            if code_limit.wrong(client):
+                # The address, and never what it sent.
+                logger.warning(
+                    "wrong access codes from %s: its codes wait %d minutes",
+                    client or "an unknown address",
+                    LOCK_SECONDS // 60,
+                )
+            return _error(403, "wrong_code", "That is not one of this segl's access codes.")
+        code_limit.right(client)
+        issued, until = access.issue(code)
+        # Each answer is a pass of its own, so no cache may keep one.
+        return JSONResponse(
+            {"pass": issued, "expiresAt": _expires_at(until)},
+            headers={"Cache-Control": "no-store"},
+        )
 
     # The slot routes are plain functions, which FastAPI runs in worker
     # threads, so a slow disk does not hold up the event loop.
@@ -348,8 +434,8 @@ def create_app(settings: Settings, repository: Repository) -> FastAPI:
         number = _slot_number(n)
         if request.method == "GET":
             return JSONResponse(_slot_json(await run_in_threadpool(repository.get_slot, number)))
-        if not may_edit(settings.edit_token, request.headers.get("x-segl-edit-token")):
-            return _error(403, "view_only", "Editing needs the edit token.")
+        if not may_edit(request):
+            return _error(403, "view_only", NEEDS_CODE)
         body = await _json_object(request, _TITLE_BODY_BYTES)
         if isinstance(body, JSONResponse):
             return body
@@ -399,8 +485,8 @@ def create_app(settings: Settings, repository: Repository) -> FastAPI:
     @app.post("/api/v1/slots/{n}/restore")
     async def restore(n: str, request: Request) -> JSONResponse:
         number = _slot_number(n)
-        if not may_edit(settings.edit_token, request.headers.get("x-segl-edit-token")):
-            return _error(403, "view_only", "Editing needs the edit token.")
+        if not may_edit(request):
+            return _error(403, "view_only", NEEDS_CODE)
         body = await _json_object(request, _RESTORE_BODY_BYTES)
         if isinstance(body, JSONResponse):
             return body
@@ -428,8 +514,8 @@ def create_app(settings: Settings, repository: Repository) -> FastAPI:
     @app.post("/api/v1/slots/{n}/import")
     async def import_document(n: str, request: Request) -> JSONResponse:
         number = _slot_number(n)
-        if not may_edit(settings.edit_token, request.headers.get("x-segl-edit-token")):
-            return _error(403, "view_only", "Editing needs the edit token.")
+        if not may_edit(request):
+            return _error(403, "view_only", NEEDS_CODE)
         # The file as the editor exported it, with the files of its images inside.
         body = await _body(request, settings.max_scene_bytes)
         if isinstance(body, JSONResponse):
@@ -466,8 +552,8 @@ def create_app(settings: Settings, repository: Repository) -> FastAPI:
     @app.post("/api/v1/slots/{n}/assets")
     async def upload(n: str, request: Request) -> JSONResponse:
         _slot_number(n)
-        if not may_edit(settings.edit_token, request.headers.get("x-segl-edit-token")):
-            return _error(403, "view_only", "Editing needs the edit token.")
+        if not may_edit(request):
+            return _error(403, "view_only", NEEDS_CODE)
         media_type = request.headers.get("content-type", "").partition(";")[0].strip().lower()
         if media_type not in MEDIA_TYPES:
             return _error(
@@ -494,7 +580,7 @@ def create_app(settings: Settings, repository: Repository) -> FastAPI:
 
     @app.post("/api/v1/display-name")
     def display_name(request: Request) -> JSONResponse:
-        # No edit token: a viewer has a name too. The address is the one
+        # No pass: a viewer has a name too. The address is the one
         # uvicorn settled on, which is X-Forwarded-For only when the connection
         # came from a trusted proxy (docs/SECURITY.md).
         client = request.client.host if request.client else ""
@@ -512,7 +598,7 @@ def create_app(settings: Settings, repository: Repository) -> FastAPI:
 
     @app.websocket("/collab")
     async def collab(websocket: WebSocket) -> None:
-        await serve(websocket, rooms, settings)
+        await serve(websocket, rooms, access)
 
     if web_build is not None:
         _add_web_routes(app, web_build, settings.edit_required)

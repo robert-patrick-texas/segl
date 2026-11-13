@@ -31,7 +31,7 @@ import {
 	sceneDocument,
 	SLOTS,
 	test,
-	tokenKey
+	passKey
 } from './pages.ts';
 
 const VERSION = readProjectVersion(new URL('../../versions.toml', import.meta.url));
@@ -76,13 +76,14 @@ test('the notice says the workspace is shared', async ({ page }) => {
 	);
 });
 
-test('without an edit token every browser edits, and an edit link changes only the address', async ({
+test('without access codes every browser edits, and the bar offers no access page', async ({
 	page,
 	person,
 	baseURL
 }) => {
-	// The last sentence of T-008: with the token empty, both clients can edit.
-	// One of the two comes by a link that carries a token, as an old link would.
+	// The last sentence of T-008: with no codes, both clients can edit.
+	// One of the two comes by an address that ends in `#e=`, as an edit link
+	// of an earlier build did. It is an address like any other.
 	const slot = SLOTS.tools;
 	const row = ['direct', 'root', 'board'].indexOf(test.info().project.name);
 	const other = await person('Bea');
@@ -92,23 +93,48 @@ test('without an edit token every browser edits, and an edit link changes only t
 	await expectLive(page);
 	await joinSlot(other, slot);
 
-	// The fragment goes, here as on a segl that has a token.
-	await expect(page).toHaveURL(new URL(`s/${slot}`, baseURL).href);
 	for (const browser of [page, other]) {
 		await expect(browser.getByRole('note')).toHaveAttribute('data-editing', 'open');
 		await expect(browser.getByRole('note')).toHaveText(
 			'Shared workspace. Anyone who can open this page can see it and edit it.'
 		);
+		await expect(browser.getByRole('link', { name: 'Enter access code' })).toHaveCount(0);
 	}
 	const mine = await drawRectangle(page, -330, 120 + row * 70);
 	await expect.poll(() => elementIds(other)).toContain(mine);
 	const theirs = await drawRectangle(other, -210, 120 + row * 70);
 	await expect.poll(() => elementIds(page)).toContain(theirs);
-	// This segl lets every hello edit, so the link's token counts as taken and
-	// is kept (docs/SECURITY.md). It opens nothing: there is nothing to open.
-	expect(await page.evaluate((key) => localStorage.getItem(key), tokenKey(baseURL))).toBe(
-		'an-old-token'
+	// Nothing read the fragment: it is where it was, and nothing was stored.
+	expect(await page.evaluate(() => location.hash)).toBe('#e=an-old-token');
+	expect(await page.evaluate((key) => localStorage.getItem(key), passKey(baseURL))).toBeNull();
+});
+
+test('the access page of a segl without codes says that everyone can edit', async ({
+	page,
+	baseURL
+}) => {
+	const asked: string[] = [];
+	page.on('request', (request) => {
+		if (request.method() === 'POST') asked.push(request.url());
+	});
+
+	await page.goto('access');
+
+	await expect(page).toHaveURL(new URL('access', baseURL).href);
+	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Access code');
+	await expect(page.getByRole('status')).toHaveText(
+		'This segl asks for no access code. Everyone can edit.'
 	);
+	// Nothing to enter, and nothing was asked of the server.
+	await expect(page.getByRole('textbox')).toHaveCount(0);
+	expect(asked).toEqual([]);
+	expect(await page.evaluate((key) => localStorage.getItem(key), passKey(baseURL))).toBeNull();
+
+	// The way back is there, and the slot is open.
+	await page.getByRole('link', { name: 'Back to slot 1' }).click();
+	await expect(page).toHaveURL(new URL('s/1', baseURL).href);
+	await expectEditor(page);
+	await expect(page.getByRole('note')).toHaveAttribute('data-editing', 'open');
 });
 
 test('a slot nobody has drawn on loads empty', async ({ page }) => {

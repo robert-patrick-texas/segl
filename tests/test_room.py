@@ -29,7 +29,6 @@ from segl.room import (
     Hello,
     Room,
     encode,
-    may_edit,
     named_files,
     parse_files,
     parse_hello,
@@ -484,7 +483,7 @@ def test_a_stored_scene_without_an_element_list_is_an_empty_room(scene: str) -> 
     assert Room.from_head(1, "Workspace 1", 1, scene).elements == {}
 
 
-def test_hello_gives_the_client_the_label_and_the_token() -> None:
+def test_hello_gives_the_client_the_label_and_the_pass() -> None:
     hello = {"type": "hello", "clientId": "c-1_A", "displayName": " McKinley7 ", "editToken": "t"}
 
     assert parse_hello(hello) == Hello("c-1_A", "McKinley7", "t")
@@ -528,26 +527,6 @@ def test_what_is_not_a_hello_is_not_one(message: object) -> None:
 def test_the_label_in_hello_is_kept_as_written(sent: object, kept: str | None) -> None:
     # Not title-cased: a label from the word file keeps the file's spelling.
     assert stored_name(sent) == kept
-
-
-@pytest.mark.parametrize(
-    ("configured", "given", "allowed"),
-    [
-        ("", None, True),
-        ("", "", True),
-        ("", "anything", True),
-        ("secret", "secret", True),
-        ("secret", None, False),
-        ("secret", "", False),
-        ("secret", "Secret", False),
-        ("secret", "secret ", False),
-        ("secret", "secre", False),
-        ("sécret", "sécret", True),
-        ("sécret", "secret", False),
-    ],
-)
-def test_the_edit_gate(configured: str, given: str | None, allowed: bool) -> None:
-    assert may_edit(configured, given) is allowed
 
 
 # What the saver needs of a room (docs/DATA-MODEL.md, "Flush and revision rules").

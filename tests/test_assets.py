@@ -29,8 +29,11 @@ from fastapi.testclient import TestClient
 from harness import (
     BOARD_SITE,
     DISPLAY_NAMES_FILE,
+    GATED,
+    PASS_HEADER,
     ROOT_SITE,
     NginxTools,
+    issue_pass,
     make_settings,
     running_mount,
 )
@@ -41,7 +44,8 @@ from segl.app import create_app
 from segl.assets import MEDIA_TYPES, AssetsError, AssetStore, is_hash
 from segl.repository import Repository
 
-TOKEN = "correct-horse-battery"
+# A pass a segl with ``GATED`` takes, issued as the tests are collected.
+PASS = issue_pass()
 # The start of a PNG file, and bytes that are certainly not one.
 PNG = b"\x89PNG\r\n\x1a\n" + bytes(range(256))
 PNG_HASH = hashlib.sha256(PNG).hexdigest()
@@ -68,7 +72,7 @@ def client(repository: Repository, folder: Path) -> Iterator[TestClient]:
 
 @pytest.fixture
 def gated(repository: Repository, folder: Path) -> Iterator[TestClient]:
-    settings = make_settings(assets_dir=folder, edit_token=TOKEN)
+    settings = make_settings(assets_dir=folder, **GATED)
     with TestClient(create_app(settings, repository)) as client:
         yield client
 
@@ -346,23 +350,23 @@ def test_an_upload_for_no_slot_is_refused(client: TestClient, folder: Path, slot
 
 
 def test_with_a_token_an_upload_needs_it(gated: TestClient, folder: Path) -> None:
-    """S-008: asset writes require the token. Reading a file does not."""
-    for headers in ({}, {"X-Segl-Edit-Token": "correct-horse"}, {"X-Segl-Edit-Token": ""}):
+    """S-008: asset writes require a pass. Reading a file does not."""
+    for headers in ({}, {PASS_HEADER: "correct-horse"}, {PASS_HEADER: ""}):
         refused = gated.post(
             "/api/v1/slots/3/assets", content=PNG, headers={"Content-Type": "image/png", **headers}
         )
         assert refused.status_code == 403
-        assert refused.json() == {"error": "view_only", "message": "Editing needs the edit token."}
+        assert refused.json() == {"error": "view_only", "message": "Editing needs an access code."}
     assert not folder.exists()
 
     allowed = gated.post(
         "/api/v1/slots/3/assets",
         content=PNG,
-        headers={"Content-Type": "image/png", "X-Segl-Edit-Token": TOKEN},
+        headers={"Content-Type": "image/png", PASS_HEADER: PASS},
     )
 
     assert allowed.status_code == 200
-    assert TOKEN not in allowed.text
+    assert PASS not in allowed.text
     assert gated.get(f"/api/v1/assets/{PNG_HASH}").content == PNG
 
 
@@ -443,7 +447,7 @@ def test_a_deeper_path_is_not_an_asset(client: TestClient) -> None:
     assert client.get("/api/v1/assets").status_code == 404
 
 
-def test_reading_a_file_needs_no_token(gated: TestClient, store: AssetStore) -> None:
+def test_reading_a_file_needs_no_pass(gated: TestClient, store: AssetStore) -> None:
     store.save(PNG)
 
     assert gated.get(f"/api/v1/assets/{PNG_HASH}").content == PNG

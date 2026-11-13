@@ -17,7 +17,7 @@ from a running ``segl`` process, and through nginx at ``/board/collab``.
 
 ``tests/test_room.py`` covers what a room does with each message. These tests
 cover the socket around it: the handshake, ``hello``, who is told what, the
-edit token, and a title change reaching the room.
+edit gate, and a title change reaching the room.
 """
 
 import asyncio
@@ -32,8 +32,13 @@ import pytest
 from fastapi.testclient import TestClient
 from harness import (
     BOARD_SITE,
+    GATED,
+    GATED_TOML,
+    PASS_HEADER,
     ROOT_SITE,
     NginxTools,
+    assert_no_secrets,
+    issue_pass,
     make_settings,
     next_message,
     running_mount,
@@ -51,7 +56,8 @@ from segl.collab import Rooms, _Outbox, parse_message
 from segl.repository import Repository, Slot
 from segl.room import encode
 
-TOKEN = "correct-horse-battery"
+# A pass a segl with ``GATED`` takes, issued as the tests are collected.
+PASS = issue_pass()
 INVALID_SLOT = {"error": "invalid_slot", "message": "Slots are numbered 1 to 9."}
 
 
@@ -69,8 +75,8 @@ def client(repository: Repository) -> Iterator[TestClient]:
 
 @pytest.fixture
 def gated(repository: Repository) -> Iterator[TestClient]:
-    """A server with an edit token."""
-    with TestClient(create_app(make_settings(edit_token=TOKEN), repository)) as client:
+    """A server that asks for an access code."""
+    with TestClient(create_app(make_settings(**GATED), repository)) as client:
         yield client
 
 
@@ -87,11 +93,11 @@ def received(socket: WebSocketTestSession, seconds: float = 5.0) -> dict[str, An
 
 
 def hello(
-    socket: WebSocketTestSession, name: str | None = "Guest1", token: str = ""
+    socket: WebSocketTestSession, name: str | None = "Guest1", edit_pass: str = ""
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Say hello, and return the welcome and the scene."""
     socket.send_json(
-        {"type": "hello", "clientId": "client-1", "displayName": name, "editToken": token}
+        {"type": "hello", "clientId": "client-1", "displayName": name, "editToken": edit_pass}
     )
     return received(socket), received(socket)
 
@@ -338,13 +344,13 @@ def test_a_long_message_is_parsed_and_applied(client: TestClient) -> None:
 
 
 def test_without_a_token_configured_everyone_edits(client: TestClient) -> None:
-    """T-008: with the token empty, both clients can edit."""
+    """T-008: with no access codes, both clients can edit."""
     with (
         client.websocket_connect("/collab?slot=1") as one,
         client.websocket_connect("/collab?slot=1") as two,
     ):
-        assert hello(one, token="")[0]["viewOnly"] is False
-        assert hello(two, token="anything")[0]["viewOnly"] is False
+        assert hello(one, edit_pass="")[0]["viewOnly"] is False
+        assert hello(two, edit_pass="anything")[0]["viewOnly"] is False
         received(one)
 
         one.send_json({"type": "elements", "epoch": 1, "elements": [element("a", 1)]})
@@ -362,7 +368,7 @@ def test_with_a_token_a_client_without_it_watches_and_cannot_edit(gated: TestCli
         gated.websocket_connect("/collab?slot=4") as viewer,
         gated.websocket_connect("/collab?slot=4") as guesser,
     ):
-        assert hello(editor, "Guest1", TOKEN)[0]["viewOnly"] is False
+        assert hello(editor, "Guest1", PASS)[0]["viewOnly"] is False
         assert hello(viewer, "Staff2")[0]["viewOnly"] is True
         assert hello(guesser, "Guest3", "correct-horse")[0]["viewOnly"] is True
         for _ in range(2):
@@ -379,17 +385,17 @@ def test_with_a_token_a_client_without_it_watches_and_cannot_edit(gated: TestCli
             socket.send_json({"type": "elements", "epoch": 1, "elements": [element("a", 2)]})
             assert received(socket)["error"] == "view_only"
 
-        # It cannot change the title. A client that has the token can.
-        for headers in ({}, {"X-Segl-Edit-Token": "correct-horse"}, {"X-Segl-Edit-Token": ""}):
+        # It cannot change the title. A client that has a pass can.
+        for headers in ({}, {PASS_HEADER: "correct-horse"}, {PASS_HEADER: ""}):
             refused = gated.patch("/api/v1/slots/4", json={"title": "Mine"}, headers=headers)
             assert refused.status_code == 403
             assert refused.json() == {
                 "error": "view_only",
-                "message": "Editing needs the edit token.",
+                "message": "Editing needs an access code.",
             }
         assert gated.get("/api/v1/slots/4").json()["title"] == "Workspace 4"
         changed = gated.patch(
-            "/api/v1/slots/4", json={"title": "Core"}, headers={"X-Segl-Edit-Token": TOKEN}
+            "/api/v1/slots/4", json={"title": "Core"}, headers={PASS_HEADER: PASS}
         )
         assert changed.status_code == 200
 
@@ -410,9 +416,9 @@ def test_the_token_is_never_sent_to_a_socket(gated: TestClient) -> None:
         gated.websocket_connect("/collab?slot=1") as editor,
         gated.websocket_connect("/collab?slot=1") as viewer,
     ):
-        sent = [*hello(editor, "Guest1", TOKEN), *hello(viewer, "Staff2"), received(editor)]
+        sent = [*hello(editor, "Guest1", PASS), *hello(viewer, "Staff2"), received(editor)]
 
-    assert TOKEN not in json.dumps(sent)
+    assert PASS not in json.dumps(sent)
 
 
 def test_a_title_change_is_stored_and_sent_to_the_slots_room(client: TestClient) -> None:
@@ -538,10 +544,10 @@ def test_slots_still_have_no_create_or_delete_route(client: TestClient) -> None:
 
 
 def test_no_response_of_a_title_change_sets_a_cookie(gated: TestClient) -> None:
-    for headers in ({}, {"X-Segl-Edit-Token": TOKEN}):
+    for headers in ({}, {PASS_HEADER: PASS}):
         response = gated.patch("/api/v1/slots/1", json={"title": "Core"}, headers=headers)
         assert "set-cookie" not in response.headers
-        assert TOKEN not in response.text
+        assert PASS not in response.text
 
 
 def test_the_last_title_stored_is_the_last_one_sent(
@@ -752,10 +758,10 @@ def test_a_running_server_takes_a_message_up_to_max_scene_bytes_and_no_larger(
 
 
 def test_with_a_token_a_running_server_gates_the_scene_and_the_title(tmp_path: Path) -> None:
-    """T-008 from a running process, with the token in the TOML file."""
-    with running_segl(tmp_path, f'edit_token = "{TOKEN}"\n') as server:
+    """T-008 from a running process, with the codes in the TOML file."""
+    with running_segl(tmp_path, GATED_TOML) as server:
         with server.socket("/collab?slot=2") as editor, server.socket("/collab?slot=2") as viewer:
-            assert say_hello(editor, "Guest1", token=TOKEN)[0]["viewOnly"] is False
+            assert say_hello(editor, "Guest1", edit_pass=PASS)[0]["viewOnly"] is False
             assert say_hello(viewer, "Staff2")[0]["viewOnly"] is True
             next_message(editor)
 
@@ -765,14 +771,13 @@ def test_with_a_token_a_running_server_gates_the_scene_and_the_title(tmp_path: P
             assert next_message(viewer)["elements"] == [element("b", 1)]
 
             assert server.patch("/api/v1/slots/2", {"title": "No"}).json()["error"] == "view_only"
-            allowed = server.patch(
-                "/api/v1/slots/2", {"title": "Yes"}, {"X-Segl-Edit-Token": TOKEN}
-            )
+            allowed = server.patch("/api/v1/slots/2", {"title": "Yes"}, {PASS_HEADER: PASS})
             assert allowed.json()["title"] == "Yes"
             # The editor heard the title and never the viewer's element.
             assert next_message(editor) == {"type": "slot", "slot": 2, "title": "Yes"}
-        # The token is in no log line.
-        assert TOKEN not in server.log()
+        # The pass is in no log line, and neither is a code or the secret.
+        assert PASS not in server.log()
+        assert_no_secrets(server.log())
 
 
 # Through nginx, with the files in deploy/nginx/: the WebSocket half of T-013.

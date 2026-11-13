@@ -19,7 +19,7 @@ import {
 	dropGoesTo,
 	exportName,
 	goesToImport,
-	IMPORT_NEEDS_TOKEN,
+	IMPORT_NEEDS_CODE,
 	importProblem,
 	nameHeader
 } from './importing.ts';
@@ -135,8 +135,8 @@ class Refused extends Error {
 
 describe('an import that failed', () => {
 	test('a refusal is put in words by its code', () => {
-		expect(importProblem(new Refused('view_only', 'Editing needs the edit token.'))).toBe(
-			IMPORT_NEEDS_TOKEN
+		expect(importProblem(new Refused('view_only', 'Editing needs an access code.'))).toBe(
+			IMPORT_NEEDS_CODE
 		);
 		expect(importProblem(new Refused('payload_too_large', 'The body is larger.'))).toBe(
 			'That file is larger than this segl takes.'
@@ -169,7 +169,7 @@ const CONFIG: AppConfig = {
 	basePath: '/board/',
 	editRequired: false
 };
-const TOKEN = 'correct-horse-battery';
+const PASS = '1800000000.q0h3JYzXb1cR5tUv7wA9-_Bd';
 const EXPORTED = '{\n  "type": "excalidraw",\n  "elements": []\n}';
 
 interface Call {
@@ -220,14 +220,14 @@ describe('the import call', () => {
 		]);
 	});
 
-	test('the edit token goes in its header, and never in the URL', async () => {
+	test('the pass goes in its header, and never in the URL', async () => {
 		const calls = serve(200, { revision: 1, epoch: 2 });
 
-		await importScene(CONFIG, 7, new Blob([EXPORTED]), 'Guest1', TOKEN);
+		await importScene(CONFIG, 7, new Blob([EXPORTED]), 'Guest1', PASS);
 
-		expect(calls[0]!.headers['X-Segl-Edit-Token']).toBe(TOKEN);
-		expect(calls[0]!.url).not.toContain(TOKEN);
-		expect(calls[0]!.body).not.toContain(TOKEN);
+		expect(calls[0]!.headers['X-Segl-Edit-Token']).toBe(PASS);
+		expect(calls[0]!.url).not.toContain(PASS);
+		expect(calls[0]!.body).not.toContain(PASS);
 	});
 
 	test('a browser without a name sends no name header', async () => {
@@ -239,7 +239,7 @@ describe('the import call', () => {
 	});
 
 	test.each([
-		[403, 'view_only', IMPORT_NEEDS_TOKEN],
+		[403, 'view_only', IMPORT_NEEDS_CODE],
 		[413, 'payload_too_large', 'That file is larger than this segl takes.'],
 		[422, 'invalid_document', 'That is not an Excalidraw file.'],
 		[400, 'bad_request', 'That is not an Excalidraw file.']

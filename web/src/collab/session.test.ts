@@ -172,8 +172,6 @@ interface Harness {
 	transport: FakeTransport;
 	sockets: FakeSocket[];
 	states: SessionState[];
-	/** What the session reported at each `welcome`: the token said, and the answer. */
-	gates: [string, boolean][];
 	hello: Hello;
 	/** The newest socket. */
 	socket(): FakeSocket;
@@ -185,7 +183,6 @@ function start(epoch = 1, files: FileRef[] = []): Harness {
 	const transport = new FakeTransport();
 	const sockets: FakeSocket[] = [];
 	const states: SessionState[] = [];
-	const gates: [string, boolean][] = [];
 	const hello: Hello = { clientId: 'client-1', displayName: 'Guest1', editToken: '' };
 	const session = new CollabSession({
 		url: URL,
@@ -195,7 +192,6 @@ function start(epoch = 1, files: FileRef[] = []): Harness {
 		files,
 		hello: () => ({ ...hello }),
 		onState: (state) => states.push(state),
-		onGate: (editToken, viewOnly) => gates.push([editToken, viewOnly]),
 		createSocket: (url) => {
 			const socket = new FakeSocket(url);
 			sockets.push(socket);
@@ -209,7 +205,6 @@ function start(epoch = 1, files: FileRef[] = []): Harness {
 		transport,
 		sockets,
 		states,
-		gates,
 		hello,
 		socket: () => sockets[sockets.length - 1]!,
 		state: () => states[states.length - 1] ?? INITIAL_STATE
@@ -267,7 +262,7 @@ describe('joining', () => {
 		]);
 	});
 
-	test('hello carries the label and the token of the moment the socket opens', () => {
+	test('hello carries the label and the pass of the moment the socket opens', () => {
 		const harness = start();
 		harness.hello.displayName = 'McKinley7';
 		harness.hello.editToken = 'correct-horse';
@@ -425,7 +420,7 @@ describe('editing', () => {
 		const harness = start();
 		const socket = goLive(harness);
 
-		socket.receive({ type: 'error', error: 'view_only', message: 'Editing needs the edit token.' });
+		socket.receive({ type: 'error', error: 'view_only', message: 'Editing needs an access code.' });
 		harness.editor.draw(element('a', 1));
 		harness.session.localChange();
 		vi.advanceTimersByTime(1000);
@@ -884,110 +879,102 @@ describe("this browser's name", () => {
 });
 
 describe('the edit gate', () => {
-	test('welcome is the answer for the token its hello carried', () => {
+	const PASS = '1800000000.q0h3JYzXb1cR5tUv7wA9-_Bd';
+
+	test('hello carries the pass, under the name the wire has for it', () => {
 		const harness = start();
-		harness.hello.editToken = 'correct-horse';
+		harness.hello.editToken = PASS;
+
 		harness.socket().open();
-		expect(harness.gates).toEqual([]);
+
+		expect(harness.socket().sent).toEqual([
+			{ type: 'hello', clientId: 'client-1', displayName: 'Guest1', editToken: PASS }
+		]);
+	});
+
+	test('welcome says whether this connection may edit', () => {
+		const harness = start();
+		harness.hello.editToken = PASS;
+		harness.socket().open();
+		// Not known until the server has said.
+		expect(harness.state().viewOnly).toBeNull();
 
 		welcome(harness.socket(), { viewOnly: false });
 
-		expect(harness.gates).toEqual([['correct-horse', false]]);
+		expect(harness.state().viewOnly).toBe(false);
 	});
 
-	test('a browser without a token is answered too', () => {
+	test('a browser without a pass is told that it may not', () => {
 		const harness = start();
 
 		goLive(harness, [], true);
 
-		expect(harness.gates).toEqual([['', true]]);
-	});
-
-	test('the answer names the token that was sent, not the one of the moment it arrives', () => {
-		const harness = start();
-		harness.hello.editToken = 'from-a-link';
-		harness.socket().open();
-		// The page moved on to another token, and has not said hello with it.
-		harness.hello.editToken = 'stored';
-
-		welcome(harness.socket(), { viewOnly: true });
-
-		expect(harness.gates).toEqual([['from-a-link', true]]);
+		expect(harness.state().viewOnly).toBe(true);
 	});
 
 	test('after a new hello, the state still holds the last answer until welcome', () => {
-		// Which is why the page is told the token with each answer.
 		const harness = start();
-		harness.hello.editToken = 'stored';
-		goLive(harness);
-		harness.hello.editToken = 'from-a-link';
+		goLive(harness, [], true);
+		// The access page stored a pass, and the page says hello with it.
+		harness.hello.editToken = PASS;
 
 		harness.session.reconnect();
 		harness.socket().open();
 
-		expect(harness.state().viewOnly).toBe(false);
-		expect(harness.gates).toEqual([['stored', false]]);
-
-		welcome(harness.socket(), { viewOnly: true });
-
+		expect(harness.socket().sent[0]).toMatchObject({ type: 'hello', editToken: PASS });
 		expect(harness.state().viewOnly).toBe(true);
-		expect(harness.gates).toEqual([
-			['stored', false],
-			['from-a-link', true]
-		]);
+
+		welcome(harness.socket(), { viewOnly: false });
+
+		expect(harness.state().viewOnly).toBe(false);
 	});
 
 	test('a welcome on a socket that was let go is no answer', () => {
 		const harness = start();
-		harness.hello.editToken = 'stored';
 		const first = harness.socket();
 		first.open();
-		harness.hello.editToken = 'from-a-link';
+		harness.hello.editToken = PASS;
 		harness.session.reconnect();
 
-		welcome(first, { viewOnly: false });
+		welcome(first, { viewOnly: true });
 
-		expect(harness.gates).toEqual([]);
+		expect(harness.state().viewOnly).toBeNull();
 		harness.socket().open();
-		welcome(harness.socket(), { viewOnly: true });
-		expect(harness.gates).toEqual([['from-a-link', true]]);
+		welcome(harness.socket(), { viewOnly: false });
+		expect(harness.state().viewOnly).toBe(false);
 	});
 
 	test('every welcome is an answer: after a drop the server is asked again', () => {
 		const harness = start();
-		harness.hello.editToken = 'correct-horse';
+		harness.hello.editToken = PASS;
 		goLive(harness).drop();
 		vi.advanceTimersByTime(RETRY_DELAYS_MS[0]!);
 
-		// The token was changed on the server meanwhile.
+		// The pass ended meanwhile, or the site ended it.
 		goLive(harness, [], true);
 
-		expect(harness.gates).toEqual([
-			['correct-horse', false],
-			['correct-horse', true]
-		]);
+		expect(harness.state().viewOnly).toBe(true);
 	});
 
-	test('a session nobody listens to for the answer works as before', () => {
-		const editor = new FakeEditor();
-		const sockets: FakeSocket[] = [];
-		const session = new CollabSession({
-			url: URL,
-			epoch: 1,
-			editor,
-			transport: new FakeTransport(),
-			hello: () => ({ clientId: 'client-1', displayName: null, editToken: '' }),
-			onState: () => undefined,
-			createSocket: (url) => {
-				const socket = new FakeSocket(url);
-				sockets.push(socket);
-				return socket;
-			}
-		});
-		session.start();
-		sockets[0]!.open();
+	test('a pass that ends while the socket is open: the server says so, and the page stops editing', () => {
+		const harness = start();
+		harness.hello.editToken = PASS;
+		const socket = goLive(harness);
+		expect(harness.state().viewOnly).toBe(false);
+		harness.editor.draw(element('a', 1));
+		harness.session.localChange();
+		const sent = socket.sent.length;
 
-		expect(() => welcome(sockets[0]!)).not.toThrow();
+		socket.receive({ type: 'error', error: 'view_only', message: 'Editing needs an access code.' });
+
+		expect(harness.state().viewOnly).toBe(true);
+		// Nothing more is sent for the canvas: the server would refuse it.
+		harness.editor.draw(element('b', 1));
+		harness.session.localChange();
+		vi.advanceTimersByTime(5000);
+		expect(socket.sent.slice(sent).filter((message) => message.type === 'elements')).toEqual([]);
+		// And a viewer is never saving.
+		expect(harness.state().status).toBe('live');
 	});
 });
 
@@ -1263,7 +1250,7 @@ describe('saving', () => {
 		vi.advanceTimersByTime(SEND_INTERVAL_MS);
 		expect(harness.state().status).toBe('saving');
 
-		socket.receive({ type: 'error', error: 'view_only', message: 'Editing needs the token.' });
+		socket.receive({ type: 'error', error: 'view_only', message: 'Editing needs an access code.' });
 
 		expect(harness.state()).toMatchObject({ status: 'live', viewOnly: true });
 	});

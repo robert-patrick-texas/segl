@@ -25,12 +25,13 @@
  * loopback port, so the browser needs no name for it. Build first:
  * `npm run build`.
  *
- * Two specs are apart, and the three projects above leave them out.
- * `e2e/durability.spec.ts` is the `restart` project. Its tests kill the server
- * and start it again, so each runs a segl of its own, on the next port.
- * `e2e/token.spec.ts` is the three `token-` projects (docs/TEST-PLAN.md T-008):
- * a second segl, started here with an `edit_token`, directly and behind an
- * nginx of its own at a host root and at `/board/`.
+ * Three specs are apart, and the three projects above leave them out.
+ * `e2e/durability.spec.ts` and `e2e/expiry.spec.ts` are the `restart` project.
+ * Each of their tests runs a segl of its own, on the next port: one kills the
+ * server and starts it again, and the other needs passes that last seconds.
+ * `e2e/access.spec.ts` is the three `access-` projects (docs/TEST-PLAN.md
+ * T-008 and T-019): a second segl, started here with `access_codes`, directly
+ * and behind an nginx of its own at a host root and at `/board/`.
  *
  * Set `PW_WS_ENDPOINT` to use a browser running elsewhere, such as the
  * Playwright container on a host without Chromium's system libraries. The
@@ -40,19 +41,20 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { defineConfig, devices } from '@playwright/test';
-import { EDIT_TOKEN, PORTS, SITES } from './e2e/sites.ts';
+import { ACCESS_CODE, ACCESS_SECRET, PORTS, SITES } from './e2e/sites.ts';
 
-const RESTART_SPEC = 'durability.spec.ts';
-const TOKEN_SPEC = 'token.spec.ts';
-/** The specs with servers of their own. */
-const APART = [RESTART_SPEC, TOKEN_SPEC];
+/** The specs whose tests each start a segl of their own. */
+const OWN_SERVER_SPECS = ['durability.spec.ts', 'expiry.spec.ts'];
+const ACCESS_SPEC = 'access.spec.ts';
+/** The specs the three open projects leave out. */
+const APART = [...OWN_SERVER_SPECS, ACCESS_SPEC];
 const ws = process.env['PW_WS_ENDPOINT'];
 
 // The servers' data goes to a fresh folder, never to var/.
 const WORK = join(tmpdir(), `segl-e2e-${PORTS.direct}`);
-const TOKEN_WORK = join(WORK, 'token');
+const ACCESS_WORK = join(WORK, 'access');
 const CONFIG = join(WORK, 'segl.toml');
-const TOKEN_CONFIG = join(TOKEN_WORK, 'segl.toml');
+const ACCESS_CONFIG = join(ACCESS_WORK, 'segl.toml');
 
 /** Write the TOML of a test server that keeps everything in `folder`. */
 function writeConfig(folder: string, port: number, more: string[] = []): void {
@@ -77,7 +79,10 @@ function writeConfig(folder: string, port: number, more: string[] = []): void {
 if (process.env['TEST_WORKER_INDEX'] === undefined) {
 	rmSync(WORK, { recursive: true, force: true });
 	writeConfig(WORK, PORTS.direct);
-	writeConfig(TOKEN_WORK, PORTS.token, [`edit_token = ${JSON.stringify(EDIT_TOKEN)}`]);
+	writeConfig(ACCESS_WORK, PORTS.access, [
+		`access_codes = [${JSON.stringify(ACCESS_CODE)}]`,
+		`access_secret = ${JSON.stringify(ACCESS_SECRET)}`
+	]);
 }
 
 /** `uv run segl` over one of the two TOML files. */
@@ -137,25 +142,25 @@ export default defineConfig({
 		})),
 		{
 			name: 'restart',
-			testMatch: RESTART_SPEC,
+			testMatch: OWN_SERVER_SPECS,
 			use: { ...desktop, baseURL: SITES.restart }
 		},
-		...(['token-direct', 'token-root', 'token-board'] as const).map((name) => ({
+		...(['access-direct', 'access-root', 'access-board'] as const).map((name) => ({
 			name,
-			testMatch: TOKEN_SPEC,
+			testMatch: ACCESS_SPEC,
 			use: { ...desktop, baseURL: SITES[name] }
 		}))
 	],
 	webServer: [
 		seglServer('segl', CONFIG, PORTS.direct),
 		nginxServer('nginx', join(WORK, 'proxy'), PORTS.direct, PORTS.board, PORTS.root),
-		seglServer('segl-token', TOKEN_CONFIG, PORTS.token),
+		seglServer('segl-access', ACCESS_CONFIG, PORTS.access),
 		nginxServer(
-			'nginx-token',
-			join(TOKEN_WORK, 'proxy'),
-			PORTS.token,
-			PORTS.tokenBoard,
-			PORTS.tokenRoot
+			'nginx-access',
+			join(ACCESS_WORK, 'proxy'),
+			PORTS.access,
+			PORTS.accessBoard,
+			PORTS.accessRoot
 		)
 	]
 });

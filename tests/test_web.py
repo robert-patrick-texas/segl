@@ -26,7 +26,14 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from harness import DISPLAY_NAMES_FILE, ROOT, make_settings, running_segl
+from harness import (
+    DISPLAY_NAMES_FILE,
+    GATED,
+    ROOT,
+    assert_no_secrets,
+    make_settings,
+    running_segl,
+)
 
 from segl import cli
 from segl.app import create_app
@@ -119,7 +126,15 @@ def test_the_config_script_cannot_be_ended_from_inside() -> None:
 
 @pytest.mark.parametrize(
     ("path", "root"),
-    [("/", "./"), ("/s", "./"), ("/s/", "../"), ("/s/1", "../"), ("/s/9", "../")],
+    [
+        ("/", "./"),
+        ("/s", "./"),
+        # The access page is at segl's root, as `/` is.
+        ("/access", "./"),
+        ("/s/", "../"),
+        ("/s/1", "../"),
+        ("/s/9", "../"),
+    ],
 )
 def test_a_page_knows_the_way_to_segls_root(client: TestClient, path: str, root: str) -> None:
     reply = client.get(path)
@@ -130,7 +145,7 @@ def test_a_page_knows_the_way_to_segls_root(client: TestClient, path: str, root:
     assert all(url.startswith(root) for url in URLS.findall(reply.text))
 
 
-@pytest.mark.parametrize("path", ["/", "/s/1"])
+@pytest.mark.parametrize("path", ["/", "/s/1", "/access"])
 def test_no_url_in_a_page_starts_at_the_host_root(client: TestClient, path: str) -> None:
     """One build serves every mount point: nothing names a path from ``/`` (D2-007)."""
     urls = URLS.findall(client.get(path).text)
@@ -148,26 +163,31 @@ def test_a_slot_that_does_not_exist_still_gets_the_page(client: TestClient, path
     assert injected(reply.text)["root"] == "../"
 
 
-@pytest.mark.parametrize("path", ["/s/1/", "/s/1/history", "/t/1", "/index.html", "/board/s/1"])
+@pytest.mark.parametrize(
+    "path",
+    ["/s/1/", "/s/1/history", "/t/1", "/index.html", "/board/s/1", "/access/", "/access/1"],
+)
 def test_other_paths_are_not_pages(client: TestClient, path: str) -> None:
     reply = client.get(path)
 
     assert (reply.status_code, reply.json()["error"]) == (404, "not_found")
 
 
-def test_the_page_says_a_token_is_needed_and_does_not_hold_it(
+def test_the_page_says_a_code_is_needed_and_holds_none(
     repository: Repository, web_dir: Path
 ) -> None:
-    settings = make_settings(web_dir=web_dir, edit_token="correct-horse")
+    settings = make_settings(web_dir=web_dir, **GATED)
     client = TestClient(create_app(settings, repository))
 
-    for path in ("/", "/s/1"):
+    for path in ("/", "/s/1", "/access"):
         page = client.get(path).text
         assert injected(page)["editRequired"] is True
-        assert "correct-horse" not in page
+        assert_no_secrets(page, path)
 
 
-@pytest.mark.parametrize("path", ["/", "/s/1", "/favicon.svg", "/assets/index-Dw_CZwxO.js"])
+@pytest.mark.parametrize(
+    "path", ["/", "/s/1", "/access", "/favicon.svg", "/assets/index-Dw_CZwxO.js"]
+)
 def test_the_web_application_sets_no_cookie(client: TestClient, path: str) -> None:
     assert "set-cookie" not in client.get(path).headers
 
@@ -208,7 +228,7 @@ def test_a_file_the_build_lacks_is_an_error_in_the_api_shape(client: TestClient,
 def test_a_build_cannot_reach_outside_its_folder(
     repository: Repository, web_dir: Path, tmp_path: Path
 ) -> None:
-    (tmp_path / "secret.toml").write_text('edit_token = "correct-horse"\n', encoding="utf-8")
+    (tmp_path / "secret.toml").write_text('access_secret = "correct-horse"\n', encoding="utf-8")
     (web_dir / "assets" / "link.toml").symlink_to(tmp_path / "secret.toml")
     (web_dir / "linked").symlink_to(tmp_path)
     client = TestClient(create_app(make_settings(web_dir=web_dir), repository))
@@ -250,7 +270,7 @@ def test_a_folder_without_a_build_serves_the_api_alone(
     client = TestClient(create_app(make_settings(web_dir=tmp_path / "absent"), repository))
 
     assert client.get("/api/v1/health").json() == {"status": "ok"}
-    for path in ("/", "/s/1", "/assets/index.js"):
+    for path in ("/", "/s/1", "/access", "/assets/index.js"):
         reply = client.get(path)
         assert (reply.status_code, reply.json()["error"]) == (404, "not_found")
 

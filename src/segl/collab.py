@@ -37,12 +37,13 @@ from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from segl.access import Access
 from segl.assets import AssetStore
 from segl.config import Settings
 from segl.origin import refuse_websocket
 from segl.reconcile import Element
 from segl.repository import SLOT_NUMBERS, Replacement, Repository, Slot
-from segl.room import Connection, FileEntry, Room, encode, may_edit, parse_files, parse_hello
+from segl.room import Connection, FileEntry, Room, encode, parse_files, parse_hello
 from segl.saver import Saver
 
 # How long a new connection has to say hello.
@@ -281,8 +282,12 @@ async def _receive(
         room.receive(connection, message, await _uploaded(assets, message))
 
 
-async def serve(websocket: WebSocket, rooms: Rooms, settings: Settings) -> None:
-    """Run one ``/collab`` connection from its handshake to its end."""
+async def serve(websocket: WebSocket, rooms: Rooms, access: Access) -> None:
+    """Run one ``/collab`` connection from its handshake to its end.
+
+    ``access`` reads the pass in ``hello``, once: it settles whether the
+    connection may edit, and until when (D2-027, D2-033).
+    """
     slot = _SLOT_TEXTS.get(websocket.query_params.get("slot", ""))
     if slot is None:
         refusal: dict[str, Any] = {"error": "invalid_slot", "message": "Slots are numbered 1 to 9."}
@@ -310,8 +315,13 @@ async def serve(websocket: WebSocket, rooms: Rooms, settings: Settings) -> None:
         return
 
     outbox = _Outbox()
+    admission = access.admit(hello.edit_pass)
     connection = Connection(
-        outbox.put, hello, view_only=not may_edit(settings.edit_token, hello.edit_token)
+        outbox.put,
+        hello,
+        view_only=not admission.may_edit,
+        edit_until=admission.until,
+        clock=access.clock,
     )
     room.join(connection)
     # Two tasks, so that a browser that stops reading does not stop segl

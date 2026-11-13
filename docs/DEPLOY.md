@@ -7,7 +7,11 @@
 ```toml
 bind = "127.0.0.1:8888"
 trusted_proxies = ["127.0.0.1", "::1"]
-edit_token = ""
+internal_networks = []
+access_codes = []
+access_secret = ""
+access_pass_hours = 12
+access_passes_after = ""
 database = "/opt/segl/var/segl.sqlite"
 assets_dir = "/opt/segl/var/assets"
 display_names = "/opt/segl/etc/display-names.txt"
@@ -21,13 +25,13 @@ head_flush_seconds = 0.2
 
 There is no base-path setting. segl serves at its root, and nginx strips the path it mounts segl under (`ARCHITECTURE.md`, mount and navigation).
 
-`trusted_proxies` lists the addresses whose `X-Forwarded-For` and `X-Forwarded-Proto` headers segl believes. An entry is an IP address or a network such as `10.0.0.0/8`. Keep it to the nginx host. An empty list believes nobody. `*` is refused, because it would let any client choose the address segl records for it.
+`trusted_proxies` lists the addresses whose `X-Forwarded-For` and `X-Forwarded-Proto` headers segl believes. An entry is an IP address or a network such as `10.0.0.0/8`. Keep it to the nginx host. An empty list believes nobody. `*` is refused, because it would let any client choose the address segl records for it. That address is what `internal_networks`, the count of wrong access codes, and the display-name limit all go by.
 
 `web_dir` is the folder that holds the built web application: `index.html`, Vite's `assets/`, the editor's `fonts/`, and the favicon. segl reads it once, when it starts, so a new build takes a restart. When the folder has no `index.html`, segl serves the API and no page, and says so on its first line of output. An `index.html` that is not a build of `web/` stops it with exit status 1.
 
 `bind` is `host:port`. Write an IPv6 host in brackets, as in `[::1]:8888`. When the file `--config` names does not exist, segl starts with the defaults above.
 
-segl checks the file when it starts. A key it does not know, such as a misspelled `edit_token` or the removed `base_path`, or a value it cannot use, stops it with exit status 2 and a message that names the key. The message never repeats the token. The sizes and `history_limit` are whole numbers, 1 or more. The two intervals are seconds above 0.
+segl checks the file when it starts. A key it does not know, such as a misspelled `access_codes` or the removed `base_path`, or a value it cannot use, stops it with exit status 2 and a message that names the key. The message never repeats a code or the secret. `edit_token`, the one static token of an earlier build, is such a key now: no release shipped with it, and the message points at `access_codes`. The sizes and `history_limit` are whole numbers, 1 or more. The two intervals are seconds above 0.
 
 `max_scene_bytes` is the most the elements of one slot may come to, as JSON, and also the largest message the collaboration WebSocket takes. A longer message closes that connection, and an edit that would take a slot over is refused (`API.md`, WebSocket). It is the largest file an import takes too. An exported file holds its images as base64 text, a third larger than their bytes, and each image in it may be up to `max_asset_bytes`. The database can hold up to `history_limit` + 1 copies of each slot's scene.
 
@@ -41,23 +45,42 @@ Without `--config`, segl runs with development defaults: the values above, excep
 
 After the settings, segl opens `database`, before it listens. It creates the file, and its folder, when they are missing, applies the migrations the file lacks, and adds the nine slots (`DATA-MODEL.md`). A database it cannot open, or one written by a newer segl, stops it with exit status 1 and one line that names the file.
 
-The example file ships with `edit_token = ""`. Operators who set a token restrict the file to mode `0640`, owner `root`, group `segl`.
+### Access codes
 
-`edit_token` is empty, for none, or 1 to 256 printable ASCII characters, space to `~`, with no space at either end. A browser sends the token in a request header, and a header carries nothing else whole, so any other value stops segl with exit status 2. `openssl rand -base64 24` writes a good one. A changed token takes a restart, and ends every link and every stored copy of the old one.
+The example file ships with `access_codes = []`: anyone who can open a slot can edit it. To limit editing, list one or more codes and set a secret (S-008, D2-033):
 
-To let someone edit, send them a link to a slot, or to segl's root, with the token after `#e=`:
-
-```text
-https://dev.example.com/board/s/1#e=<token>
+```toml
+access_codes = ["maple river 42", "Night shift 1836"]
+access_secret = "<what `openssl rand -base64 32` wrote>"
+access_pass_hours = 12
 ```
 
-Everything after `#e=` is the token. One made of letters, digits, and `+ / = - _`, as `openssl rand -base64` writes it, goes in as it is. Percent-encode any other, a space and a `%` above all:
+Then restrict the file to mode `0640`, owner `root`, group `segl`, and restart segl.
 
-```bash
-python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' '<token>'
+- **A code** is a word or a phrase with at least 8 letters and digits, in ASCII, at most 256 characters as written. A person may type it in any case and with any spaces or punctuation: `Maple River 42`, `maple.river.42`, and `MAPLE-river 42` are one code. So two entries that differ only in that way are one code twice, and segl does not start. Give different groups different codes, and a group's access ends when its code is taken out of the list.
+- **`access_secret`** signs the pass a code buys. It is at least 32 characters, and segl does not start with codes and no secret. It is never shown, logged, or sent. A new secret ends every pass.
+- **`access_pass_hours`** is how long a pass lasts from the moment it was issued, after which the person enters a code again. It may be a fraction, and `0` is no limit. It is read when a pass is checked, so a restart with a shorter value shortens the passes already issued.
+- **`access_passes_after`** is a time with its offset, such as `2026-11-12T15:00:00Z`, and `""` for none. A pass issued before it is refused. To end every pass issued so far while the codes still work, set it to the time now, which `date -u +%Y-%m-%dT%H:%M:%SZ` writes, and restart. A time more than five minutes ahead of the server's clock means that no pass lets a browser edit until then, and segl says so on a line of its output when it starts.
+
+A value segl cannot use stops it with exit status 2: a list entry that is not text, a code that is too short, too long, or has a character outside ASCII, the same code twice, a secret shorter than 32 characters, codes without a secret, hours below 0, or a time without an offset. For a code, the message gives its place in the list, as in `access_codes entry 2 has fewer than 8 letters and digits`.
+
+What people see: a browser without a pass watches live, and its bar says `Editing is locked: it needs an access code.` with a link, `Enter access code`. The link opens the access page, `access` under segl's root, which has one field. A right code sends the person back to the slot as an editor, and the browser keeps the pass for that segl until it ends (`ARCHITECTURE.md`, edit gate). A wrong code is said in words. After five wrong codes in a row from one address, that address waits fifteen minutes, and the page says so. When a pass ends, the bar says `Editing is locked: the access this browser had has ended.` and offers the same link.
+
+This is not a login, and it authenticates nobody. A code is shared by everyone who was given it, and segl does not know who entered it. It keeps honest people on an internal network from changing a board by mistake. Do not rely on it to keep a determined person out (`SECURITY.md`).
+
+### Internal networks
+
+`internal_networks` is empty in the example file: segl answers every address that reaches it. With one or more networks, it answers nobody outside them (S-018):
+
+```toml
+internal_networks = ["10.0.0.0/8", "192.168.4.0/24", "2001:db8::/32"]
 ```
 
-The page takes the token out of the address when it opens, and the browser keeps it for that segl once the server has taken it (`ARCHITECTURE.md`, edit gate). The bar then says `This browser has the edit token and can edit.` A browser without the token says `Editing is locked: it needs the edit token.`, and one whose token segl did not take says so. A browser forgets the token when its stored data for segl's address is cleared. Treat a link as the token itself (`SECURITY.md`).
+An entry is an IPv4 or IPv6 network in CIDR form. One address, such as `203.0.113.9`, is a network of that address alone. An entry with host bits set, such as `10.0.0.1/8`, or one that is not a network at all, stops segl with exit status 2. A client outside the list gets `403` with `outside_network` for every page, every request, and the WebSocket. Loopback is always inside, so the host's own health check keeps working.
+
+segl sees a client's own address only through a proxy it trusts. nginx sends the address in `X-Forwarded-For` (`deploy/nginx/segl-proxy.conf`), and segl believes that header only from an address in `trusted_proxies`. **A proxy that is missing from `trusted_proxies` makes every client look like the proxy.** If the proxy's address is inside `internal_networks`, or is loopback, as nginx on the same host is, then everyone it forwards is answered, whatever their own address. If it is outside, nobody is. With nginx on the same host and the shipped files, the defaults are right. With nginx on another host, list that host in `trusted_proxies`.
+
+A firewall, or the `allow` and `deny` lines in `segl-board.conf`, can do the same job, and are the first place for it. `internal_networks` is a second check behind them.
 
 ## Process layout
 
@@ -111,7 +134,7 @@ What the proxy settings do:
 
 - `proxy_pass http://segl/;` has a trailing slash, which strips `/board`. Under `location /` it changes nothing.
 - `Host $http_host` keeps the port, so segl's Origin check matches a site on a port other than 443.
-- `X-Forwarded-For $remote_addr` replaces any value the client sent. segl believes it only from `trusted_proxies`, so a client cannot choose the address the display-name rate limit counts.
+- `X-Forwarded-For $remote_addr` replaces any value the client sent. segl believes it only from `trusted_proxies`, so a client cannot choose the address that `internal_networks`, the count of wrong access codes, and the display-name limit go by.
 - `Upgrade` and `Connection $segl_connection` carry the WebSocket at `/collab`, and keep the upstream connection alive for everything else.
 - `client_max_body_size 52m` sits above `max_scene_bytes` (50 MiB) and `max_asset_bytes` (10 MiB), so segl's own `payload_too_large` answers first. Raise it if you raise those.
 - `proxy_read_timeout 120s` is well above segl's 20-second WebSocket ping.
@@ -136,4 +159,4 @@ Not part of the MVP. After the gate, L-005 adds an image that runs the same `/op
 
 ## Operator notes to ship in T12
 
-Write `deploy/OPERATOR.md` from this page, covering: install the `.deb`, install the nginx files and add the include line, leave or set `edit_token`, replace `display-names.txt`, and restart the unit. State that slots are shared and that protected inventory is not available on them.
+Write `deploy/OPERATOR.md` from this page, covering: install the `.deb`, install the nginx files and add the include line, leave `access_codes` empty or set codes with `access_secret`, set `internal_networks` where the site wants the second check, replace `display-names.txt`, and restart the unit. Say how to end every pass with `access_passes_after`, and that the access page is not a login. State that slots are shared and that protected inventory is not available on them.

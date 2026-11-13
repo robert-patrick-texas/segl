@@ -114,7 +114,7 @@ export function whenLabel(createdAt: string, now: Date, options: WhenOptions = {
 }
 
 /** What the list says where a viewer would find the restore buttons. */
-export const NEEDS_TOKEN = 'Restoring needs the edit token.';
+export const NEEDS_CODE = 'Restoring needs an access code.';
 
 /** What the list says while this browser is not in the slot's room. */
 export const NEEDS_CONNECTION = 'Restoring waits for the connection.';
@@ -128,7 +128,7 @@ export function restoreProblem(error: unknown): string {
 		typeof error === 'object' && error !== null && 'code' in error
 			? (error as { code: unknown }).code
 			: null;
-	if (code === 'view_only') return NEEDS_TOKEN;
+	if (code === 'view_only') return NEEDS_CODE;
 	// It was the oldest row, and newer ones have pushed it out since the list was read.
 	if (code === 'revision_not_found') return 'That version is no longer kept.';
 	if (error instanceof Error && error.message !== '') return error.message;
