@@ -19,6 +19,8 @@ import {
 	CollabSession,
 	CURSOR_INTERVAL_MS,
 	INITIAL_STATE,
+	LOCK_EARLY_MS,
+	MAX_TIMER_MS,
 	RETRY_DELAYS_MS,
 	SEND_INTERVAL_MS,
 	type Hello,
@@ -216,7 +218,12 @@ const OTHER = { connectionId: 'other', displayName: 'Staff2' };
 
 function welcome(
 	socket: FakeSocket,
-	options: { viewOnly?: boolean; participants?: unknown[]; epoch?: number } = {}
+	options: {
+		viewOnly?: boolean;
+		participants?: unknown[];
+		epoch?: number;
+		editEndsIn?: number | null;
+	} = {}
 ): void {
 	socket.receive({
 		type: 'welcome',
@@ -224,6 +231,7 @@ function welcome(
 		title: 'Workspace 3',
 		epoch: options.epoch ?? 1,
 		viewOnly: options.viewOnly ?? false,
+		editEndsIn: options.editEndsIn ?? null,
 		connectionId: 'me',
 		participants: options.participants ?? [ME]
 	});
@@ -975,6 +983,215 @@ describe('the edit gate', () => {
 		expect(socket.sent.slice(sent).filter((message) => message.type === 'elements')).toEqual([]);
 		// And a viewer is never saving.
 		expect(harness.state().status).toBe('live');
+	});
+});
+
+describe('a pass that is about to end', () => {
+	/** Open the socket and go live as an editor whose pass has `seconds` left. */
+	function liveFor(harness: Harness, seconds: number | null): FakeSocket {
+		const socket = harness.socket();
+		socket.open();
+		welcome(socket, { editEndsIn: seconds });
+		socket.receive({ type: 'scene', epoch: 1, elements: [], files: [] });
+		return socket;
+	}
+
+	test('the page stops taking edits a second before the server would refuse them', () => {
+		expect(LOCK_EARLY_MS).toBe(1000);
+		const harness = start();
+		liveFor(harness, 14.4);
+		expect(harness.state().viewOnly).toBe(false);
+
+		vi.advanceTimersByTime(13_399);
+		expect(harness.state().viewOnly).toBe(false);
+		vi.advanceTimersByTime(1);
+
+		expect(harness.state().viewOnly).toBe(true);
+		// It still watches: the connection is as live as any viewer's.
+		expect(harness.state().status).toBe('live');
+		expect(harness.sockets).toHaveLength(1);
+	});
+
+	test('from then on nothing drawn is sent', () => {
+		const harness = start();
+		const socket = liveFor(harness, 5);
+		vi.advanceTimersByTime(4000);
+		socket.take();
+
+		harness.editor.draw(element('late', 1));
+		harness.session.localChange();
+		vi.advanceTimersByTime(10_000);
+
+		expect(socket.take().filter((message) => message['type'] === 'elements')).toEqual([]);
+		expect(harness.state().status).toBe('live');
+	});
+
+	test('what was drawn and not yet sent goes out first, while the pass still stands', () => {
+		const harness = start();
+		// 1.01 seconds left: the lock is ten milliseconds away.
+		const socket = liveFor(harness, 1.01);
+		socket.take();
+		harness.editor.draw(element('a', 1));
+		harness.session.localChange();
+		// The edit waits for the send interval, which is longer than that.
+		expect(SEND_INTERVAL_MS).toBeGreaterThan(10);
+		expect(socket.take()).toEqual([]);
+
+		vi.advanceTimersByTime(10);
+
+		expect(socket.take()).toEqual([
+			{ type: 'elements', epoch: 1, elements: [element('a', 1)], seq: 1 }
+		]);
+		expect(harness.state().viewOnly).toBe(true);
+		// And it is sent once: the timer it was waiting for sends nothing more.
+		vi.advanceTimersByTime(1000);
+		expect(socket.take()).toEqual([]);
+	});
+
+	test.each([1, 0.4, 0])('with %j seconds left, it stops at once', (seconds) => {
+		const harness = start();
+
+		liveFor(harness, seconds);
+
+		expect(harness.state().viewOnly).toBe(true);
+	});
+
+	test('a pass without an end never stops the page', () => {
+		const harness = start();
+		liveFor(harness, null);
+
+		vi.advanceTimersByTime(40 * 24 * 3600 * 1000);
+
+		expect(harness.state().viewOnly).toBe(false);
+	});
+
+	test('a pass longer than a timer can wait ends when it ends, and not at once', () => {
+		// 1,000 hours is more milliseconds than a browser's timer takes.
+		const seconds = 1000 * 3600;
+		expect(seconds * 1000).toBeGreaterThan(MAX_TIMER_MS);
+		const harness = start();
+		liveFor(harness, seconds);
+
+		vi.advanceTimersByTime(MAX_TIMER_MS + 5);
+		expect(harness.state().viewOnly).toBe(false);
+		vi.advanceTimersByTime(seconds * 1000 - LOCK_EARLY_MS - MAX_TIMER_MS - 6);
+		expect(harness.state().viewOnly).toBe(false);
+		vi.advanceTimersByTime(1);
+
+		expect(harness.state().viewOnly).toBe(true);
+	});
+
+	test('a viewer has nothing that ends, whatever the message says', () => {
+		const harness = start();
+		const socket = harness.socket();
+		socket.open();
+		welcome(socket, { viewOnly: true, editEndsIn: 5 });
+		const states = harness.states.length;
+
+		vi.advanceTimersByTime(60_000);
+
+		expect(harness.state().viewOnly).toBe(true);
+		expect(harness.states).toHaveLength(states);
+	});
+
+	test('the pass ends while the socket is down too', () => {
+		const harness = start();
+		const socket = liveFor(harness, 10);
+		vi.advanceTimersByTime(2000);
+		socket.drop();
+		expect(harness.state().status).toBe('disconnected');
+		// The next socket never opens.
+		vi.advanceTimersByTime(6999);
+		expect(harness.state().viewOnly).toBe(false);
+
+		vi.advanceTimersByTime(1);
+
+		expect(harness.state().viewOnly).toBe(true);
+	});
+
+	test('a new hello is answered with a new length, and the old one is let go', () => {
+		const harness = start();
+		liveFor(harness, 10);
+		vi.advanceTimersByTime(5000);
+
+		// A pass another tab stored: the page says hello again.
+		harness.session.reconnect();
+		// Until the server answers, the old pass's end does not stop the page.
+		vi.advanceTimersByTime(20_000);
+		expect(harness.state().viewOnly).toBe(false);
+		liveFor(harness, 100);
+
+		vi.advanceTimersByTime(98_999);
+		expect(harness.state().viewOnly).toBe(false);
+		vi.advanceTimersByTime(1);
+		expect(harness.state().viewOnly).toBe(true);
+	});
+
+	test('a code entered again is answered with an editor again', () => {
+		const harness = start();
+		liveFor(harness, 3);
+		vi.advanceTimersByTime(2000);
+		expect(harness.state().viewOnly).toBe(true);
+
+		harness.session.reconnect();
+		liveFor(harness, 43_200);
+
+		expect(harness.state().viewOnly).toBe(false);
+		vi.advanceTimersByTime(60_000);
+		expect(harness.state().viewOnly).toBe(false);
+	});
+
+	test('each welcome counts from its own moment', () => {
+		const harness = start();
+		liveFor(harness, 10).drop();
+		vi.advanceTimersByTime(RETRY_DELAYS_MS[0]!);
+		// Half a second on, the same pass has half a second less.
+		liveFor(harness, 9.5);
+
+		vi.advanceTimersByTime(8499);
+		expect(harness.state().viewOnly).toBe(false);
+		vi.advanceTimersByTime(1);
+		expect(harness.state().viewOnly).toBe(true);
+	});
+
+	test('after a drop, a longer pass is not ended by the shorter one before it', () => {
+		const harness = start();
+		liveFor(harness, 5).drop();
+		vi.advanceTimersByTime(RETRY_DELAYS_MS[0]!);
+		// A code was entered in another tab meanwhile: this hello had a new pass.
+		liveFor(harness, 100);
+
+		// Where the first pass would have stopped the page.
+		vi.advanceTimersByTime(10_000);
+		expect(harness.state().viewOnly).toBe(false);
+		vi.advanceTimersByTime(88_999);
+		expect(harness.state().viewOnly).toBe(false);
+		vi.advanceTimersByTime(1);
+		expect(harness.state().viewOnly).toBe(true);
+	});
+
+	test('a session that was stopped does nothing when its pass ends', () => {
+		const harness = start();
+		liveFor(harness, 5);
+		harness.session.stop();
+		const states = harness.states.length;
+
+		vi.advanceTimersByTime(60_000);
+
+		expect(harness.states).toHaveLength(states);
+	});
+
+	test('the server saying so first is the same end', () => {
+		// The page's timer is the early one. The server's refusal still counts.
+		const harness = start();
+		const socket = liveFor(harness, 10);
+
+		socket.receive({ type: 'error', error: 'view_only', message: 'Editing needs an access code.' });
+		expect(harness.state().viewOnly).toBe(true);
+		const states = harness.states.length;
+		vi.advanceTimersByTime(20_000);
+
+		expect(harness.states).toHaveLength(states);
 	});
 });
 

@@ -188,6 +188,19 @@ class Connection:
             self.view_only = self._clock() >= self._edit_until
         return self.view_only
 
+    def edit_ends_in(self) -> float | None:
+        """Return the seconds until this connection's pass ends, to the millisecond.
+
+        None when it does not end: the connection is a viewer, this segl asks
+        for no code, or its passes have no limit. ``welcome`` carries it, so
+        that the page can stop taking edits before the server stops taking
+        them. It is a length and not a time of day, so a browser whose clock
+        is wrong still stops at the right moment.
+        """
+        if self.may_not_edit() or self._edit_until is None:
+            return None
+        return round(max(0.0, self._edit_until - self._clock()), 3)
+
     def send(self, message: dict[str, Any]) -> None:
         self.deliver(encode(message))
 
@@ -388,6 +401,7 @@ class Room:
                 "title": self.title,
                 "epoch": self.epoch,
                 "viewOnly": connection.view_only,
+                "editEndsIn": connection.edit_ends_in(),
                 "connectionId": connection.id,
                 "participants": [other.participant() for other in self.connections.values()],
             }

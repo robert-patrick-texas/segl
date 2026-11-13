@@ -311,7 +311,7 @@ As built, where the text above left a choice open:
 - On a segl without codes the access route is `404` with `no_access_codes`, and the access page says that everyone can edit.
 - The refusals' codes are `wrong_code` and `outside_network`. A client with no address, or with text that is not one, is outside.
 - The bar's way to the access page is a link, `Enter access code`, which takes the slot along in the router's history entry. Opened by its address, the page goes back to the last slot the browser used. The field is plain text, not a password field.
-- The page does not know when its pass ends. It is told at its next edit, and what was drawn in that moment stays on that one canvas until the slot is loaded again.
+- As first built, the page did not know when its pass ends: it was told at its next edit, and what was drawn in that moment stayed on that one canvas. Changed the same day, at the user's request and after the task: `welcome` carries `editEndsIn`, the seconds the pass has left, and the page stops taking edits a second before that.
 - The page's modules are `web/src/pass.ts`, `usePass.ts`, `access.ts`, and `AccessPage.tsx`. `editToken.ts`, `useEditToken.ts`, and the session's `onGate` are gone. The browser spec is `web/e2e/access.spec.ts` in the projects `access-direct`, `access-root`, and `access-board`, and the pass that ends is `web/e2e/expiry.spec.ts`, in the `restart` project. The table of what a header carries is `tests/header_value_cases.json`.
 - The bar wraps at any width. The new link showed that between 721 and about 1,100 pixels the notice had been squeezed into a column a word wide.
 

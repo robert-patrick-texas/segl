@@ -14,7 +14,9 @@
 
 /**
  * A pass that ends (S-008, D2-033; docs/TEST-PLAN.md T-019): after
- * `access_pass_hours`, the person enters a code again.
+ * `access_pass_hours`, the person enters a code again. `welcome` tells the
+ * page how long its pass has, and the page stops taking edits a second
+ * before that, so that nothing is drawn which the server would refuse.
  *
  * This spec is in the `restart` project, beside `durability.spec.ts`. Each
  * test has a segl of its own (`server.ts`), whose passes last seconds, on a
@@ -85,7 +87,49 @@ async function storedHead(page: Page, slot: number): Promise<string[]> {
 	return head.scene.elements.map((each) => each.id);
 }
 
-test('a pass ends, the browser is told so, and a code entered again lets it edit', async ({
+interface Frame {
+	at: number;
+	sent: boolean;
+	type: string;
+	error?: string;
+	/** Of a `welcome`: the seconds its pass has left, or null. */
+	editEndsIn?: number | null;
+}
+
+/** Record every message on the page's collaboration sockets, each with its time. Call before `goto`. */
+function watchFrames(page: Page): Frame[] {
+	const frames: Frame[] = [];
+	page.on('websocket', (socket) => {
+		const note = (sent: boolean) => (frame: { payload: string | Buffer }) => {
+			const message = JSON.parse(String(frame.payload)) as Omit<Frame, 'at' | 'sent'>;
+			frames.push({
+				at: Date.now(),
+				sent,
+				type: message.type,
+				error: message.error,
+				editEndsIn: message.editEndsIn
+			});
+		};
+		socket.on('framesent', note(true));
+		socket.on('framereceived', note(false));
+	});
+	return frames;
+}
+
+/** Note, in the page, the moment its bar first says that its access has ended. */
+async function noteTheLock(page: Page): Promise<void> {
+	await page.evaluate(() => {
+		const notice = document.querySelector('header.segl-bar .segl-bar__notice')!;
+		const seen = window as unknown as { lockedAt?: number };
+		new MutationObserver(() => {
+			if (seen.lockedAt === undefined && notice.getAttribute('data-editing') === 'refused') {
+				seen.lockedAt = Date.now();
+			}
+		}).observe(notice, { attributes: true });
+	});
+}
+
+test('a pass ends: the browser stops taking edits before the server would refuse one, and a code entered again lets it edit', async ({
 	server,
 	page,
 	person,
@@ -94,6 +138,7 @@ test('a pass ends, the browser is told so, and a code entered again lets it edit
 	test.setTimeout(90_000);
 	void server;
 	const slot = 2;
+	const frames = watchFrames(page);
 	const watcher = await person('Wim');
 	await joinSlot(page, slot);
 	await joinSlot(watcher, slot);
@@ -109,31 +154,63 @@ test('a pass ends, the browser is told so, and a code entered again lets it edit
 	await expectEditor(page);
 	await expectLive(page);
 	await expect(notice(page)).toHaveAttribute('data-editing', 'unlocked');
+	await noteTheLock(page);
 	const first = await page.evaluate((key) => localStorage.getItem(key), passKey(baseURL));
+	// `welcome` told the page how long its pass has: a length, a little under the whole.
+	const welcomes = frames.filter((frame) => !frame.sent && frame.type === 'welcome');
+	expect(welcomes).toHaveLength(2);
+	// The viewer it was had nothing that ends.
+	expect(welcomes[0]!.editEndsIn).toBeNull();
+	expect(welcomes[1]!.editEndsIn).toBeGreaterThan(PASS_SECONDS - 3);
+	expect(welcomes[1]!.editEndsIn).toBeLessThanOrEqual(PASS_SECONDS);
+	// The length and the time of day the access route gave are one moment.
+	expect(Math.abs(welcomes[1]!.at + welcomes[1]!.editEndsIn! * 1000 - endsAt)).toBeLessThan(1000);
 
 	// While the pass lasts, the browser edits, and the watcher sees it.
 	const drawn = await drawRectangle(page, -200, -100);
 	await expectSaved(page);
 	await expect.poll(() => elementIds(watcher)).toContain(drawn);
-	expect(Date.now()).toBeLessThan(endsAt);
+	expect(Date.now()).toBeLessThan(endsAt - 1500);
 
-	// The pass ends with the socket still open. Nothing says so until the
-	// browser next sends an edit, which the server refuses.
-	await page.waitForTimeout(Math.max(0, endsAt - Date.now()) + 500);
-	await expect(notice(page)).toHaveAttribute('data-editing', 'unlocked');
-	const refused = await drawRectangle(page, 0, -100);
-
-	await expect(notice(page)).toHaveAttribute('data-editing', 'refused');
+	// The page stops by itself, with nothing drawn and nothing said by the
+	// server: the bar says that its access has ended, and the tools go.
+	await expect(notice(page)).toHaveAttribute('data-editing', 'refused', {
+		timeout: Math.max(0, endsAt - Date.now()) + 5000
+	});
 	await expect(notice(page)).toContainText(
 		'Editing is locked: the access this browser had has ended.'
 	);
 	await expect(accessLink(page)).toBeVisible();
 	await expect(rectangleTool(page)).toHaveCount(0);
-	// What was drawn after the end reached nobody, and is not stored.
-	await watcher.waitForTimeout(700);
-	expect(await elementIds(watcher)).not.toContain(refused);
+	// It stopped before the pass ended on the server, and about a second before.
+	const lockedAt = await page.evaluate(() => (window as unknown as { lockedAt: number }).lockedAt);
+	expect(lockedAt).toBeLessThan(endsAt);
+	expect(endsAt - lockedAt).toBeLessThan(2500);
+
+	// After the end, whatever the person tries draws nothing, on this canvas too.
+	await page.waitForTimeout(Math.max(0, endsAt - Date.now()) + 300);
+	const canvas = (await page.locator('.excalidraw canvas.interactive').boundingBox())!;
+	await page.mouse.click(canvas.x + canvas.width / 2, canvas.y + canvas.height - 150);
+	await page.keyboard.press('r');
+	await page.mouse.move(canvas.x + 500, canvas.y + 400);
+	await page.mouse.down();
+	await page.mouse.move(canvas.x + 620, canvas.y + 470, { steps: 5 });
+	await page.mouse.up();
+	await page.mouse.dblclick(canvas.x + 700, canvas.y + 300);
+	await page.keyboard.type('late');
+	await page.keyboard.press('Escape');
+	await page.waitForTimeout(700);
+	expect(await elementIds(page)).toEqual([drawn]);
+	expect(await elementIds(watcher)).toEqual([drawn]);
 	expect(await storedHead(page, slot)).toEqual([drawn]);
-	// A reload shows the same: the stored pass is still the one that ended.
+	// No edit left the page after its pass had ended, and the server had none to refuse.
+	const edits = frames.filter((frame) => frame.sent && frame.type === 'elements');
+	expect(edits.length).toBeGreaterThan(0);
+	expect(edits.filter((frame) => frame.at >= endsAt)).toEqual([]);
+	expect(frames.filter((frame) => frame.error === 'view_only')).toEqual([]);
+
+	// A reload shows the same: the stored pass is the one that ended, and the
+	// server now says so in `welcome`.
 	await page.reload();
 	await expectEditor(page);
 	await expectLive(page);

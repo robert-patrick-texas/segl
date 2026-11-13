@@ -103,6 +103,7 @@ def test_a_connection_is_welcomed_and_then_sent_the_scene(room: Room) -> None:
         "title": "Workspace 3",
         "epoch": 1,
         "viewOnly": False,
+        "editEndsIn": None,
         "connectionId": browser.id,
         "participants": [{"connectionId": browser.id, "displayName": "Guest1"}],
     }

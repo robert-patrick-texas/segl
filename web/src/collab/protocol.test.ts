@@ -23,6 +23,7 @@ const welcome = {
 	title: 'Workspace 3',
 	epoch: 1,
 	viewOnly: false,
+	editEndsIn: 43199.75,
 	connectionId: 'c1',
 	participants: [
 		{ connectionId: 'c1', displayName: 'Guest1' },
@@ -35,6 +36,31 @@ const png = { id: 'f'.repeat(40), hash: 'a'.repeat(64), mimeType: 'image/png' };
 describe('parseServerMessage', () => {
 	test('a welcome', () => {
 		expect(parse(welcome)).toEqual(welcome);
+	});
+
+	test('a welcome whose pass has no end, and one that is about to end', () => {
+		expect(parse({ ...welcome, editEndsIn: null })).toEqual({ ...welcome, editEndsIn: null });
+		expect(parse({ ...welcome, editEndsIn: 0 })).toEqual({ ...welcome, editEndsIn: 0 });
+		expect(parse({ ...welcome, editEndsIn: 0.001 })).toEqual({ ...welcome, editEndsIn: 0.001 });
+	});
+
+	test.each([undefined, '60', -1, -0.001, true, [60], { seconds: 60 }])(
+		'a welcome with %j where the length goes is still a welcome, with no length',
+		(editEndsIn) => {
+			// The server refuses an edit after the end whatever the page knows.
+			const { editEndsIn: _left, ...without } = welcome;
+			const sent = editEndsIn === undefined ? without : { ...welcome, editEndsIn };
+
+			expect(parse(sent)).toEqual({ ...welcome, editEndsIn: null });
+		}
+	);
+
+	test('a length too large to hold is no length', () => {
+		// JSON text can say it, and a browser reads it as infinity.
+		const text = JSON.stringify(welcome).replace('43199.75', '1e999');
+		expect(text).toContain('"editEndsIn":1e999');
+
+		expect(parseServerMessage(text)).toEqual({ ...welcome, editEndsIn: null });
 	});
 
 	test('a scene and elements keep every field of an element', () => {

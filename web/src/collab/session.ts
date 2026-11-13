@@ -134,6 +134,16 @@ export const SEND_INTERVAL_MS = 30;
 /** At most one cursor message in this time. */
 export const CURSOR_INTERVAL_MS = 50;
 
+/**
+ * How long before its pass ends this browser stops taking edits. What it
+ * sends in its last moment then still reaches the server in time, and nothing
+ * is drawn that the server would refuse.
+ */
+export const LOCK_EARLY_MS = 1000;
+
+/** The longest wait a browser's timer takes. A longer one would fire at once. */
+export const MAX_TIMER_MS = 2 ** 31 - 1;
+
 type Timer = ReturnType<typeof setTimeout>;
 
 function openWebSocket(url: string): SocketLike {
@@ -165,6 +175,8 @@ export class CollabSession {
 	private retryTimer: Timer | undefined;
 	private sendTimer: Timer | undefined;
 	private cursorTimer: Timer | undefined;
+	/** Runs out when this connection's pass is about to end. */
+	private lockTimer: Timer | undefined;
 	private cursorWaiting: { cursor: Cursor | null } | null = null;
 	private renameWaiting: string | null = null;
 
@@ -196,6 +208,7 @@ export class CollabSession {
 		this.files.stop();
 		this.clearTimers();
 		clearTimeout(this.retryTimer);
+		clearTimeout(this.lockTimer);
 		const socket = this.socket;
 		this.socket = null;
 		this.live = false;
@@ -250,6 +263,8 @@ export class CollabSession {
 		if (this.stopped || this.socket === null) return;
 		const socket = this.socket;
 		this.leave();
+		// The next `welcome` says how long the pass of the new `hello` has.
+		clearTimeout(this.lockTimer);
 		socket.close();
 		this.link = 'connecting';
 		this.setState({ connectionId: null, participants: [] });
@@ -258,6 +273,38 @@ export class CollabSession {
 
 	private mayEdit(): boolean {
 		return this.live && this.state.viewOnly === false;
+	}
+
+	/**
+	 * Stop taking edits when the pass is about to end, `seconds` from now, or
+	 * never for null. The timer is not the socket's: a pass ends whether or
+	 * not this browser is connected at that moment.
+	 */
+	private lockIn(seconds: number | null): void {
+		clearTimeout(this.lockTimer);
+		this.lockTimer = undefined;
+		if (seconds !== null) this.lockAfter(seconds * 1000 - LOCK_EARLY_MS);
+	}
+
+	private lockAfter(remaining: number): void {
+		if (remaining <= 0) {
+			this.lock();
+			return;
+		}
+		// In steps a timer can take: a pass may last longer than 24 days.
+		const step = Math.min(remaining, MAX_TIMER_MS);
+		this.lockTimer = setTimeout(() => {
+			this.lockTimer = undefined;
+			this.lockAfter(remaining - step);
+		}, step);
+	}
+
+	/** The pass is about to end. Send what waits, and be a viewer from here on. */
+	private lock(): void {
+		// A viewer has nothing to stop: the server may have said so first.
+		if (this.state.viewOnly !== false) return;
+		this.sendPending();
+		this.setState({ viewOnly: true });
 	}
 
 	private open(): void {
@@ -387,6 +434,7 @@ export class CollabSession {
 					this.send({ type: 'rename', displayName: this.renameWaiting });
 					this.renameWaiting = null;
 				}
+				this.lockIn(message.editEndsIn);
 				break;
 			case 'scene':
 				if (this.live) this.takeScene(message.epoch, message.elements, message.files);

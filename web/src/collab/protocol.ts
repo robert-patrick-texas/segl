@@ -44,6 +44,13 @@ export type ServerMessage =
 			title: string;
 			epoch: number;
 			viewOnly: boolean;
+			/**
+			 * The seconds until this connection's pass ends, or null when it
+			 * does not end: a viewer, a segl without access codes, or passes
+			 * without a limit. A length, not a time of day, so this browser's
+			 * clock does not come into it.
+			 */
+			editEndsIn: number | null;
 			connectionId: string;
 			participants: Participant[];
 	  }
@@ -106,7 +113,7 @@ export function parseServerMessage(text: unknown): ServerMessage | null {
 	if (!isFields(message)) return null;
 	switch (message['type']) {
 		case 'welcome': {
-			const { slot, title, epoch, viewOnly, connectionId, participants } = message;
+			const { slot, title, epoch, viewOnly, editEndsIn, connectionId, participants } = message;
 			if (!Array.isArray(participants)) return null;
 			const people = participants.map(participant);
 			if (
@@ -125,6 +132,12 @@ export function parseServerMessage(text: unknown): ServerMessage | null {
 				title,
 				epoch: epoch as number,
 				viewOnly,
+				// Anything else in its place is no length. The server still refuses
+				// an edit after the end, so the page works without it.
+				editEndsIn:
+					typeof editEndsIn === 'number' && Number.isFinite(editEndsIn) && editEndsIn >= 0
+						? editEndsIn
+						: null,
 				connectionId,
 				participants: people as Participant[]
 			};

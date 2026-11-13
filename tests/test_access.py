@@ -837,6 +837,81 @@ def test_hello_reads_the_pass(repository: Repository) -> None:
         assert view_only(issued) is True
 
 
+def test_welcome_says_how_long_the_pass_has_left(repository: Repository) -> None:
+    # So that the page can stop taking edits before the server stops taking them.
+    clock = Clock(1_800_000_000.25)
+    with application(repository, clock) as client:
+        issued = enter(client).json()["pass"]
+
+        def welcome(sent: str) -> dict[str, Any]:
+            with client.websocket_connect("/collab?slot=2") as socket:
+                return hello(socket, "Guest1", sent)[0]
+
+        # Stamped with the whole second, a quarter of a second ago: 12 hours less that.
+        assert welcome(issued)["editEndsIn"] == 43199.75
+        clock.now += 6 * HOUR + 0.5
+        assert welcome(issued)["editEndsIn"] == 21599.25
+        clock.now = 1_800_000_000 + 12 * HOUR - 0.001
+        assert welcome(issued) | {"participants": [], "connectionId": ""} == {
+            "type": "welcome",
+            "slot": 2,
+            "title": "Workspace 2",
+            "epoch": 1,
+            "viewOnly": False,
+            "editEndsIn": 0.001,
+            "connectionId": "",
+            "participants": [],
+        }
+        # A viewer has nothing that ends: without a pass, and with one that has ended.
+        for sent in ("", ACCESS_CODE, issued[:-1]):
+            answer = welcome(sent)
+            assert (answer["viewOnly"], answer["editEndsIn"]) == (True, None), sent
+        clock.now += 0.001
+        answer = welcome(issued)
+        assert (answer["viewOnly"], answer["editEndsIn"]) == (True, None)
+
+
+def test_welcome_names_no_end_where_there_is_none(repository: Repository, tmp_path: Path) -> None:
+    # Passes without a limit, and a segl that asks for no code.
+    with application(repository, access_pass_hours=0.0) as client:
+        issued = enter(client).json()["pass"]
+        with client.websocket_connect("/collab?slot=2") as socket:
+            answer = hello(socket, "Guest1", issued)[0]
+    assert (answer["viewOnly"], answer["editEndsIn"]) == (False, None)
+
+    with Repository(tmp_path / "open.sqlite") as other:
+        other.bootstrap()
+        with (
+            TestClient(create_app(make_settings(), other)) as client,
+            client.websocket_connect("/collab?slot=2") as socket,
+        ):
+            answer = hello(socket, "Guest1", "anything")[0]
+    assert (answer["viewOnly"], answer["editEndsIn"]) == (False, None)
+
+
+def test_a_connection_says_how_long_it_may_edit() -> None:
+    clock = Clock()
+    hello_sent = Hello("client-1", "Guest1", "")
+    editor = Connection(
+        lambda text: None, hello_sent, view_only=False, edit_until=clock.now + 90.0004, clock=clock
+    )
+    viewer = Connection(
+        lambda text: None, hello_sent, view_only=True, edit_until=clock.now + 90, clock=clock
+    )
+    endless = Connection(lambda text: None, hello_sent, view_only=False, clock=clock)
+
+    # To the millisecond, and nothing for a viewer or for a pass without an end.
+    assert editor.edit_ends_in() == 90.0
+    assert viewer.edit_ends_in() is None
+    assert endless.edit_ends_in() is None
+    clock.now += 89.5
+    assert editor.edit_ends_in() == 0.5
+    clock.now += 0.5004
+    # At its end it is a viewer, and has nothing left to count.
+    assert editor.edit_ends_in() is None
+    assert editor.view_only is True
+
+
 def test_a_pass_that_ends_while_its_socket_is_open_makes_the_connection_a_viewer(
     repository: Repository, tmp_path: Path
 ) -> None:
@@ -1034,7 +1109,10 @@ def test_a_real_process_ends_a_pass_while_its_socket_is_open(tmp_path: Path) -> 
         assert bought["expiresAt"].endswith("Z")
 
         with server.socket("/collab?slot=3") as editor:
-            assert say_hello(editor, "Guest1", edit_pass=issued)[0]["viewOnly"] is False
+            welcome, _ = say_hello(editor, "Guest1", edit_pass=issued)
+            assert welcome["viewOnly"] is False
+            # What is left of 1.8 seconds, from a pass stamped up to a second ago.
+            assert 0.5 < welcome["editEndsIn"] <= 1.8
             editor.send(json.dumps({"type": "elements", "epoch": 1, "elements": [element("a", 1)]}))
             # The pass was stamped with a whole second, up to one second ago.
             time.sleep(2.0)

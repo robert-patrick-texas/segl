@@ -113,6 +113,7 @@ def test_hello_is_answered_with_a_welcome_and_the_scene(client: TestClient) -> N
         "title": "Workspace 3",
         "epoch": 1,
         "viewOnly": False,
+        "editEndsIn": None,
         "connectionId": me["connectionId"],
     }
     assert me["displayName"] == "Guest1"
