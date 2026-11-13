@@ -56,7 +56,7 @@ const SEEN = 'Shared workspace. Anyone who can open this page can see it';
 const EDITING: Record<Exclude<Editing, 'open'>, string> = {
 	unlocked: 'This browser entered an access code and can edit.',
 	locked: 'Editing is locked: it needs an access code.',
-	refused: 'Editing is locked: the access this browser had has ended.',
+	refused: 'Editing locked: access expired',
 	waiting: 'Editing needs an access code.'
 };
 

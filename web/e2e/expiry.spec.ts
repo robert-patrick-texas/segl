@@ -177,9 +177,7 @@ test('a pass ends: the browser stops taking edits before the server would refuse
 	await expect(notice(page)).toHaveAttribute('data-editing', 'refused', {
 		timeout: Math.max(0, endsAt - Date.now()) + 5000
 	});
-	await expect(notice(page)).toContainText(
-		'Editing is locked: the access this browser had has ended.'
-	);
+	await expect(notice(page)).toContainText('Editing locked: access expired');
 	await expect(accessLink(page)).toBeVisible();
 	await expect(rectangleTool(page)).toHaveCount(0);
 	// It stopped before the pass ended on the server, and about a second before.

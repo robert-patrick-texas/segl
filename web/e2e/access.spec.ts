@@ -83,7 +83,7 @@ const COLORS: Record<string, Rgb> = {
 
 const SHARED = 'Shared workspace. Anyone who can open this page can see it.';
 const NEEDS_CODE = 'Editing is locked: it needs an access code.';
-const ACCESS_ENDED = 'Editing is locked: the access this browser had has ended.';
+const ACCESS_ENDED = 'Editing locked: access expired';
 const HAS_ACCESS = 'This browser entered an access code and can edit.';
 const WRONG_CODE = "That is not one of this segl's access codes.";
 

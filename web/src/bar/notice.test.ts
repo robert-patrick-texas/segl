@@ -24,7 +24,7 @@ test('every slot says it is shared and open (S-016)', () => {
 
 test.each<[Editing, string]>([
 	['locked', 'Editing is locked: it needs an access code.'],
-	['refused', 'Editing is locked: the access this browser had has ended.'],
+	['refused', 'Editing locked: access expired'],
 	['unlocked', 'This browser entered an access code and can edit.'],
 	['waiting', 'Editing needs an access code.']
 ])(
@@ -40,7 +40,7 @@ test.each<[Editing, string]>([
 
 test('a view-only browser is told that editing is locked (S-016)', () => {
 	expect(sharedNotice('locked').editing).toContain('Editing is locked');
-	expect(sharedNotice('refused').editing).toContain('Editing is locked');
+	expect(sharedNotice('refused').editing).toContain('Editing locked');
 	// And only such a browser.
 	expect(sharedNotice('unlocked').editing).not.toContain('locked');
 	expect(sharedNotice('waiting').editing).not.toContain('locked');
@@ -73,7 +73,7 @@ test('a pass that ended while the page was open is the refused state', () => {
 	// The server answers the next edit with `view_only`, and the session
 	// turns view-only: this browser still has the pass it had.
 	expect(editingState({ editRequired: true, viewOnly: true, hasPass: true })).toBe('refused');
-	expect(sharedNotice('refused').editing).toContain('has ended');
+	expect(sharedNotice('refused').editing).toBe('Editing locked: access expired');
 });
 
 test.each<[Editing, boolean]>([
