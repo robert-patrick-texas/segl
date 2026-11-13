@@ -334,7 +334,7 @@ As built, where the text above left a choice open:
 - The build still runs the web checks, the web build, and pytest. The run runs pytest again, with the browser tests.
 - Rootful Docker and rootless Docker ran it. The rootless daemon was started by hand and removed afterwards. Podman was not tried: the host has none.
 - The two sizes are `npm --prefix web run stretch`, in a config of its own, as Sunstone's `bench` is. The elements are 1,024: one rectangle, doubled ten times in the editor, so no element is hand-made.
-- Found, and not changed: a browser that loads a large slot sometimes sends the whole scene back before the server's `scene` arrives (`draft2/STATUS.md`, T11).
+- Found, and not changed in the task: a browser that loads a large slot sometimes sends the whole scene back before the server's `scene` arrives (`draft2/STATUS.md`, T11). Changed the same day, at the user's request and after the task: the page's list of what the server holds starts with the scene it loaded.
 
 Acceptance: that container command exits 0 on T-001 through T-016, T-019, and T-020. Evidence goes into the STATUS log.
 
