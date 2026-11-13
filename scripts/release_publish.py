@@ -37,6 +37,19 @@ UNPUBLISHED = "0.0.0"
 BRANCH = "main"
 REMOTE = "origin"
 PASSING = frozenset({"success", "neutral", "skipped"})
+# Builds the .deb into dist/ and installs it in a container that booted with
+# systemd (docs/TEST-PLAN.md T-017).
+PACKAGE_TEST = "deploy/debian/package-test.sh"
+
+
+def has_package(root: Path) -> bool:
+    """Report whether the tree at ``root`` can build the Debian package."""
+    return (root / PACKAGE_TEST).is_file()
+
+
+def package_path(root: Path, version: str) -> Path:
+    """Return where the package build writes the .deb of ``version``."""
+    return root / "dist" / f"segl_{version}_amd64.deb"
 
 
 def bump_version(current: str, topics: dict[str, list[str]]) -> str:
@@ -140,7 +153,7 @@ class Preflight:
 
     def steps(self) -> list[tuple[str, Callable[[], tuple[bool, str]]]]:
         """Return each check with its name, in the order they run."""
-        return [
+        steps = [
             ("the working tree is clean", self.clean_tree),
             (f"HEAD is on {BRANCH}", self.on_branch),
             (f"CHANGELOG.md has a {self.version} section", self.changelog_section),
@@ -149,6 +162,10 @@ class Preflight:
             ("GitHub checks passed for HEAD", self.ci_green),
             ("every component is current or held", self.currency),
         ]
+        if has_package(self.root):
+            # Last: it takes minutes, and it builds what the release carries.
+            steps.append(("the package builds and installs", self.package))
+        return steps
 
     def clean_tree(self) -> tuple[bool, str]:
         changed = len(self.runner.run(["git", "status", "--porcelain"]).stdout.splitlines())
@@ -189,6 +206,17 @@ class Preflight:
     def currency(self) -> tuple[bool, str]:
         return gate(self.root, self.sources), "see `release.py check`"
 
+    def package(self) -> tuple[bool, str]:
+        result = self.runner.run([PACKAGE_TEST], check=False)
+        built = package_path(self.root, self.version)
+        if result.returncode != 0:
+            tail = "\n".join(result.output.strip().splitlines()[-15:])
+            print(f"  `{PACKAGE_TEST}` failed:\n{tail}")
+            return False, f"`{PACKAGE_TEST}` failed"
+        if not built.is_file():
+            return False, f"dist/{built.name} was not built"
+        return True, f"dist/{built.name} passed the install test"
+
     def run(self) -> bool:
         """Run the checks and stop at the first failure."""
         for name, step in self.steps():
@@ -217,7 +245,9 @@ def publish(root: Path, runner: Runner, sources: Sources) -> int:
     runner.run(["git", "tag", "-a", tag, "-m", f"segl {version}"])
     runner.run(["git", "push", REMOTE, tag])
     if destinations.get("github"):
-        packages = sorted(str(p) for p in (root / "dist").glob("*.deb"))
+        # The package the preflight just built and installed, and no other
+        # file that happens to be in dist/.
+        packages = [str(package_path(root, version))] if has_package(root) else []
         with tempfile.TemporaryDirectory() as folder:
             notes_file = Path(folder) / "notes.md"
             notes_file.write_text(body, encoding="utf-8")

@@ -11,8 +11,8 @@
 #          "file.spec.ts > title" is one test. A test inside a
 #          `test.describe` has the group's title first: "spec > group > title".
 #
-# T-017 (the .deb, T12) and T-018 (this run, in the dev container) have no
-# tests here. The script says so.
+# T-017 (the .deb, which deploy/debian/package-test.sh installs) and T-018
+# (this run, in the dev container) have no tests here. The script says so.
 
 # The Playwright projects a spec's tests must pass in. `default` is the three
 # mounts: Python alone, nginx at a host root, and nginx at /board/.

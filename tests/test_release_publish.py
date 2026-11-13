@@ -24,7 +24,7 @@ import pytest
 import release
 import release_notes
 from release_proc import CommandError, Result
-from release_publish import bump_version, check_runs_pass, cut, publish
+from release_publish import PACKAGE_TEST, bump_version, check_runs_pass, cut, publish
 
 TODAY = dt.date(2026, 11, 12)
 GREEN = {"check_runs": [{"name": "checks", "status": "completed", "conclusion": "success"}]}
@@ -227,6 +227,17 @@ def break_remote_tag(repo: Path, run_git) -> None:
     run_git(repo, "tag", "-d", "v0.1.0")
 
 
+def add_package_test(repo: Path, run_git) -> None:
+    """Give the tree the install test, as a file the fake runner answers for."""
+    script = repo / PACKAGE_TEST
+    script.parent.mkdir(parents=True)
+    script.write_text("#!/bin/bash\n")
+    (repo / ".git" / "info" / "exclude").write_text("dist/\n")
+    run_git(repo, "add", PACKAGE_TEST)
+    run_git(repo, "commit", "-q", "-m", "the install test")
+    run_git(repo, "push", "-q", "origin", "main")
+
+
 @pytest.mark.parametrize(
     ("spoil", "replies", "latest", "failed"),
     [
@@ -248,6 +259,18 @@ def break_remote_tag(repo: Path, run_git) -> None:
             "GitHub checks passed for HEAD",
         ),
         (None, {}, {"good": "1.1.0"}, "every component is current or held"),
+        (
+            add_package_test,
+            {(PACKAGE_TEST,): Result(1, "the unit is not active\n")},
+            {},
+            "the package builds and installs: `deploy/debian/package-test.sh` failed",
+        ),
+        (
+            add_package_test,
+            {(PACKAGE_TEST,): Result(0, "all checks passed\n")},
+            {},
+            "the package builds and installs: dist/segl_0.1.0_amd64.deb was not built",
+        ),
     ],
 )
 def test_publish_stops_at_each_preflight_failure(
@@ -289,11 +312,24 @@ def test_a_successful_publish_tags_and_creates_the_release_with_the_notes(
         seen["notes"] = Path(argv[argv.index("--notes-file") + 1]).read_text()
         return Result(0)
 
-    runner = fake_runner(repo, {("gh", "api"): json.dumps(GREEN), ("gh", "release"): gh_release})
+    def package_test(argv: Sequence[str]) -> Result:
+        # What the real script does: build this version's package into dist/.
+        (repo / "dist" / "segl_0.1.0_amd64.deb").write_bytes(b"deb")
+        return Result(0, "systemd-test: all checks passed\n")
+
+    runner = fake_runner(
+        repo,
+        {
+            ("gh", "api"): json.dumps(GREEN),
+            ("gh", "release"): gh_release,
+            (PACKAGE_TEST,): package_test,
+        },
+    )
     cut_and_commit(repo, runner, fake_sources(runner), run_git)
+    add_package_test(repo, run_git)
+    # A package of an older version, left in dist/ by an earlier build.
     (repo / "dist").mkdir()
-    (repo / ".git" / "info" / "exclude").write_text("dist/\n")
-    (repo / "dist" / "segl_0.1.0_amd64.deb").write_bytes(b"deb")
+    (repo / "dist" / "segl_0.0.9_amd64.deb").write_bytes(b"old")
 
     assert publish(repo, runner, fake_sources(runner)) == 0
 
@@ -314,6 +350,7 @@ def test_a_successful_publish_tags_and_creates_the_release_with_the_notes(
     ]
     assert create[8] == "segl 0.1.0"
     assert create[-1] == str(repo / "dist" / "segl_0.1.0_amd64.deb")
+    assert [arg for arg in create if arg.endswith(".deb")] == [create[-1]], "that package alone"
     assert seen["notes"].startswith(
         "The first release. It serves a health route.\n\n### New\n\n- A health route."
     )
@@ -323,9 +360,9 @@ def test_a_successful_publish_tags_and_creates_the_release_with_the_notes(
     order = [
         call[:2]
         for call in runner.calls
-        if call[:2] in (["git", "tag"], ["git", "push"], ["gh", "release"])
+        if call[:2] in ([PACKAGE_TEST], ["git", "tag"], ["git", "push"], ["gh", "release"])
     ]
-    assert order == [["git", "tag"], ["git", "push"], ["gh", "release"]]
+    assert order == [[PACKAGE_TEST], ["git", "tag"], ["git", "push"], ["gh", "release"]]
     assert not runner.called("uv", "publish"), "PyPI is off"
 
 

@@ -28,7 +28,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ```
 
-When a dependency's license requires an attribution notice, add it to `NOTICE` in the change that adds the dependency (D2-019).
+When a dependency's license requires an attribution notice, add it to `NOTICE` in the change that adds the dependency (D2-019). The `.deb` carries the license text of everything it bundles. A Python package's text comes from its wheel, and an npm package's from its npm files. For an npm package or a font that ships no text, add one to [`web/licenses/`](web/licenses/README.md): the build fails until it is there.
 
 Files copied whole from another project keep their own header, and `NOTICE` names their source. `tools/md2html`, from vakr, is one.
 

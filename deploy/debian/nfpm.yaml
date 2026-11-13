@@ -1,0 +1,87 @@
+# nfpm spec for the segl package, in the form of Sunstone's packaging/nfpm.yaml.
+#
+# deploy/debian/build.sh runs nfpm from the repository root inside the build
+# container, after it has put /opt/segl together. It sets:
+#   SEGL_DEB_VERSION    project.version in versions.toml
+#   SOURCE_DATE_EPOCH   the commit's time, which nfpm stamps on what it writes
+name: segl
+arch: amd64
+platform: linux
+version: ${SEGL_DEB_VERSION}
+# The version is in package form already. nfpm must not read it as SemVer.
+version_schema: none
+section: web
+priority: optional
+maintainer: Robert Patrick <193846785+robert-patrick-texas@users.noreply.github.com>
+vendor: segl
+homepage: https://github.com/robert-patrick-texas/segl
+license: Apache-2.0
+description: |-
+  shared drawing boards for network-operations meetings
+  segl serves nine shared Excalidraw boards. People who open the same board
+  draw on it together, live, and what they draw is saved. One Python process
+  serves the web application, the API, and the live boards on a loopback
+  port. nginx, which the site runs, faces the network and ends TLS.
+  .
+  Everything is under /opt/segl, with a Python interpreter and a locked
+  virtual environment of its own. The system's Python is not used.
+umask: 0o022
+
+contents:
+  # The interpreter, the virtualenv, the web application, the nginx files,
+  # and the two files postinst copies to /opt/segl/etc.
+  - src: /opt/segl
+    dst: /opt/segl
+    type: tree
+
+  # What ties segl to the system. Only these and the documents below are
+  # outside /opt/segl.
+  - src: deploy/systemd/segl.service
+    dst: /usr/lib/systemd/system/segl.service
+    file_info: {mode: 0o644}
+  - src: deploy/debian/sysusers.conf
+    dst: /usr/lib/sysusers.d/segl.conf
+    file_info: {mode: 0o644}
+  - src: deploy/debian/tmpfiles.conf
+    dst: /usr/lib/tmpfiles.d/segl.conf
+    file_info: {mode: 0o644}
+
+  # The package documentation path: the operator notes, LICENSE, NOTICE, and
+  # the license texts of what the web application bundles (build.sh puts
+  # them in /build/doc). Then the files Debian policy asks for: the copyright
+  # file, a changelog in Debian's format, and the lintian overrides with
+  # their reasons.
+  - src: /build/doc
+    dst: /usr/share/doc/segl
+    type: tree
+  - src: deploy/debian/copyright
+    dst: /usr/share/doc/segl/copyright
+    packager: deb
+    file_info: {mode: 0o644}
+  - src: /build/changelog.gz
+    dst: /usr/share/doc/segl/changelog.gz
+    packager: deb
+    file_info: {mode: 0o644}
+  - src: deploy/debian/lintian-overrides
+    dst: /usr/share/lintian/overrides/segl
+    packager: deb
+    file_info: {mode: 0o644}
+
+overrides:
+  deb:
+    depends:
+      # The unit, and systemd-sysusers and systemd-tmpfiles in postinst.
+      - systemd
+      # The interpreter and the wheels need at least this glibc. build.sh
+      # fails when a packaged file needs a newer symbol version.
+      - libc6 (>= 2.17)
+    suggests:
+      # The TLS proxy. It may be on another host.
+      - nginx
+    scripts:
+      postinstall: deploy/debian/postinst
+      preremove: deploy/debian/prerm
+      postremove: deploy/debian/postrm
+
+deb:
+  compression: zstd

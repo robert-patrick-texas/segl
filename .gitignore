@@ -12,6 +12,8 @@ dist/
 build/
 node_modules/
 web/dist/
+# The list of bundled packages the web build writes (web/scripts/bundled-packages.ts).
+web/.bundled-packages.json
 *.sqlite
 # Development data from the default config (docs/DEPLOY.md).
 var/

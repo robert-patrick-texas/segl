@@ -17,7 +17,7 @@ These versions were verified on the development host, Ubuntu 26.04.1 LTS on amd6
 | Node.js and npm | 26.13.1 and 11.20.0 | Building and testing `web/`. The version is `web/.node-version`, the newest LTS release (D2-023). npm refuses another major (`engine-strict`), so put this Node first on `PATH` when the host's default is a different one. | T04 |
 | nginx | 1.28.3 | The mount tests, which run it without root on loopback ports with the `deploy/nginx/` files. They need 1.25.1 or newer. The dev container installs its own. | T02 |
 | openssl | 3.5.5 | The mount tests' certificate. | T02 |
-| dpkg-deb | 1.23.7 | Building the `.deb`. | T12 |
+| Docker, again | 29.8.2, rootful | Building the `.deb` and installing it in a container that boots systemd, which needs a privileged container. nfpm, lintian, and `dpkg-deb` are in the build's image, not on the host. | T12 |
 
 Python-side tools come from `uv.lock`, not the host: ruff, ty, pytest, and httpx2 (T01). httpx2 is the transport of the FastAPI test client. Starlette deprecates plain httpx there. `websockets` (T06) is a dependency of segl itself, the WebSocket protocol uvicorn serves `/collab` with (D2-027), and the tests that need a real socket use its client. Web-side tools come from `web/package-lock.json`: Vite, TypeScript, Vitest, Playwright, and Prettier (T04).
 
@@ -146,7 +146,7 @@ It runs pytest whole, then the browser tests whole, and prints one line for each
 
 Above the rows it prints what an evidence block needs (`TEST-PLAN.md`, evidence): the revision, the Python and where it came from, Node, nginx, Excalidraw, Playwright, and Chromium.
 
-It needs what `npm --prefix web run e2e` needs: the build and a browser. T-017 is not run here: T12 installs the `.deb`. T-018 is judged in the dev container alone, where it passes when the other rows did, on uv's Python.
+It needs what `npm --prefix web run e2e` needs: the build and a browser. T-017 is not run here: `deploy/debian/package-test.sh` installs the `.deb` (the package, below). T-018 is judged in the dev container alone, where it passes when the other rows did, on uv's Python.
 
 `tests/test_testplan.py` holds the table to the test plan's rows and to the tests' names. A test that is renamed fails pytest until the table follows. It holds the judging to made-up reports, and the command to stand-ins for the two suites.
 
@@ -162,6 +162,32 @@ It runs the two sizes of `TEST-PLAN.md`: ten editors on one slot, and a slot of 
 - 1,024 elements: one rectangle, doubled ten times with select-all and duplicate, while a second browser watches. A third browser then loads the slot, draws one more rectangle, and the second moves all 1,025 at once. All three must end with the same scene.
 
 The runs are not part of the gate and hold no time to a limit. They fail only when the browsers end with different scenes. They use the browser tests' servers and ports, so run one or the other. In the dev container: `docker run --rm --init segl-dev npm --prefix web run stretch`. The times are those of the machine and of a browser that draws without a GPU. `draft2/STATUS.md` has the numbers of T11's run.
+
+## The package
+
+```bash
+deploy/debian/build-deb.sh        # dist/segl_<version>_amd64.deb
+deploy/debian/package-test.sh     # builds it, then installs it (TEST-PLAN.md T-017)
+deploy/debian/package-test.sh dist/segl_<version>_amd64.deb   # installs one already built
+```
+
+`build-deb.sh` builds the package in a clean `ubuntu:26.04` container, from the two lockfiles (`DEPLOY.md`, the package). It hands the container every tracked file and every untracked file git does not ignore, so work in progress builds too. The files in the package carry the last commit's time. The build ends with lintian, and a lintian error fails it. On the development host a build took 47 seconds, and 50 without the download caches (`SEGL_UV_CACHE=` and `SEGL_NPM_CACHE=`), once the builder image existed. Building that image the first time took 69 seconds. Three builds of one tree gave the same file, byte for byte.
+
+`package-test.sh` is T-017. It boots an `ubuntu:26.04` container with systemd as PID 1 (`deploy/debian/Containerfile.systemd`), with nginx, Ubuntu's `ssl-cert`, and curl, and no Python. The container's host name is `dev.example.com`, the name in `site-board.example.conf`, so the snakeoil certificate Ubuntu makes there is for that name. Then `deploy/debian/systemd-test.sh` runs in it and prints one `PASS` or `FAIL` line for each check:
+
+- The package installs with apt. The interpreter is under `/opt/segl/python` at the pin, the virtualenv runs it, and `segl --version` reads the packaged `versions.toml`. The settings are mode `0640` for root and segl's group, and user `segl` can write nothing but `/opt/segl/var`.
+- Nothing starts on install. `systemctl enable --now segl` starts the unit, as user `segl`, on loopback alone.
+- nginx gets the `deploy/nginx/` files and `site-board.example.conf`, with the commands `deploy/OPERATOR.md` gives. A TLS request, checked against the snakeoil certificate, gets the slot page, its script, and a font through `/board/`.
+- The package's own Python draws an element over the WebSocket through nginx (`deploy/debian/socket_check.py`). The element is still there after a restart.
+- A setting segl cannot use stops the unit, the journal names the key, and systemd does not start it again.
+- With access codes in the file, a code buys a pass, and the journal has neither the code nor the secret.
+- An upgrade keeps the settings and the board and restarts segl. A stop is clean and leaves no write-ahead log. Remove keeps the settings and the board. Purge removes the settings, keeps the board, and says so.
+
+The upgrade is the same package under a higher version number, which the script makes by repacking it. Set `SEGL_KEEP_CONTAINER=1` to leave the container running afterwards and look around in it.
+
+The container is privileged, because systemd as PID 1 needs a cgroup tree of its own. The test was run under rootful Docker.
+
+`tests/test_package.py` reads the same files without building anything: the unit, the nfpm spec, the maintainer scripts, the copyright file, and the operator notes. It also runs `web/scripts/collect-licenses.ts` against the real web build, when there is one, so a bundled package or a font without a license text fails pytest.
 
 ## Dev loop
 

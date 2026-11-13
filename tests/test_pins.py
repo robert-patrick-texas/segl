@@ -81,7 +81,14 @@ def test_every_direct_dependency_is_listed_at_the_same_version() -> None:
         "build": PYPROJECT["build-system"]["requires"],
     }
 
-    assert set(groups) == {"dev", "docs"}, "a new dependency group needs a versions.toml table"
+    assert set(groups) == {"dev", "docs", "build"}, (
+        "a new dependency group needs a versions.toml table"
+    )
+    # The build backend is listed twice: where the build reads it, and as a
+    # group, so that uv.lock holds it and its own dependencies with hashes
+    # for the package build (deploy/debian/build.sh).
+    assert groups["build"] == PYPROJECT["build-system"]["requires"]
+    assert "build" not in PYPROJECT["tool"]["uv"]["default-groups"]
     assert "optional-dependencies" not in PYPROJECT["project"]
     for table, requirements in mirrors.items():
         assert exact_pins(requirements) == VERSIONS["python"][table], f"[python.{table}]"

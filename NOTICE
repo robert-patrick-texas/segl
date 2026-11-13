@@ -58,6 +58,21 @@ the npm package @excalidraw/excalidraw, unmodified, under this license:
   SOFTWARE.
 
 The web build (web/dist, which is not in this repository) also carries the font
-files that package ships in dist/prod/fonts: Assistant, Cascadia, ComicShanns,
-Excalifont, Liberation, Lilita, Nunito, Virgil, and Xiaolai. Each font remains
-under its own license. The package does not include those license texts.
+files that package ships in dist/prod/fonts. Each font remains under its own
+license. The npm package does not include those license texts. web/licenses/fonts
+has them, and web/licenses/README.md names the source of each:
+
+  Assistant, Cascadia, Excalifont, Lilita, Nunito, Virgil, Xiaolai:
+    SIL Open Font License 1.1
+  ComicShanns: MIT License
+  Liberation (Liberation Sans 1.05): GNU General Public License version 2,
+    with the exceptions of Red Hat's Liberation font license agreement
+
+The web build also bundles React, React Router, and the npm packages that
+Excalidraw and they depend on, each under its own license. The build lists them
+(web/scripts/bundled-packages.ts).
+
+The Debian package (deploy/debian) carries CPython, built by the
+python-build-standalone project, and the Python packages in uv.lock, each under
+its own license. It installs the license text of every part it bundles:
+/usr/share/doc/segl/copyright says where each one is.

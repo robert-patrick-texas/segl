@@ -1,0 +1,191 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: segl
+Upstream-Contact: https://github.com/robert-patrick-texas/segl/issues
+Source: https://github.com/robert-patrick-texas/segl
+Comment:
+ The package carries a Python runtime of its own under /opt/segl, and a web
+ application built from npm packages. Each bundled part's full license text
+ ships in the package. The paragraphs below say where.
+
+Files: *
+Copyright: 2026 segl contributors
+License: Apache-2.0
+
+Files: opt/segl/python/*
+Copyright: 2001-2026 Python Software Foundation and contributors
+License: PSF-2.0
+Comment:
+ CPython, built by the python-build-standalone project
+ (https://github.com/astral-sh/python-build-standalone). That build links
+ several libraries into the interpreter, among them OpenSSL, SQLite, zlib,
+ bzip2, xz, zstd, libffi, expat, ncurses, and mpdecimal, each under a
+ permissive license of its own, as that project documents.
+
+Files: opt/segl/venv/lib/python3.*/site-packages/fastapi* opt/segl/venv/lib/python3.*/site-packages/annotated_doc*
+Copyright: 2018 Sebastián Ramírez (fastapi); 2025 Sebastián Ramírez (annotated-doc)
+License: MIT
+Comment: fastapi, the web framework of the API, and annotated-doc. The full
+ texts are in the fastapi-*.dist-info and annotated_doc-*.dist-info licenses
+ folders.
+
+Files: opt/segl/venv/lib/python3.*/site-packages/starlette* opt/segl/venv/lib/python3.*/site-packages/uvicorn*
+Copyright: 2018 Encode OSS Ltd (starlette); 2017-present Encode OSS Ltd (uvicorn)
+License: BSD-3-Clause
+Comment: starlette and uvicorn, the ASGI toolkit and server. The full texts
+ are in the starlette-*.dist-info and uvicorn-*.dist-info licenses folders.
+
+Files: opt/segl/venv/lib/python3.*/site-packages/websockets*
+Copyright: Aymeric Augustin and contributors
+License: BSD-3-Clause
+Comment: websockets, the WebSocket protocol of the live boards. The full text
+ is in the websockets-*.dist-info licenses folder.
+
+Files: opt/segl/venv/lib/python3.*/site-packages/pydantic* opt/segl/venv/lib/python3.*/site-packages/typing_inspection* opt/segl/venv/lib/python3.*/site-packages/annotated_types*
+Copyright: 2017 to present Pydantic Services Inc. and individual contributors (pydantic);
+ 2022 Samuel Colvin (pydantic-core);
+ 2025 to present Pydantic Services Inc. (typing-inspection);
+ 2022 the contributors (annotated-types)
+License: MIT
+Comment: pydantic, pydantic-core, typing-inspection, and annotated-types. The
+ full texts are in their dist-info licenses folders.
+
+Files: opt/segl/venv/lib/python3.*/site-packages/anyio*
+Copyright: 2018 Alex Grönholm
+License: MIT
+Comment: anyio. The full text is in the anyio-*.dist-info licenses folder.
+
+Files: opt/segl/venv/lib/python3.*/site-packages/h11*
+Copyright: 2016 Nathaniel J. Smith and other contributors
+License: MIT
+Comment: h11, the HTTP/1.1 protocol uvicorn serves with. The full text is in
+ the h11-*.dist-info licenses folder.
+
+Files: opt/segl/venv/lib/python3.*/site-packages/click* opt/segl/venv/lib/python3.*/site-packages/idna*
+Copyright: 2014 Pallets (click); 2013-2026 Kim Davies and contributors (idna)
+License: BSD-3-Clause
+Comment: click and idna. The full texts are in the click-*.dist-info and
+ idna-*.dist-info licenses folders.
+
+Files: opt/segl/venv/lib/python3.*/site-packages/typing_extensions*
+Copyright: Python Software Foundation and contributors
+License: PSF-2.0
+Comment: typing-extensions. The full text is in the
+ typing_extensions-*.dist-info licenses folder.
+
+Files: opt/segl/venv/lib/python3.*/site-packages/opentelemetry*
+Copyright: The OpenTelemetry Authors
+License: Apache-2.0
+Comment: opentelemetry-api, which fastapi depends on. The full text is in the
+ opentelemetry_api-*.dist-info licenses folder.
+
+Files: opt/segl/app/web/dist/*
+Copyright: 2026 segl contributors; and the authors of the bundled packages
+License: Apache-2.0 and MIT and ISC and BSD-3-Clause and 0BSD and Zlib and CC0-1.0
+Comment:
+ The web application, built from web/ with Vite. Its minified files hold
+ segl's own code (Apache-2.0) together with Excalidraw
+ (@excalidraw/excalidraw, MIT), React, React Router, and the npm packages
+ those depend on. /usr/share/doc/segl/web-licenses/PACKAGES.txt lists every
+ bundled package with its version and license. Each package's license text,
+ with its copyright notice, is in a folder beside that list, named after the
+ package and its version. Where a package offers a choice of licenses, segl
+ takes the one in the License field above. The package build fails when a
+ bundled package has no license text (web/scripts/collect-licenses.ts).
+
+Files: opt/segl/app/web/dist/fonts/* opt/segl/app/web/dist/assets/*.woff2
+Copyright: The authors of each font, as its folder under
+ /usr/share/doc/segl/font-licenses/ names them
+License: OFL-1.1 and MIT and GPL-2 with Liberation-font exception
+Comment:
+ The fonts of the Excalidraw editor, as @excalidraw/excalidraw ships them.
+ /usr/share/doc/segl/font-licenses/ has a folder for each, with its
+ copyright notice and its license text.
+ .
+ OFL-1.1: Assistant, Cascadia, Excalifont, Lilita, Nunito, Virgil, Xiaolai.
+ MIT: ComicShanns.
+ GPL-2 with Liberation-font exception: Liberation. The file is Liberation
+ Sans 1.05, from before that family moved to the OFL. The Liberation Fonts
+ project publishes the 1.x fonts and their sources at
+ https://github.com/liberationfonts/liberation-1.7-fonts.
+
+License: Apache-2.0
+ On Debian systems, the full text of the Apache License 2.0 is in
+ /usr/share/common-licenses/Apache-2.0. The package also carries it as
+ /usr/share/doc/segl/LICENSE.
+
+License: MIT
+ Permission is hereby granted, free of charge, to any person obtaining a copy
+ of this software and associated documentation files (the "Software"), to deal
+ in the Software without restriction, including without limitation the rights
+ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ copies of the Software, and to permit persons to whom the Software is
+ furnished to do so, subject to the following conditions:
+ .
+ The above copyright notice and this permission notice shall be included in all
+ copies or substantial portions of the Software.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ SOFTWARE.
+
+License: BSD-3-Clause
+ Redistribution and use in source and binary forms, with or without
+ modification, are permitted provided that the following conditions are met:
+ .
+ 1. Redistributions of source code must retain the above copyright notice,
+    this list of conditions and the following disclaimer.
+ 2. Redistributions in binary form must reproduce the above copyright notice,
+    this list of conditions and the following disclaimer in the documentation
+    and/or other materials provided with the distribution.
+ 3. Neither the name of the copyright holder nor the names of its
+    contributors may be used to endorse or promote products derived from this
+    software without specific prior written permission.
+ .
+ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ POSSIBILITY OF SUCH DAMAGE.
+
+License: PSF-2.0
+ The full text of the Python Software Foundation License Version 2 is in
+ /opt/segl/python/lib/python3.*/LICENSE.txt.
+
+License: ISC
+ The full text, with each package's copyright notice, is in that package's
+ folder under /usr/share/doc/segl/web-licenses/.
+
+License: 0BSD
+ The full text, with its copyright notice, is in the tslib folder under
+ /usr/share/doc/segl/web-licenses/.
+
+License: Zlib
+ The full text, with its copyright notice, is in the pako folder under
+ /usr/share/doc/segl/web-licenses/.
+
+License: CC0-1.0
+ On Debian systems, the full text of the CC0 1.0 Universal dedication is in
+ /usr/share/common-licenses/CC0-1.0. The package also carries it in the
+ fractional-indexing folder under /usr/share/doc/segl/web-licenses/.
+
+License: OFL-1.1
+ The full text of the SIL Open Font License 1.1 is in each such font's
+ folder under /usr/share/doc/segl/font-licenses/.
+
+License: GPL-2 with Liberation-font exception
+ Red Hat's license agreement for the Liberation font software: the GNU
+ General Public License version 2, with an exception for a document that
+ embeds the font, and one for the font in a physical product. The agreement
+ is /usr/share/doc/segl/font-licenses/Liberation/License.txt, and the GPL is
+ the file COPYING beside it. On Debian systems, the full text of the GNU
+ General Public License version 2 is also in /usr/share/common-licenses/GPL-2.

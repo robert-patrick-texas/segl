@@ -1,0 +1,51 @@
+# lintian overrides for the segl package, in the form of Sunstone's. Each
+# has its reason below. Any other lintian error fails the build: build.sh
+# runs `lintian --fail-on error`. Installed as
+# /usr/share/lintian/overrides/segl.
+
+# segl installs under /opt/segl (D2-015): an interpreter and a locked
+# virtual environment of its own, apart from the system's Python and its
+# upgrades. Only the unit, sysusers.d, tmpfiles.d, and the documents under
+# /usr/share/doc/segl are elsewhere.
+segl: dir-or-file-in-opt [opt/segl/*]
+
+# The interpreter is python-build-standalone's. It links bzip2, expat,
+# ncurses, zlib, and zstd statically, so that it runs from any folder and
+# does not depend on the system's library versions. A segl release updates
+# it. The distribution's security updates do not.
+segl: embedded-library * [opt/segl/python/*]
+
+# The interpreter's ELF files ship as python-build-standalone built them.
+# binutils `strip` breaks its executable ("undefined symbol").
+segl: unstripped-binary-or-object [opt/segl/python/*]
+
+# python-build-standalone builds the interpreter's executable without PIE.
+segl: hardening-no-pie [opt/segl/python/bin/python3.*]
+
+# The commands in the virtualenv must run the interpreter in /opt/segl and
+# never /usr/bin/python3. So they need no python3 dependency, and their
+# interpreter path is meant to differ.
+segl: python3-script-but-no-python3-dep /opt/segl/venv/bin/python3 * [opt/segl/venv/bin/*]
+segl: wrong-path-for-interpreter /opt/segl/venv/bin/python3 != /usr/bin/python3 [opt/segl/venv/bin/*]
+
+# The standard library and the virtualenv ship bytecode compiled at build
+# time and checked by hash. dpkg's checksums cover it, and nothing under
+# /opt/segl/python or /opt/segl/venv is written at run time, which the unit
+# also forbids. Debian's py3compile serves /usr/bin/python3 packages only.
+segl: package-installs-python-pycache-dir [opt/segl/*/__pycache__/]
+
+# A standard-library module that still starts with "#!/usr/bin/env python".
+# Nothing runs it.
+segl: unusual-interpreter python [opt/segl/python/lib/python3.*/encodings/rot_13.py]
+
+# The websockets wheel's one extension module ships as PyPI has it, the file
+# whose hash uv.lock holds. The build does not change a wheel's files.
+segl: unstripped-binary-or-object [opt/segl/venv/lib/python3.*/site-packages/websockets/speedups.*.so]
+
+# The editor, @excalidraw/excalidraw, is bundled unmodified (D2-025). It
+# carries the code of its "embed a web page" tool: when a person embeds a
+# tweet or a Reddit post on a board, the frame the editor makes for it loads
+# that site's script. The page itself asks no other host for anything
+# (D2-026), which web/e2e/mount.spec.ts holds on every run.
+segl: privacy-breach-twitter * [opt/segl/app/web/dist/assets/*]
+segl: privacy-breach-generic * [opt/segl/app/web/dist/assets/*]

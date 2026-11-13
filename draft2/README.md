@@ -61,7 +61,7 @@ Production layout, built by T12, is separate from the git checkout:
 ```text
 /opt/segl/python/           # uv-pinned CPython
 /opt/segl/venv/             # application virtualenv
-/opt/segl/app/              # server code and built web assets
+/opt/segl/app/web/dist/     # built web assets (the server code is in the virtualenv)
 /opt/segl/share/nginx/      # the deploy/nginx files
 /opt/segl/etc/segl.toml
 /opt/segl/etc/display-names.txt

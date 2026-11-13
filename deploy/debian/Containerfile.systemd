@@ -1,0 +1,21 @@
+# ubuntu:26.04 that boots systemd as PID 1, for deploy/debian/systemd-test.sh
+# (docs/TEST-PLAN.md T-017), in the form of Sunstone's
+# packaging/container/Dockerfile.systemd. It needs a privileged container:
+# deploy/debian/package-test.sh runs it.
+#
+# Nothing of segl is in the image, so the test starts from a clean system:
+# Ubuntu, nginx, the tool that makes the snakeoil certificate, and curl. It
+# has no Python, so segl can only be running its own.
+FROM docker.io/library/ubuntu:26.04
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        ca-certificates curl dbus nginx ssl-cert systemd systemd-sysv \
+    && rm -rf /var/lib/apt/lists/*
+# Docker's Ubuntu images differ from a host in two ways that matter here.
+# A policy-rc.d forbids a maintainer script to start or stop a service, and
+# deb-systemd-invoke, which prerm uses, obeys it. And a dpkg setting leaves
+# out everything under /usr/share/doc but the copyright files, where the
+# package puts the operator notes. Remove both, to test what a host does.
+RUN rm -f /usr/sbin/policy-rc.d /etc/dpkg/dpkg.cfg.d/excludes
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

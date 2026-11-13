@@ -21,6 +21,9 @@
  * strips (D2-007). Python serves `dist/` and rewrites `./` to `../` for a
  * slot page, which is one level down.
  *
+ * The build also writes `.bundled-packages.json`, the npm packages whose code
+ * is in it, for `scripts/collect-licenses.ts`.
+ *
  * The dev server serves the page at the host root and proxies `/api` and
  * `/collab` (the WebSocket) to Python, with `changeOrigin: false` so that the
  * Origin check still sees the browser's own host.
@@ -28,6 +31,7 @@
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 import { readProjectVersion } from './scripts/app-version.ts';
+import { bundledPackages } from './scripts/bundled-packages.ts';
 import { editorFonts } from './scripts/editor-fonts.ts';
 
 const backend = process.env['SEGL_API_URL'] ?? 'http://127.0.0.1:8888';
@@ -35,7 +39,7 @@ const version = readProjectVersion(new URL('../versions.toml', import.meta.url))
 
 export default defineConfig({
 	base: './',
-	plugins: [react(), editorFonts()],
+	plugins: [react(), editorFonts(), bundledPackages()],
 	define: {
 		__SEGL_VERSION__: JSON.stringify(version)
 	},

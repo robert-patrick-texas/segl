@@ -340,7 +340,7 @@ Acceptance: that container command exits 0 on T-001 through T-016, T-019, and T-
 
 ## T12 — Debian package and systemd
 
-- Status: pending
+- Status: done
 - Requires: T11
 - Requirements: S-015
 - Read: `docs/DEPLOY.md`
@@ -356,6 +356,20 @@ Build a `.deb` that installs these:
 - `deploy/OPERATOR.md`, and `LICENSE` and `NOTICE` under the package documentation path
 
 The package copyright file names Apache-2.0. Create user `segl`. The unit's stop flushes heads (covered by T07's SIGTERM test). Build it the way Sunstone does: nfpm, in a clean `ubuntu:26.04` container, from the lockfiles.
+
+As built, where the text above left a choice open (D2-034):
+
+- The files are in `deploy/debian/`, with the unit in `deploy/systemd/segl.service`. `build-deb.sh` builds, and `package-test.sh` is T-017, in an `ubuntu:26.04` container booted with systemd.
+- The package owns the program alone. postinst makes `/opt/segl/etc` and `/opt/segl/var`, and copies the example TOML (mode `0640`, group `segl`) and the display-name file there only when they are missing. Neither is a dpkg conffile.
+- A first install enables and starts nothing, as Sunstone's does. An upgrade restarts segl if it was running. Remove keeps the settings and the boards. Purge removes the settings and keeps the boards.
+- `/opt/segl/app` holds `web/dist` alone. The server's code is the `segl` wheel in the virtualenv.
+- The package documentation path is `/usr/share/doc/segl`: `OPERATOR.md`, `LICENSE`, `NOTICE`, the copyright file, and the license texts of the bundled parts.
+- The unit adds to the manual's sketch: the system is read-only to segl but `/opt/segl/var`, exit status 2 gets no restart, and five starts in a minute is the limit.
+- `uv.lock` holds the build backend too, as the `build` dependency group, so the wheel is built with hashed tools.
+- nfpm is 2.49.0, pinned in `deploy/debian/Containerfile` with its Go image. It is not in `versions.toml`, and `release.py check` does not see it.
+- The license texts: every npm package in the web build and every font gets its text in the package, and one without a text fails the build. `web/licenses/` keeps the texts for what ships none. Liberation Sans in the editor is version 1.05, under the GPL version 2 with a font exception.
+- `scripts/release.py publish` runs `package-test.sh` as its last preflight step and attaches the package it built.
+- CI builds and installs the package as a second job.
 
 Acceptance: T-017 on Ubuntu 26.04, on a host or in an `ubuntu:26.04` container booted with systemd. That machine runs nginx with the `deploy/nginx/` files and `site-board.example.conf`, using Ubuntu's snakeoil certificate. If neither is available, log what was checked and leave a follow-up line on T13.
 

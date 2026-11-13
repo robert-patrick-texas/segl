@@ -414,7 +414,7 @@ def test_the_command_passes_when_every_row_did(
     assert "All 18 rows passed." in out
     for row in testplan.load_table().rows:
         assert re.search(rf"^  {row.name}  pass  \d+ pytest, \d+ browser$", out, flags=re.MULTILINE)
-    assert "T-017  -     not run here: the .deb" in out
+    assert "T-017  -     not run here: the .deb: deploy/debian/package-test.sh" in out
     assert "T-018  -     not judged: this is not the dev container" in out
     assert "FAIL" not in out
 

@@ -9,6 +9,7 @@ build/
 node_modules/
 web/node_modules/
 web/dist/
+web/.bundled-packages.json
 web/test-results/
 web/playwright-report/
 **/__pycache__/

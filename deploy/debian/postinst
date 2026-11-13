@@ -1,0 +1,50 @@
+#!/bin/sh
+# postinst for segl, in the form of Sunstone's.
+#
+# Makes the segl account and the folders in tmpfiles.d. Writes
+# /opt/segl/etc/segl.toml and /opt/segl/etc/display-names.txt only when they
+# do not exist: neither is a dpkg conffile, so an upgrade never stops to ask
+# about one and never changes one. On an upgrade, restarts segl.service only
+# if it was running. A first install enables and starts nothing.
+set -e
+
+ETC=/opt/segl/etc
+SHARE=/opt/segl/share
+
+install_file() {
+    # Copy $1 to $2 with group $3 and mode $4, unless $2 is there already.
+    [ -e "$2" ] && return 0
+    tmp=$(mktemp "$2.XXXXXX")
+    cp "$1" "$tmp"
+    chown "root:$3" "$tmp"
+    chmod "$4" "$tmp"
+    mv "$tmp" "$2"
+    echo "segl: created $2"
+}
+
+case "$1" in
+    configure)
+        systemd-sysusers segl.conf
+        systemd-tmpfiles --create segl.conf
+        # The settings can hold access codes and their secret, so only root
+        # and segl's group read the file.
+        install_file "$SHARE/segl.toml.example" "$ETC/segl.toml" segl 0640
+        install_file "$SHARE/display-names.txt" "$ETC/display-names.txt" root 0644
+        # Without systemd as PID 1 (a container, a chroot) there is nothing to reload.
+        if [ -d /run/systemd/system ]; then
+            systemctl --system daemon-reload >/dev/null || true
+            # $2 is the version configured before: empty on a first install.
+            # try-restart restarts the unit only if it is running.
+            if [ -n "$2" ] && ! systemctl try-restart segl.service; then
+                echo "segl: segl.service did not restart; see 'journalctl -u segl'" >&2
+            fi
+        fi
+        ;;
+    abort-upgrade | abort-remove | abort-deconfigure) ;;
+    *)
+        echo "postinst called with unknown argument '$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

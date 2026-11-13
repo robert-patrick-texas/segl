@@ -92,3 +92,24 @@ jobs:
           path: web/test-results/
           if-no-files-found: ignore
           retention-days: 7
+
+  # The Debian package: built in a clean ubuntu:26.04 container, then installed
+  # in one that boots systemd, with nginx in front (docs/TEST-PLAN.md T-017).
+  # It needs only Docker, git, and the runner's python3, which reads the version.
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Build the package and install it
+        run: deploy/debian/package-test.sh
+
+      - name: Keep the package
+        uses: actions/upload-artifact@v7
+        with:
+          name: segl-deb
+          path: dist/*.deb
+          if-no-files-found: error
+          retention-days: 7

@@ -1,4 +1,6 @@
 dist/
+.bundled-packages.json
+licenses/
 node_modules/
 playwright-report/
 test-results/

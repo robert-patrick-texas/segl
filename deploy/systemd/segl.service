@@ -1,0 +1,57 @@
+# segl: the web application, the API, and the live boards, on the address in
+# /opt/segl/etc/segl.toml (127.0.0.1:8888 unless changed). nginx on the same
+# host faces the network (deploy/OPERATOR.md).
+#
+# The package installs it disabled. Start it, now and at every boot, with
+#   sudo systemctl enable --now segl
+[Unit]
+Description=segl shared drawing boards
+Documentation=https://robert-patrick-texas.github.io/segl/docs/DEPLOY.html
+After=network.target
+# At most five starts in a minute. Then systemd stops trying, and the unit
+# is failed until `systemctl reset-failed segl`. A start by hand counts too.
+StartLimitIntervalSec=1min
+StartLimitBurst=5
+
+[Service]
+Type=exec
+ExecStart=/opt/segl/venv/bin/segl --config /opt/segl/etc/segl.toml
+User=segl
+Group=segl
+SyslogIdentifier=segl
+Restart=on-failure
+RestartSec=5s
+# Exit status 2 is a setting segl cannot use. A restart would not fix the
+# file, so there is none: `systemctl status segl` shows the line that names
+# the key.
+RestartPreventExitStatus=2
+# A stop is SIGTERM. segl then writes every slot that has unsaved edits, and
+# this is how long it has for that.
+TimeoutStopSec=20
+
+# No capability at all. The whole system is read-only to segl but its data
+# folder, which holds the database and the uploaded images.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ReadWritePaths=/opt/segl/var
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# What segl writes, nobody outside its group reads.
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

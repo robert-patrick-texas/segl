@@ -1,0 +1,22 @@
+#!/bin/sh
+# prerm for segl, in the form of Sunstone's.
+#
+# On removal, stop segl before its files go. The stop is SIGTERM, on which
+# segl writes every slot with unsaved edits. On an upgrade nothing is
+# stopped: segl keeps running, and the new postinst restarts it.
+set -e
+
+case "$1" in
+    remove)
+        if [ -d /run/systemd/system ]; then
+            deb-systemd-invoke stop segl.service >/dev/null || true
+        fi
+        ;;
+    upgrade | deconfigure | failed-upgrade) ;;
+    *)
+        echo "prerm called with unknown argument '$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

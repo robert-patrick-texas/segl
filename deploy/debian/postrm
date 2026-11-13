@@ -1,0 +1,40 @@
+#!/bin/sh
+# postrm for segl, in the form of Sunstone's.
+#
+# `apt remove` keeps the settings (/opt/segl/etc) and the boards
+# (/opt/segl/var). `apt purge` removes the settings and the link that
+# `systemctl enable` made. It keeps boards that are not empty, and says so.
+# The segl account stays, as Debian leaves system accounts, so the files
+# that are left keep an owner.
+set -e
+
+reload_systemd() {
+    if [ -d /run/systemd/system ]; then
+        systemctl --system daemon-reload >/dev/null || true
+    fi
+}
+
+case "$1" in
+    remove)
+        reload_systemd
+        ;;
+    purge)
+        rm -rf /opt/segl/etc
+        # The links of `systemctl enable`, and a mask, for a unit that is gone.
+        find /etc/systemd/system -maxdepth 2 -type l -name 'segl.service' -delete 2>/dev/null || true
+        reload_systemd
+        rmdir /opt/segl/var /opt/segl 2>/dev/null || true
+        if [ -d /opt/segl/var ]; then
+            echo "segl: removed the settings in /opt/segl/etc."
+            echo "segl: kept the boards in /opt/segl/var: the database and the uploaded images."
+            echo "segl: To delete them, remove /opt/segl."
+        fi
+        ;;
+    upgrade | failed-upgrade | abort-install | abort-upgrade | disappear) ;;
+    *)
+        echo "postrm called with unknown argument '$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

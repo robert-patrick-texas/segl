@@ -45,6 +45,13 @@ docs = [
     "markdown-it-py==4.3.0",
     "mdit-py-plugins==0.7.0",
 ]
+# The build backend again, the same line as [build-system] requires. As a
+# group, uv.lock holds it and its own dependencies with their hashes, and the
+# package build takes them from there (deploy/debian/build.sh). No default
+# group: `uv sync` does not install it.
+build = [
+    "hatchling==1.33.0",
+]
 
 [tool.uv]
 default-groups = ["dev", "docs"]

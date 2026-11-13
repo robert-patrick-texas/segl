@@ -1,0 +1,41 @@
+# Builder image for the segl .deb, in the form of Sunstone's
+# (sunstone/packaging/Dockerfile, read at d22fd82).
+#
+# The package is put together inside a clean Ubuntu 26.04 container, so the
+# result depends only on pinned inputs: uv, which installs the pinned CPython
+# and checks its checksum, nfpm, Node for the web build, and the two
+# lockfiles, uv.lock and web/package-lock.json. lintian and systemd-analyze
+# come from Ubuntu and only look at the result.
+#
+# deploy/debian/build-deb.sh builds it, with no build context:
+#
+#     docker build -t segl-deb-builder - < deploy/debian/Containerfile
+
+ARG BASE_IMAGE=docker.io/library/ubuntu:26.04
+
+# nfpm 2.49.0, built statically. `go install` checks every module against
+# the Go checksum database. GOTOOLCHAIN=local: the pinned image's Go builds
+# it, and Go fetches no other.
+FROM docker.io/library/golang:1.27.4@sha256:5e8afd493a7124a8586e134d9b532731161d4b9becf9dee5a5956b107426f93d AS nfpm
+RUN CGO_ENABLED=0 GOTOOLCHAIN=local GOBIN=/out \
+    go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.49.0
+
+# uv and Node, the same two lines as deploy/Containerfile.
+# tests/test_package.py holds the two files to each other.
+FROM ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490 AS uv
+FROM docker.io/library/node:26.13.1-trixie-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc AS node
+
+FROM ${BASE_IMAGE}
+# binutils has readelf, for the check of the glibc the package needs. Node's
+# own binary needs libatomic. Node builds the web application and is not
+# packaged.
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        binutils ca-certificates libatomic1 lintian systemd \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=uv /uv /uvx /usr/local/bin/
+COPY --from=nfpm /out/nfpm /usr/local/bin/nfpm
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && node --version && npm --version && nfpm --version && uv --version

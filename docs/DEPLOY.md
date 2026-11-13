@@ -2,7 +2,7 @@
 
 ## Configuration
 
-`/opt/segl/etc/segl.toml` on the server. `deploy/segl.toml.example` is that file as the `.deb` installs it, with a comment on each key:
+`/opt/segl/etc/segl.toml` on the server. `deploy/segl.toml.example` is that file as the `.deb` installs it, with a comment on each key. The package creates it with mode `0640`, owner `root`, group `segl`, and only when it is missing:
 
 ```toml
 bind = "127.0.0.1:8888"
@@ -55,7 +55,7 @@ access_secret = "<what `openssl rand -base64 32` wrote>"
 access_pass_hours = 12
 ```
 
-Then restrict the file to mode `0640`, owner `root`, group `segl`, and restart segl.
+Keep the file at mode `0640`, owner `root`, group `segl`, as the package made it, and restart segl.
 
 - **A code** is a word or a phrase with at least 8 letters and digits, in ASCII, at most 256 characters as written. A person may type it in any case and with any spaces or punctuation: `Maple River 42`, `maple.river.42`, and `MAPLE-river 42` are one code. So two entries that differ only in that way are one code twice, and segl does not start. Give different groups different codes, and a group's access ends when its code is taken out of the list.
 - **`access_secret`** signs the pass a code buys. It is at least 32 characters, and segl does not start with codes and no secret. It is never shown, logged, or sent. A new secret ends every pass.
@@ -87,26 +87,79 @@ A firewall, or the `allow` and `deny` lines in `segl-board.conf`, can do the sam
 | Path | Contents |
 |---|---|
 | `/opt/segl/python` | CPython installed by `uv python install` during package build, at the exact `runtime.python` in `versions.toml`. `.python-version` mirrors that pin. |
-| `/opt/segl/venv` | Virtualenv created from `uv.lock` using that interpreter. The installed `segl` package carries a copy of `versions.toml`, which `segl --version` reads. |
-| `/opt/segl/app` | Application source and `web/dist`. |
+| `/opt/segl/venv` | Virtualenv created from `uv.lock` using that interpreter. It holds the `segl` package, which is the server's code. The package carries a copy of `versions.toml`, which `segl --version` reads. |
+| `/opt/segl/app/web/dist` | The built web application. |
 | `/opt/segl/share/nginx` | The files from `deploy/nginx/`. |
+| `/opt/segl/share` | `segl.toml.example` and `display-names.txt`, the two files `/opt/segl/etc` starts from. |
 | `/opt/segl/etc/segl.toml` | Site config. |
 | `/opt/segl/etc/display-names.txt` | Copy of `deploy/display-names.txt`. Sites edit this copy. |
 | `/opt/segl/var` | SQLite database, asset directory, writable by user `segl`. |
+| `/usr/lib/systemd/system/segl.service` | The unit, `deploy/systemd/segl.service`. |
+| `/usr/share/doc/segl` | `OPERATOR.md`, `LICENSE`, `NOTICE`, the copyright file, and the license texts of the bundled parts. |
 
-The `.deb` creates system user `segl`, shell `nologin`, home `/opt/segl`. The unit runs as that user. The interpreter and virtualenv are owned by root and are not writable by `segl`.
+The `.deb` creates system user `segl`, shell `nologin`, home `/opt/segl`. The unit runs as that user. The interpreter, the virtualenv, the web application, and `/opt/segl/etc` are owned by root and are not writable by `segl`. `/opt/segl/var` is mode `0750`, owner `segl`.
+
+The unit, in part:
 
 ```ini
 [Service]
+ExecStart=/opt/segl/venv/bin/segl --config /opt/segl/etc/segl.toml
 User=segl
 Group=segl
-ExecStart=/opt/segl/venv/bin/segl --config /opt/segl/etc/segl.toml
 Restart=on-failure
-NoNewPrivileges=true
+RestartPreventExitStatus=2
 TimeoutStopSec=20
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/segl/var
 ```
 
-`TimeoutStopSec` gives the process time to flush dirty heads on SIGTERM.
+- `TimeoutStopSec` gives the process time to flush dirty heads on SIGTERM.
+- `ProtectSystem=strict` makes the whole system read-only to segl. `ReadWritePaths` opens `/opt/segl/var` again. A site that moves `database` or `assets_dir` out of that folder must add the new folder there, with a drop-in (`systemctl edit segl`).
+- `RestartPreventExitStatus=2`: exit status 2 is a setting segl cannot use. systemd does not start segl again, and `systemctl status segl` shows the line that names the key.
+- The unit allows five starts in a minute. A sixth, by hand or not, is refused until `systemctl reset-failed segl`.
+
+The package installs the unit disabled. `systemctl enable --now segl` starts it, now and at every boot.
+
+## The package
+
+`deploy/debian/` builds the `.deb`, in the form Sunstone builds its own (D2-034):
+
+```bash
+deploy/debian/build-deb.sh        # writes dist/segl_<version>_amd64.deb
+deploy/debian/package-test.sh     # builds it, then installs it: T-017
+```
+
+Both need Docker, git, and the host's `python3`, which reads the version. `DEVELOPMENT.md` (the package) says what each does and how long it takes.
+
+The build runs in a clean `ubuntu:26.04` container (`deploy/debian/Containerfile`). Its inputs are pinned: uv and Node by image digest, nfpm by version, and everything else by the two lockfiles.
+
+- uv installs the CPython of `.python-version` and checks its checksum.
+- The virtualenv gets the packages `uv.lock` lists for segl, as wheels, each checked against its hash. No development tool is installed.
+- The `segl` wheel is built there with hatchling. `uv.lock` holds hatchling and its own dependencies too, as the `build` dependency group in `pyproject.toml`, and the build checks their hashes.
+- `npm ci --ignore-scripts` and `npm run build` make `web/dist` from `web/package-lock.json`. Node is not packaged.
+- nfpm writes the package (`deploy/debian/nfpm.yaml`), and lintian reads it. A lintian error fails the build. `deploy/debian/lintian-overrides` lists the findings that are meant, each with its reason.
+
+What the package does on a machine:
+
+- **Install.** It creates user `segl`, `/opt/segl/etc`, and `/opt/segl/var`. It copies the two files into `/opt/segl/etc` when they are missing. It enables and starts nothing.
+- **Upgrade.** It leaves `/opt/segl/etc` and `/opt/segl/var` as they are. Neither file in `/opt/segl/etc` is a dpkg conffile, so an upgrade never stops to ask about one. It restarts segl if it was running.
+- **Remove.** It stops segl and removes the program. The settings and the boards stay.
+- **Purge.** It also removes `/opt/segl/etc`. It keeps the boards in `/opt/segl/var`, and says so. User `segl` stays, so those files keep an owner.
+
+The package depends on `systemd` and `libc6`. It suggests nginx, which may run on another host.
+
+### License texts in the package
+
+The package carries the license text of every part it bundles (`deploy/debian/copyright` says where):
+
+- CPython's is in `/opt/segl/python`, and each Python package's is in its own `dist-info/licenses` folder. The build fails when one is missing.
+- The web build is minified and keeps no license comments. The build lists the npm packages whose code is in it (`web/scripts/bundled-packages.ts`), and `web/scripts/collect-licenses.ts` copies each one's license text to `/usr/share/doc/segl/web-licenses/`.
+- The editor ships nine font families and no license text for any. `web/licenses/` keeps those texts, and the texts of the few npm packages that ship none, with the source of each (`web/licenses/README.md`). They go to `/usr/share/doc/segl/font-licenses/`.
+
+The collector fails when a bundled package or a font has no license text. pytest runs it against the real build, so a new editor version that adds one fails the suite.
+
+Eight of the fonts are under the SIL Open Font License or MIT. The ninth, Liberation Sans, ships in the editor as version 1.05, which is under the GNU General Public License version 2 with a font exception. The package carries that license and names where the font's source is.
 
 ## nginx
 
@@ -157,6 +210,8 @@ The test suite repeats the check against segl itself on every run (`tests/test_m
 
 Not part of the MVP. After the gate, L-005 adds an image that runs the same `/opt/segl` layout. Do not add it in T12.
 
-## Operator notes to ship in T12
+## Operator notes
 
-Write `deploy/OPERATOR.md` from this page, covering: install the `.deb`, install the nginx files and add the include line, leave `access_codes` empty or set codes with `access_secret`, set `internal_networks` where the site wants the second check, replace `display-names.txt`, and restart the unit. Say how to end every pass with `access_passes_after`, and that the access page is not a login. State that slots are shared and that protected inventory is not available on them.
+[`deploy/OPERATOR.md`](../deploy/OPERATOR.md) is the short form of this page for the person who installs segl. The package installs it as `/usr/share/doc/segl/OPERATOR.md`. It covers: install the `.deb` and start the unit, install the nginx files and add the include line, leave `access_codes` empty or set codes with `access_secret`, end every pass with `access_passes_after`, set `internal_networks` where the site wants the second check, replace `display-names.txt`, back up, upgrade, and remove. It says that the access page is not a login, that slots are shared, and that protected inventory is not available on them.
+
+The install test runs the nginx commands of those notes as they are written, and pytest holds the two to each other (`tests/test_package.py`).
