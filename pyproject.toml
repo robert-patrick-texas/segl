@@ -15,7 +15,7 @@ license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.15,<3.16"
 authors = [{ name = "segl contributors" }]
 dependencies = [
-    "fastapi==0.162.5",
+    "fastapi==0.162.7",
     # Plain uvicorn, not [standard], as in vakr and Sunstone.
     "uvicorn==0.54.0",
     # The WebSocket protocol for uvicorn, which has none of its own, and the
@@ -36,8 +36,8 @@ dev = [
     # httpx there and asks for httpx2, which vakr and Sunstone also use.
     "httpx2==2.16.0",
     "pytest==9.2.0",
-    "ruff==0.17.4",
-    "ty==0.0.101",
+    "ruff==0.17.5",
+    "ty==0.0.104",
 ]
 # tools/md2html's packages, so pytest and ty can resolve them. md2html keeps
 # its own inline metadata for `uv run`.

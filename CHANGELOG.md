@@ -83,6 +83,7 @@ The project is specified, licensed, and public on GitHub. A Python service reads
 ### Changed
 
 - The dev container's command is `scripts/testplan.py`. It was `uv run pytest`.
+- fastapi 0.162.7, ruff 0.17.5, ty 0.0.104, and `@playwright/test` 1.65.1, each moved by `scripts/release.py upgrade` after the suite passed with it.
 - `scripts/release.py publish` ends its preflight with `deploy/debian/package-test.sh`, and attaches the package that test built and installed. It attached every `.deb` in `dist/` before.
 - `pyproject.toml` has a `build` dependency group, the same line as `[build-system] requires`, so that `uv.lock` holds hatchling and its dependencies with hashes for the package build. `uv sync` does not install it.
 - `NOTICE` names the license of each font the editor ships. Liberation Sans is version 1.05 there, under the GNU General Public License version 2 with a font exception, not the Open Font License of the later versions.

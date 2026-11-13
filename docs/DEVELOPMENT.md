@@ -33,7 +33,7 @@ $ docker run --rm --network host --init mcr.microsoft.com/playwright:v<version>-
 $ PW_WS_ENDPOINT=ws://127.0.0.1:3124/ npm --prefix web run e2e
 ```
 
-`<version>` must equal the `@playwright/test` version in `versions.toml`, 1.65.0 today. `web/playwright.config.ts` reads `PW_WS_ENDPOINT`. The container shares the host's network, so its browser reaches the test servers on `127.0.0.1`. The tests pass the browser no launch arguments, which that server would drop unless started with `--unsafe`.
+`<version>` is the `@playwright/test` version in `versions.toml`, 1.65.1 today. The browser server refuses a client of another minor release. A patch apart works: on 2026-11-13 the 1.65.1 tests ran against the 1.65.0 image. `web/playwright.config.ts` reads `PW_WS_ENDPOINT`. The container shares the host's network, so its browser reaches the test servers on `127.0.0.1`. The tests pass the browser no launch arguments, which that server would drop unless started with `--unsafe`.
 
 CI installs the browser with `npx playwright install --with-deps chromium`, which also installs its system libraries. The dev container's image has both, installed the same way, so the browser tests run in it with no second container.
 
