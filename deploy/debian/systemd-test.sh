@@ -12,10 +12,13 @@
 #
 #   SEGL_VERSION   the version the package must report
 #   SEGL_PYTHON    the Python it must carry, .python-version
+#   SEGL_LIBERATION_SHA256
+#                  the Liberation Sans it must carry, the checkout's
+#                  web/fonts/Liberation/LiberationSans-Regular.woff2
 set -uo pipefail
 # shellcheck source=deploy/debian/testlib.sh
 . /deploy/debian/testlib.sh
-: "${SEGL_VERSION:?}" "${SEGL_PYTHON:?}"
+: "${SEGL_VERSION:?}" "${SEGL_PYTHON:?}" "${SEGL_LIBERATION_SHA256:?}"
 
 LOCAL=http://127.0.0.1:8888
 SITE=https://dev.example.com
@@ -87,6 +90,12 @@ check "every package in that list has a folder with a text in it" \
     = "$(grep -c -E '^\S+ [0-9]' $DOC/web-licenses/PACKAGES.txt)"
 check "every font of the canvas has its license text" \
     equals "$(ls $DOC/font-licenses)" "$(ls /opt/segl/app/web/dist/fonts)"
+check "Liberation Sans is the file segl ships, not the editor's" equals "$SEGL_LIBERATION_SHA256" \
+    "$(sha256sum /opt/segl/app/web/dist/fonts/Liberation/LiberationSans-Regular.woff2 | cut -d' ' -f1)"
+check "its license text is the Open Font License, and no other" \
+    equals "$(ls $DOC/font-licenses/Liberation)" OFL.txt
+check "no font license in the package is the GNU General Public License" \
+    bash -c "! grep -r -l 'GNU GENERAL PUBLIC LICENSE' $DOC/font-licenses"
 check "every Python package in the virtualenv has its license text" \
     bash -c 'for d in /opt/segl/venv/lib/python3.*/site-packages/*.dist-info; do [ -n "$(ls -A "$d/licenses")" ] || exit 1; done'
 check "the interpreter's license is where the copyright file says" \

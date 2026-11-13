@@ -267,7 +267,11 @@ test('every font the pinned editor ships has a kept text', () => {
 
 	expect(result.problems).toEqual([]);
 	expect(result.count).toBe(readdirSync(EDITOR_FONTS).length);
-	expect(readdirSync(join(root, 'out', 'Liberation')).sort()).toEqual(['COPYING', 'License.txt']);
+	// The license of the Liberation Sans segl ships, version 2.1.5, and no other.
+	expect(readdirSync(join(root, 'out', 'Liberation'))).toEqual(['OFL.txt']);
+	expect(readFileSync(join(root, 'out', 'Liberation', 'OFL.txt'), 'utf8')).toContain(
+		'SIL OPEN FONT LICENSE Version 1.1'
+	);
 });
 
 test('the list is read from the file the build wrote', () => {

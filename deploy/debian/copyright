@@ -95,18 +95,20 @@ Comment:
 Files: opt/segl/app/web/dist/fonts/* opt/segl/app/web/dist/assets/*.woff2
 Copyright: The authors of each font, as its folder under
  /usr/share/doc/segl/font-licenses/ names them
-License: OFL-1.1 and MIT and GPL-2 with Liberation-font exception
+License: OFL-1.1 and MIT
 Comment:
- The fonts of the Excalidraw editor, as @excalidraw/excalidraw ships them.
- /usr/share/doc/segl/font-licenses/ has a folder for each, with its
- copyright notice and its license text.
+ The fonts of the Excalidraw editor. /usr/share/doc/segl/font-licenses/ has
+ a folder for each, with its copyright notice and its license text.
  .
- OFL-1.1: Assistant, Cascadia, Excalifont, Lilita, Nunito, Virgil, Xiaolai.
+ OFL-1.1: Assistant, Cascadia, Excalifont, Liberation, Lilita, Nunito,
+ Virgil, Xiaolai.
  MIT: ComicShanns.
- GPL-2 with Liberation-font exception: Liberation. The file is Liberation
- Sans 1.05, from before that family moved to the OFL. The Liberation Fonts
- project publishes the 1.x fonts and their sources at
- https://github.com/liberationfonts/liberation-1.7-fonts.
+ .
+ All are the files @excalidraw/excalidraw ships, but for Liberation. That
+ package ships Liberation Sans 1.05, which is under the GNU General Public
+ License. segl does not ship that file. It ships Liberation Sans 2.1.5 in
+ its place, from https://github.com/liberationfonts/liberation-fonts, under
+ the SIL Open Font License.
 
 License: Apache-2.0
  On Debian systems, the full text of the Apache License 2.0 is in
@@ -181,11 +183,3 @@ License: CC0-1.0
 License: OFL-1.1
  The full text of the SIL Open Font License 1.1 is in each such font's
  folder under /usr/share/doc/segl/font-licenses/.
-
-License: GPL-2 with Liberation-font exception
- Red Hat's license agreement for the Liberation font software: the GNU
- General Public License version 2, with an exception for a document that
- embeds the font, and one for the font in a physical product. The agreement
- is /usr/share/doc/segl/font-licenses/Liberation/License.txt, and the GPL is
- the file COPYING beside it. On Debian systems, the full text of the GNU
- General Public License version 2 is also in /usr/share/common-licenses/GPL-2.

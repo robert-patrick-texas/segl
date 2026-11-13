@@ -21,6 +21,7 @@ systemd (docs/TEST-PLAN.md T-017).
 """
 
 import configparser
+import hashlib
 import os
 import re
 import shutil
@@ -412,6 +413,54 @@ def test_everything_in_the_real_build_has_a_license_text(tmp_path: Path) -> None
     assert fonts == sorted(
         folder.name for folder in (ROOT / "web" / "dist" / "fonts").iterdir() if folder.is_dir()
     )
+
+
+# The font segl ships in place of the editor's (D2-026)
+
+LIBERATION = Path("fonts") / "Liberation" / "LiberationSans-Regular.woff2"
+
+
+def test_the_liberation_sans_segl_ships_is_the_file_its_record_names() -> None:
+    shipped = (ROOT / "web" / LIBERATION).read_bytes()
+    record = read(ROOT / "web" / "licenses" / "README.md")
+    digest = hashlib.sha256(shipped).hexdigest()
+
+    assert shipped[:4] == b"wOF2"
+    assert f"`web/{LIBERATION}`, SHA-256 `{digest}`" in record, (
+        "web/licenses/README.md names another file: a new font needs its source recorded there"
+    )
+    assert "Liberation Fonts 2.1.5" in record
+
+
+def test_the_real_build_carries_that_liberation_sans() -> None:
+    built = ROOT / "web" / "dist" / LIBERATION
+    if not built.is_file():
+        pytest.skip("web/dist is not built: `npm --prefix web run build`")
+
+    assert built.read_bytes() == (ROOT / "web" / LIBERATION).read_bytes()
+
+
+def test_no_font_license_segl_keeps_or_names_is_the_gpl() -> None:
+    kept = [path for path in (ROOT / "web" / "licenses" / "fonts").rglob("*") if path.is_file()]
+    fonts = read(DEBIAN / "copyright").split("Files: opt/segl/app/web/dist/fonts/*", 1)[1]
+    licenses = re.search(r"^License: (.+)$", fonts, flags=re.MULTILINE)
+
+    assert len(kept) >= 9
+    for path in kept:
+        assert "GNU GENERAL PUBLIC LICENSE" not in read(path), path
+    assert licenses
+    assert licenses.group(1) == "OFL-1.1 and MIT"
+    assert "License: GPL" not in read(DEBIAN / "copyright")
+
+
+def test_the_install_test_holds_the_packaged_font_to_the_checkouts() -> None:
+    runner = read(DEBIAN / "package-test.sh")
+    test = read(DEBIAN / "systemd-test.sh")
+
+    assert f"sha256sum web/{LIBERATION}" in runner
+    assert '--env SEGL_LIBERATION_SHA256="$liberation"' in runner
+    assert f"sha256sum /opt/segl/app/web/dist/{LIBERATION}" in test
+    assert 'equals "$SEGL_LIBERATION_SHA256"' in test
 
 
 def test_every_lintian_override_is_for_segl_and_has_a_reason() -> None:

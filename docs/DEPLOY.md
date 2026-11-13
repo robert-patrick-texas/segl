@@ -159,7 +159,7 @@ The package carries the license text of every part it bundles (`deploy/debian/co
 
 The collector fails when a bundled package or a font has no license text. pytest runs it against the real build, so a new editor version that adds one fails the suite.
 
-Eight of the fonts are under the SIL Open Font License or MIT. The ninth, Liberation Sans, ships in the editor as version 1.05, which is under the GNU General Public License version 2 with a font exception. The package carries that license and names where the font's source is.
+All nine fonts in the package are under the SIL Open Font License or MIT. Eight are the editor's own files. The ninth is not: the editor ships Liberation Sans 1.05, which is under the GNU General Public License version 2 with a font exception, and segl ships Liberation Sans 2.1.5 in its place, under the Open Font License (`web/licenses/README.md`, the font segl replaces). No font in the package is under the GPL.
 
 ## nginx
 

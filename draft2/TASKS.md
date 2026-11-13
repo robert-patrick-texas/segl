@@ -367,7 +367,7 @@ As built, where the text above left a choice open (D2-034):
 - The unit adds to the manual's sketch: the system is read-only to segl but `/opt/segl/var`, exit status 2 gets no restart, and five starts in a minute is the limit.
 - `uv.lock` holds the build backend too, as the `build` dependency group, so the wheel is built with hashed tools.
 - nfpm is 2.49.0, pinned in `deploy/debian/Containerfile` with its Go image. It is not in `versions.toml`, and `release.py check` does not see it.
-- The license texts: every npm package in the web build and every font gets its text in the package, and one without a text fails the build. `web/licenses/` keeps the texts for what ships none. Liberation Sans in the editor is version 1.05, under the GPL version 2 with a font exception.
+- The license texts: every npm package in the web build and every font gets its text in the package, and one without a text fails the build. `web/licenses/` keeps the texts for what ships none. Liberation Sans in the editor is version 1.05, under the GPL version 2 with a font exception. Changed the same day, at the user's request and after the task: the build ships Liberation Sans 2.1.5, under the Open Font License, in its place (`web/fonts/`, D2-026).
 - `scripts/release.py publish` runs `package-test.sh` as its last preflight step and attaches the package it built.
 - CI builds and installs the package as a second job.
 

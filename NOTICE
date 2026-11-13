@@ -58,15 +58,20 @@ the npm package @excalidraw/excalidraw, unmodified, under this license:
   SOFTWARE.
 
 The web build (web/dist, which is not in this repository) also carries the font
-files that package ships in dist/prod/fonts. Each font remains under its own
-license. The npm package does not include those license texts. web/licenses/fonts
-has them, and web/licenses/README.md names the source of each:
+files that package ships in dist/prod/fonts, but for one. Each font remains
+under its own license. The npm package does not include those license texts.
+web/licenses/fonts has them, and web/licenses/README.md names the source of each:
 
-  Assistant, Cascadia, Excalifont, Lilita, Nunito, Virgil, Xiaolai:
+  Assistant, Cascadia, Excalifont, Liberation, Lilita, Nunito, Virgil, Xiaolai:
     SIL Open Font License 1.1
   ComicShanns: MIT License
-  Liberation (Liberation Sans 1.05): GNU General Public License version 2,
-    with the exceptions of Red Hat's Liberation font license agreement
+
+The one is Liberation Sans. That package ships version 1.05, which is under the
+GNU General Public License version 2 with exceptions. The web build does not
+carry that file. It carries Liberation Sans 2.1.5 in its place
+(web/fonts/Liberation), from https://github.com/liberationfonts/liberation-fonts,
+Digitized data copyright (c) 2010 Google Corporation, Copyright (c) 2012 Red
+Hat, Inc., under the SIL Open Font License 1.1.
 
 The web build also bundles React, React Router, and the npm packages that
 Excalidraw and they depend on, each under its own license. The build lists them

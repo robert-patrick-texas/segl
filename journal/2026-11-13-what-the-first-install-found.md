@@ -42,6 +42,8 @@ The fonts were the surprise. The editor ships nine families and no license text 
 
 The ninth is Liberation Sans. Its records say version 1.05, from 2009. Liberation moved to the Open Font License with version 2. Version 1 is under the GNU General Public License version 2, with an exception for a document that embeds the font. Nobody would have guessed that from the folder's name. The package carries that license, and the notice names it.
 
+That did not last the day. The owner asked for a font that is not under the GPL, and the answer was the same font, twelve years on: Liberation Sans 2.1.5, under the Open Font License, with the same metrics. The build lays it over the editor's file at the same path. The editor asks for the file it always asked for and does not know the difference.
+
 The script fails when a package or a font has no text, and pytest runs it against the real build. A new editor version that adds a font fails the suite until someone has read its license.
 
 ## One group in the lockfile

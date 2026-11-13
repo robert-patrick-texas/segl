@@ -19,6 +19,8 @@ version=$(python3 -c '
 import tomllib
 print(tomllib.load(open("versions.toml", "rb"))["project"]["version"])')
 python=$(tr -d '[:space:]' <.python-version)
+# The font segl ships in place of the editor's (web/licenses/README.md).
+liberation=$(sha256sum web/fonts/Liberation/LiberationSans-Regular.woff2 | cut -d" " -f1)
 name=segl_${version}_amd64.deb
 deb=${1:-}
 if [ -z "$deb" ]; then
@@ -75,4 +77,5 @@ case $state in
         ;;
 esac
 docker exec --env SEGL_VERSION="$version" --env SEGL_PYTHON="$python" \
+    --env SEGL_LIBERATION_SHA256="$liberation" \
     "$container" bash /deploy/debian/systemd-test.sh
