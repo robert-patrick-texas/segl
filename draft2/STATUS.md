@@ -2,7 +2,7 @@
 
 This file is the source of truth for what is done and what to do next. Update it at the end of every task. Do not mark a task complete unless its acceptance commands were run and passed.
 
-- Updated: 2026-11-12
+- Updated: 2026-11-13
 - Phase: P0 collaborative slots
 - Next task: T11
 - Completed: T00, T00b, T01, T01b, T02, T03, T04, T05, T06, T07, T08, T09, T10, T10b
@@ -841,7 +841,7 @@ This file is the source of truth for what is done and what to do next. Update it
   - Documents: `docs/API.md` (the field), `docs/ARCHITECTURE.md` and `docs/SECURITY.md` (the page stops first, and that is not the gate), `docs/DEPLOY.md`, `docs/TEST-PLAN.md` T-019, D2-033 with a dated amendment, the as-built list of T10b in `draft2/TASKS.md`, `CHANGELOG.md`, and a paragraph in the journal entry.
   - Not done or not exercised: a browser whose timers are held back, such as a laptop that slept through the end, was not tried. It stops when the timer runs, or when the server says so at its next edit or its next `hello`. A person in the middle of a stroke at the moment the page stops was not tried by hand. The page stops a second early by its own count from `welcome`, so a `welcome` that took more than a second to arrive leaves less than that. Only Chromium was run. The ended state was not looked at again in a screenshot: its words and its link are the ones T10b's screenshots showed.
   - Next action remains T11.
-- 2026-11-12: The bar says `Editing locked: access expired` when a pass ends. The user asked for it after the entry above, outside the task queue: "Fewer words are better." Evidence, on commit `6365cf8`:
+- 2026-11-13: The bar says `Editing locked: access expired` when a pass ends. The user asked for it after the entry above, outside the task queue: "Fewer words are better." Evidence, on commit `6365cf8`:
   - The old words were `Editing is locked: the access this browser had has ended.` The change is one line in `web/src/bar/notice.ts`. The other notices keep their words.
   - `npm --prefix web test` gave 655 passed. `npm --prefix web run check` and `format:check` passed.
   - The browser tests that read the message gave 60 passed in 2.4 minutes: the three `access-` projects and `restart`. The full suite did not run on the host. CI runs it.
