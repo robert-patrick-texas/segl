@@ -24,6 +24,16 @@ A PostgreSQL implementation of the repository interface when a deployment outgro
 
 SSO, encryption at rest, audit retention, and the other deferred controls listed in `draft1/SECURITY.md`. Basic perimeter control, TLS, access codes, `internal_networks`, and the ban on cookies are already in P0 and stay.
 
+## After the gate — send a scene once
+
+Not part of P0. It changes the WebSocket protocol, so it waits for the gate.
+
+- **Today.** A page that opens a slot gets the scene twice: the stored head over HTTP, then the room's scene over the socket, after `welcome`. Both are the same element records in the same form. They differ only when someone edited in between: the stored head is at most `head_flush_seconds` behind the room. A page that comes back hours later gets both again. For a slot of 1,024 elements each copy was about 431,000 bytes, and about 12,000 compressed.
+- **The change.** The scene route's answer carries a mark of the scene it returns. `hello` carries that mark back. The server then sends only the elements that changed since the mark. For a quiet slot that is none. A mark the server does not know gets the whole scene, as today: after a restart, a restore, or an import.
+- **One way to make the mark.** The room counts every change it takes, and notes for each element the count at its last change. The mark is that count, the epoch, and a value the server picks when it starts. It lives in memory. Nothing joins the database.
+- **What stays.** The HTTP copy stays: it paints the canvas when the socket is slow or never opens. The page still reconciles what it is sent (D2-025). A page that sends no mark gets the whole scene.
+- **Not planned.** A browser that keeps a slot's scene between visits, so that a return visit downloads only what changed. That needs storage in the browser, and a mark that outlives a restart of the server.
+
 ## Held until a dependency moves
 
 - **TLS 1.3 for the test harness's WebSocket client.** The pytest harness speaks TLS 1.2 to its test nginx and nothing newer (`tests/harness.py`, `running_mount`). The client is the `websockets` package's sync client, 17.4 when the hold was made. It starts a thread that reads the socket before it has written its request, and under TLS 1.3 on a busy machine that request was sometimes lost: 2 of 2,253 handshakes with eight busy processes on four cores, and none of 6,000 over TLS 1.2. nginx then waits a minute for a request that does not come, and the test fails. Where the request is lost, in the client, in Python's `ssl`, or in OpenSSL, was not traced. Nothing segl ships is held: nginx offers TLS 1.3, browsers use it, and the browser tests run over it. When `scripts/release.py upgrade` brings a newer `websockets`, run `uv run python tests/handshake_loop.py 3000 --busy 8 --tls13` a few times. If it loses none, remove the one line that sets `maximum_version`, and this entry.

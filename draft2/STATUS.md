@@ -928,3 +928,10 @@ This file is the source of truth for what is done and what to do next. Update it
     - What makes the canvas report a change in the gap was not pinned down. The test makes the gap a second long and has another person on the slot, and that was enough every time.
     - A page still gets the scene twice when it opens a slot: over HTTP, and in the socket's `scene`. That is how a page joins a room (`docs/API.md`: `scene` follows `welcome`), and it is a download, not an upload. Not changed.
   - Next action remains T12.
+- 2026-11-13: `docs/ROADMAP.md` has a new entry for after the gate, "send a scene once", at the user's request: "put the optimized protocol on roadmap for after MVP". Nothing of it is built.
+  - The question behind it: a page that opens a slot gets the scene twice, over HTTP and then over the socket. That is every visit, not only the first.
+  - Both copies are the same element records in the same form. The room builds the socket's `scene` and the stored head from the same list (`src/segl/room.py`, `_scene` and `snapshot`). The stored head can be one flush behind.
+  - Measured on a scratch server with a slot of 1,024 look-alike rectangles: the scene route answered 431,338 bytes on each of two calls, with no caching header. The socket's `scene` was 431,139 characters. A Python client that offered it got `permessage-deflate` on the socket. zlib brought the two copies to 12,079 and 11,445 bytes. Real drawings will compress less, and neither size was measured through nginx.
+  - The entry: the scene route's answer carries a mark, `hello` carries it back, and the server sends only what changed since. An unknown mark gets the whole scene. The HTTP copy stays. A browser that keeps scenes between visits is listed as not planned.
+  - `python3 scripts/build_docs.py` found 0 broken links.
+  - Next action remains T12.
