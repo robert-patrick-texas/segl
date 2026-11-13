@@ -4,8 +4,8 @@ This file is the source of truth for what is done and what to do next. Update it
 
 - Updated: 2026-11-13
 - Phase: P0 collaborative slots
-- Next task: T11
-- Completed: T00, T00b, T01, T01b, T02, T03, T04, T05, T06, T07, T08, T09, T10, T10b
+- Next task: T12
+- Completed: T00, T00b, T01, T01b, T02, T03, T04, T05, T06, T07, T08, T09, T10, T10b, T11
 - Blocked: no
 - Application code: Python service (`src/segl`) with settings, SQLite storage for the nine slots, the health, config, and slot routes, and the pages of the web build. Display names: the word file, the allocation route, and its limit per client address. Live collaboration: the WebSocket at `/collab`, a room for each slot, the title route, the edit gate, and the Origin check. Browser application (`web/`) with the segl bar (slots, title, who is here, connection state, this browser's name) and the Excalidraw canvas for each slot, shared live. Saving: each slot's scene is written to its head after an edit, when the last browser leaves, and at a stop, with history rows, and the bar says saving and then saved. Images: the upload and asset routes, the files under `assets_dir`, and each slot's file list. History: the revision list, the single revision, and the restore route, and the History control in the bar, which lists a slot's revisions and puts one back for everyone on the slot. JSON export and import: the editor's own export, named after the slot, the import route, and the Import control in the bar, which puts an exported file's scene in place of a slot's for everyone. The edit gate: access codes in the TOML file, the access route that issues a signed pass for one, the count of wrong codes per client address, and the access page, where a browser that may not edit enters a code. The bar says whether this browser may edit, and a browser that may not watches and changes nothing. `internal_networks`: with the list set, segl answers no address outside it
 
@@ -851,3 +851,60 @@ This file is the source of truth for what is done and what to do next. Update it
     - A laptop that sleeps past the end has lost its access. An unsaved edit may be lost.
     - A person who edits as the pass runs out loses the race, as with any deadline.
   - Next action remains T11.
+- 2026-11-13: T11 done, in commit `7e76538`. Evidence, on that commit's tree unless a line says otherwise:
+  - The command. `docker build -f deploy/Containerfile -t segl-dev .` builds the dev container, and `docker run --rm --init segl-dev` runs the test plan's rows in it. The image's command is `scripts/testplan.py`: pytest whole, the browser tests whole, then one line for each row.
+  - Acceptance, on the development host (Ubuntu 26.04.1, 4 cores, 10 GB):
+    - Rootful Docker 29.8.2. The build ran 655 Vitest tests, Prettier, the web build, and 1540 pytest tests, all passed. The run exited 0 after 9.4 minutes: pytest `1540 passed`, the browser tests `234 passed (7.8m)`, and `All 18 rows passed.`
+    - Rootless Docker 29.8.2. The build passed the same checks. The run exited 0 after 9.4 minutes: pytest `1540 passed`, the browser tests `234 passed (7.9m)`, and `All 18 rows passed.`
+    - Both runs printed the same rows, each `pass`, with the tests that ran it: T-001 2 pytest and 3 browser, T-002 1 and 3, T-003 1 and 6, T-004 0 and 3, T-005 1 and 3, T-006 1 and 1, T-007 2 and 4, T-008 7 and 18, T-009 2 and 3, T-010 0 and 3, T-011 2 and 3, T-012 131 and 6, T-013 30 and 12, T-014 3 and 12, T-015 1 and 3, T-016 2 and 3, T-019 134 and 16, T-020 81 and 0. A browser count is test runs: one test in three mounts is 3.
+    - T-018: `pass  the dev container ran the rows above on uv's Python`. Above the rows both runs printed `Python 3.15.2 from /home/ubuntu/.local/share/uv/python/cpython-3.15.2-linux-x86_64-gnu (pin 3.15.2)`, `Node v26.13.1, nginx/1.28.3 (Ubuntu)`, and `Excalidraw 0.18.1, Playwright 1.65.0, Chromium 158.0.8127.18, run here`. The image has no `/usr/bin/python3`.
+    - T-017 printed `not run here`. T12 owns it.
+    - The kernel log has no out-of-memory kill for the time of the runs.
+  - Chromium runs in the Ubuntu 26.04 container, so the Playwright image was not needed. Playwright 1.65.0 lists `ubuntu26.04-x64`. `playwright install-deps chromium` installed 101 packages as root, and `playwright install --only-shell chromium` fetched Chrome Headless Shell 158.0.8127.18 for the `ubuntu` account. Playwright starts it with `--no-sandbox` and `--disable-dev-shm-usage`, so `docker run` takes no extra flag. The image is 2.72 GB.
+  - Rootless Docker, as it was run. The host has `docker-ce-rootless-extras` and an AppArmor profile for rootlesskit, and no rootless daemon was set up. `dockerd-rootless.sh --data-root <a folder of its own>` started one by hand, with rootlesskit 3.1.0 and its built-in network driver, `gvisor-tap-vsock`: the host has no slirp4netns and no pasta. `docker info` listed `rootless`. The tests ran as `ubuntu`, uid 1000 in the container and uid 100999 on the host. No systemd unit and no Docker context were made. The daemon was stopped afterwards and its folder removed.
+  - A failed row, for real. The same image with one spec mounted over its own, where the T-002 browser test fails on purpose: the run printed `T-002  FAIL  1 pytest, 0 browser` with `failed in direct`, `failed in root`, and `failed in board` under it, `FAILED: T-002, T-018`, and exited 1. The other 17 rows read `pass`.
+  - Outside the container, on the host, with the browser from the Playwright image through `PW_WS_ENDPOINT`: `uv run python scripts/testplan.py` exited 0 after 9.3 minutes with `All 18 rows passed.`, `revision: 7e76538, not in the dev container`, and `T-018  -     not judged: this is not the dev container`.
+  - `uv run pytest` gave 1540 passed and none skipped, in both builds and both runs. The 29 new tests are all in `tests/test_testplan.py`, counted with `pytest --collect-only`. Vitest is unchanged at 655, and the browser tests at 234.
+  - `uv run ruff check .` and `uv run ty check` printed `All checks passed!`. `uv run ruff format --check .` printed `67 files already formatted`. `npm --prefix web run check` and `format:check` passed.
+  - CI run 43443485242 succeeded on Node 26.13.1 with 1540 pytest, 655 Vitest, and `234 passed (6.9m)` in the browser tests, and its log has no `had not stopped`. Pages run 43443485228 succeeded. `python3 scripts/build_docs.py` rendered 45 Markdown files with 0 broken links.
+  - Deliberate breakages of `scripts/testplan.py` and `tests/testplan.toml`, one at a time, each restored afterwards: 55. 54 failed the test aimed at them at the first run. The one that passed was a gap in the tests: a command that ignored the browser tests' exit status. A test now runs both orders, and the case fails it. Among the 55: a failed, skipped, or missing test counted as a pass, a retried test counted as a pass, a test's group left out of its name, a file or a test matched by the start of its name, a missing Playwright project not noticed, exit 0 with a failed row or a failed suite, nginx tests allowed to skip, no JSON report asked for, T-018 passed on any Python or outside the container, and in the table a row gone, renamed, or out of order, a test or a spec misnamed, and a spec given the wrong projects.
+  - Ten editors, once, in the dev container under rootful Docker (`docker run --rm --init segl-dev npm --prefix web run stretch`, 4 passed in 57.6 seconds). Ten browser contexts on one slot, against Python alone and through nginx at `/board/`:
+    - All ten were in the room 2.8 and 3.1 seconds after they opened the slot.
+    - Ten rectangles drawn at once, three times: every browser had all of them 61 to 98 milliseconds after the last was drawn.
+    - 200 moves, twenty from each browser at once: every browser showed the same scene 241 and 369 milliseconds after the last key.
+    - Every browser drew the other nine pointers. The stored scene had all 30 rectangles, in 13,800 characters.
+  - 1,024 elements, once, in the same run. One rectangle, doubled ten times with select-all and duplicate, while a second browser watched:
+    - The ten doublings took 2.7 and 3.0 seconds. The slowest was in the watching browser 521 and 610 milliseconds after the key. The largest `elements` message was 232,000 characters.
+    - The stored scene had 1,024 elements in 465,000 characters.
+    - A third browser had all 1,024 elements 1.2 and 1.1 seconds after it opened the slot.
+    - One rectangle drawn there was in the other two browsers 23 and 32 milliseconds later, in messages of at most 502 characters: an edit sends the changed element, not the scene.
+    - A move of all 1,025 elements showed the same in three browsers 714 and 779 milliseconds later, as one message of 463,000 characters.
+    - The times are of this host and of a browser that draws without a GPU.
+  - Found, and not changed: a browser that loads a large slot sometimes sends the whole scene back.
+    - Seen on the host, before the container run: in 5 of 12 loads of the 1,024-element slot, the new browser sent an `elements` message of 462,000 characters, all 1,024 elements, and then an empty one. In the two loads of the container run it sent nothing.
+    - The frames of six of those loads, with their times: `scene` came 66 to 130 milliseconds after `welcome`. In the three loads that had the big message, it left 81 to 119 milliseconds after `welcome`, and 11 to 18 before `scene` arrived.
+    - The cause, read in `web/src/collab/session.ts` (T06): the page's list of what the server holds is empty until `scene` arrives. A change the canvas reports before that makes every loaded element look unsent, and the 30-millisecond send timer runs out inside the gap.
+    - Nothing was lost. The three browsers still ended with the same scene, and the server answered `saved`. The cost is an upload the size of the scene.
+    - The fix would be small: start that list from the scene the page loaded over HTTP. It is T06's code, so it is the owner's call.
+  - Choices the task left open. They are also at the end of the task in `draft2/TASKS.md`:
+    - The one command is the image's command, and it reports by row. `tests/testplan.toml` says which tests are which row, and pytest holds that table to `docs/TEST-PLAN.md` and to the tests' names, so a renamed test fails the suite until the table follows.
+    - A skipped test fails its row, and so does a browser test that missed one of its projects. The command sets `SEGL_REQUIRE_NGINX=1` itself.
+    - The script judges T-018: the rows passed, where `SEGL_DEV_CONTAINER` is set, on a Python that is the pin and is not under `/usr`.
+    - The build still runs pytest. The run runs it again, so a run takes about ten minutes.
+    - The image has the headless shell alone (`--only-shell`), which is what headless tests run.
+    - The sizes are a config of their own, `web/playwright.stretch.config.ts`, as Sunstone's `bench` is, read at `d22fd82`. It imports the browser tests' config for the servers. The runs hold no time to a limit, and fail only when the browsers end with different scenes.
+    - The thousand elements are 1,024, made in the editor by ten doublings. A file of hand-made elements would have needed hand-made order keys.
+    - `journal/2026-11-13-the-size-run-found-an-echo.md` has the story.
+  - Files of other tasks that changed: `deploy/Containerfile` (T01, T02, T04), a script in `web/package.json`, and `stretch` in `web/tsconfig.json`. No test of another task changed.
+  - `python3 scripts/release.py notes` printed `| Project lines of code | 30311 |` as the first table row. `python3 scripts/release.py check --gate` exited 1 with `fastapi 0.162.5: newer 0.162.6`, `ruff 0.17.4: newer 0.17.5`, and `ty 0.0.101: newer 0.0.103`. None was moved: that is `upgrade`'s work. This task added no dependency.
+  - Runs of the container before the final tree: one trial under rootful Docker, `All 18 rows passed.` in 9.7 minutes with 1539 pytest tests, before the size runs existed and before one test was added.
+  - Not done or not exercised:
+    - Podman. The host has none, and installing one needs root.
+    - Rootless Docker as a service (`dockerd-rootless-setuptool.sh install`), and rootless Docker with slirp4netns or pasta.
+    - The size runs under rootless Docker, and on a machine with a GPU.
+    - No test shows the size runs failing when browsers disagree. The comparison is the specs' own.
+    - CI does not run `scripts/testplan.py` or the size runs. It runs the two suites as before.
+    - An arm64 host.
+    - Two documents changed after the container runs: one paragraph of `docs/DEVELOPMENT.md` was reworded, and the journal entry was written. No test reads either.
+  - Still not listed in `versions.toml` or checked: the uv 0.13.7 and Node 26.13.1 image digests in `deploy/Containerfile`.
+  - Next action T12.

@@ -319,12 +319,22 @@ Acceptance: T-008 as reworded, the new rows, and T-012 with the new route. ruff,
 
 ## T11 — P0 browser matrix in the dev container
 
-- Status: pending
+- Status: done
 - Requires: T10b
 - Requirements: S-017 and the browser rows of `docs/TEST-PLAN.md`
 - Read: `docs/TEST-PLAN.md`, `docs/DEVELOPMENT.md` (browsers)
 
 Make T-001 through T-016, T-019, and T-020 runnable as one command inside the dev container, under rootful Docker and under rootless Docker or Podman. If Chromium cannot run in the Ubuntu 26.04 container, use the Playwright image through `PW_WS_ENDPOINT` and record why. Try a 10-editor stretch once, record the observation in `STATUS.md`, and do not block on it. Run the 1,000-element load once and record it the same way.
+
+As built, where the text above left a choice open:
+
+- The command is the image's own: `docker run --rm --init segl-dev` runs `scripts/testplan.py`. It runs pytest and the browser tests whole and prints one line for each row. `tests/testplan.toml` names the tests of each row, and `tests/test_testplan.py` holds that table to the test plan and to the tests' names.
+- A row passes when every test it names ran and passed, in each Playwright project it belongs to. A skipped test fails its row. The script judges T-018 itself, in the dev container alone.
+- Chromium runs in the Ubuntu 26.04 image, installed by the pinned `@playwright/test`. The Playwright image and `PW_WS_ENDPOINT` were not needed there.
+- The build still runs the web checks, the web build, and pytest. The run runs pytest again, with the browser tests.
+- Rootful Docker and rootless Docker ran it. The rootless daemon was started by hand and removed afterwards. Podman was not tried: the host has none.
+- The two sizes are `npm --prefix web run stretch`, in a config of its own, as Sunstone's `bench` is. The elements are 1,024: one rectangle, doubled ten times in the editor, so no element is hand-made.
+- Found, and not changed: a browser that loads a large slot sometimes sends the whole scene back before the server's `scene` arrives (`draft2/STATUS.md`, T11).
 
 Acceptance: that container command exits 0 on T-001 through T-016, T-019, and T-020. Evidence goes into the STATUS log.
 
