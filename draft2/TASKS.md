@@ -257,7 +257,7 @@ Acceptance: T-008 in the browser, including the fragment link. T-012 across the 
 
 ## T10b — Access codes, passes, and internal networks
 
-- Status: pending
+- Status: done
 - Requires: T10
 - Requirements: S-008 (which this task rewords), S-007, S-016, and a new S-018 for `internal_networks`
 - Read: `docs/DECISIONS.md` D2-033, D2-032, and D2-027, `docs/SECURITY.md`, `docs/ARCHITECTURE.md` (edit gate), and texas2step's `docs/access.md` and `src/texas2step/access.py` in `/home/netops/code/texas2step`, whose access codes this follows in their simplest form
