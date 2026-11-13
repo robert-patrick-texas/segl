@@ -841,3 +841,13 @@ This file is the source of truth for what is done and what to do next. Update it
   - Documents: `docs/API.md` (the field), `docs/ARCHITECTURE.md` and `docs/SECURITY.md` (the page stops first, and that is not the gate), `docs/DEPLOY.md`, `docs/TEST-PLAN.md` T-019, D2-033 with a dated amendment, the as-built list of T10b in `draft2/TASKS.md`, `CHANGELOG.md`, and a paragraph in the journal entry.
   - Not done or not exercised: a browser whose timers are held back, such as a laptop that slept through the end, was not tried. It stops when the timer runs, or when the server says so at its next edit or its next `hello`. A person in the middle of a stroke at the moment the page stops was not tried by hand. The page stops a second early by its own count from `welcome`, so a `welcome` that took more than a second to arrive leaves less than that. Only Chromium was run. The ended state was not looked at again in a screenshot: its words and its link are the ones T10b's screenshots showed.
   - Next action remains T11.
+- 2026-11-12: The bar says `Editing locked: access expired` when a pass ends. The user asked for it after the entry above, outside the task queue: "Fewer words are better." Evidence, on commit `6365cf8`:
+  - The old words were `Editing is locked: the access this browser had has ended.` The change is one line in `web/src/bar/notice.ts`. The other notices keep their words.
+  - `npm --prefix web test` gave 655 passed. `npm --prefix web run check` and `format:check` passed.
+  - The browser tests that read the message gave 60 passed in 2.4 minutes: the three `access-` projects and `restart`. The full suite did not run on the host. CI runs it.
+  - `docs/ARCHITECTURE.md`, `docs/DEPLOY.md`, and `CHANGELOG.md` have the new words. `python3 scripts/build_docs.py` found 0 broken links.
+  - The user also settled three open points from the two entries above. Each is expected behavior, not a defect:
+    - The server enforces the clock. The browser's timer is a convenience, not the rule.
+    - A laptop that sleeps past the end has lost its access. An unsaved edit may be lost.
+    - A person who edits as the pass runs out loses the race, as with any deadline.
+  - Next action remains T11.
