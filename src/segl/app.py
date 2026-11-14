@@ -374,6 +374,11 @@ def create_app(
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.get("/api/v1/version")
+    def version() -> dict[str, str]:
+        # Which release is serving. `segl update` waits for the new one here.
+        return {"version": app_version()}
+
     @app.get("/api/v1/config")
     def config() -> dict[str, bool]:
         # The fact only: that editing needs an access code, and none of them.

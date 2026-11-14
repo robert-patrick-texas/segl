@@ -42,12 +42,13 @@ def plan_rows() -> list[str]:
     return re.findall(r"^\| (T-\d{3}) \|", text, flags=re.MULTILINE)
 
 
-def test_the_table_has_every_row_of_the_test_plan_but_the_two_it_cannot_run() -> None:
+def test_the_table_has_every_row_of_the_test_plan_but_the_three_it_cannot_run() -> None:
     table = testplan.load_table()
     elsewhere = {*testplan.NOT_HERE, testplan.CONTAINER_ROW}
-    assert elsewhere == {"T-017", "T-018"}
+    # The two rows of the installed .deb, and the row of the dev container.
+    assert elsewhere == {"T-017", "T-018", "T-021"}
     assert [row.name for row in table.rows] == [row for row in plan_rows() if row not in elsewhere]
-    assert len(plan_rows()) == 20
+    assert len(plan_rows()) == 21
 
 
 def test_every_row_names_a_test() -> None:
@@ -415,6 +416,7 @@ def test_the_command_passes_when_every_row_did(
     for row in testplan.load_table().rows:
         assert re.search(rf"^  {row.name}  pass  \d+ pytest, \d+ browser$", out, flags=re.MULTILINE)
     assert "T-017  -     not run here: the .deb: deploy/debian/package-test.sh" in out
+    assert "T-021  -     not run here: segl update: deploy/debian/package-test.sh" in out
     assert "T-018  -     not judged: this is not the dev container" in out
     assert "FAIL" not in out
 

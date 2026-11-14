@@ -53,7 +53,10 @@ SKIPPED = "skipped"
 # The dev container sets this (deploy/Containerfile). T-018 is judged there.
 CONTAINER_MARK = "SEGL_DEV_CONTAINER"
 # Rows of the test plan that no test here runs, and why.
-NOT_HERE = {"T-017": "the .deb: deploy/debian/package-test.sh builds and installs it"}
+NOT_HERE = {
+    "T-017": "the .deb: deploy/debian/package-test.sh builds and installs it",
+    "T-021": "segl update: deploy/debian/package-test.sh runs it on the installed .deb",
+}
 CONTAINER_ROW = "T-018"
 
 Run = Callable[..., Any]

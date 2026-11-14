@@ -66,9 +66,10 @@ jobs:
 
       # The mount tests and the browser tests run nginx with the deploy/nginx/
       # files. The mount tests skip on a host without nginx; SEGL_REQUIRE_NGINX
-      # makes that a failure here.
-      - name: Install nginx for the mount tests
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends nginx openssl
+      # makes that a failure here. The tests of `segl update` sign and check
+      # test releases with ssh-keygen, and merge nginx files with diff3.
+      - name: Install nginx for the mount tests, and ssh-keygen and diff3 for the update tests
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends nginx openssl openssh-client diffutils
 
       - name: Tests
         run: uv run pytest

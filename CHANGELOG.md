@@ -4,7 +4,7 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
-segl is nine shared Excalidraw boards on one server: people on a board draw together live, and their work is saved, with a history to restore from and export and import as Excalidraw files. Access codes can limit who edits, and a list of internal networks can limit who reaches it. A `.deb` installs it on Ubuntu 26.04, with a Python of its own and a systemd unit, behind nginx at a host root or under a path such as `/board/`.
+segl is nine shared Excalidraw boards on one server: people on a board draw together live, and their work is saved, with a history to restore from and export and import as Excalidraw files. Access codes can limit who edits, and a list of internal networks can limit who reaches it. A `.deb` installs it on Ubuntu 26.04, with a Python of its own and a systemd unit, behind nginx at a host root or under a path such as `/board/`, and `segl update` moves it to each newer signed release, by hand or every night.
 
 ### New
 
@@ -80,9 +80,20 @@ segl is nine shared Excalidraw boards on one server: people on a board draw toge
 - The package carries the license text of every part it bundles. `web/scripts/bundled-packages.ts` lists the npm packages in the web build, `web/scripts/collect-licenses.ts` copies their license texts, and `web/licenses/` keeps the texts of the nine fonts and of the npm packages that ship none. A part without a text fails the package build and pytest.
 - `scripts/e2e.py` runs the browser tests in several groups side by side, each a `playwright test` with servers and ports of its own. `scripts/capacity.py` picks how many from the idle cores and the free memory at that moment, runs fewer on a busy machine, and waits when there is no room. `SEGL_TEST_GROUPS` sets the number and `SEGL_TEST_WAIT` the longest wait. Three groups ran the 240 tests in 4.2 minutes on the development host, where one process takes ten. CI, `scripts/testplan.py`, and `scripts/release.py upgrade` run them this way. `npm --prefix web run e2e` is still one process.
 - `tests/test_package.py` holds the unit, the nfpm spec, the maintainer scripts, the copyright file, and the operator notes to the rest of the tree.
+- `segl update` installs a newer release on an installed package (S-019, D2-035, `docs/DEPLOY.md`, updates). `--check` says whether one is out, with exit status 100 when one is. `--yes` does not ask. `--version` names a release. `--from <folder>` installs from files, for a server that cannot reach GitHub. `--proxy=http://HOST:PORT/` goes through a proxy.
+- An update installs only a signed release. `SHA256SUMS` must carry an SSH signature from a key in `/opt/segl/share/release-signers`, and the package must match its line. A package changed after signing, or signed by another key, is refused before anything changes.
+- An update goes back when it fails. It stops segl, saves the settings, the nginx files, and the database under `/opt/segl/update`, installs with apt, runs `segl check` and `nginx -t`, starts segl, and waits for it to answer as the new version. If a step fails, the previous package and the saved files go back.
+- `segl config merge` adds a new version's settings to `segl.toml`, each with its note, and merges what the version changed in its nginx files into the site's copies in `/etc/nginx`, with `diff3`. Every line the site wrote stays. A clash, or a failed `nginx -t`, changes no nginx file. The package runs it on every install and upgrade.
+- `segl check` reads the settings, the display names, and the web application as the server does at its start, and says what is wrong. It opens no database.
+- The nightly update: `segl-update.timer` runs `segl update --auto` once a night, at a random time from 21:00 to 03:00 in the server's time. The package leaves it off. `sudo systemctl enable --now segl-update.timer` turns it on. It does not try again a release that failed to install.
+- Two settings, `update_url` and `update_proxy`. And `GET /api/v1/version`, which says which release is serving.
+- `/usr/bin/segl` is a link to the command. The package depends on `openssh-client`, for `ssh-keygen`.
+- `scripts/release.py publish` writes `SHA256SUMS`, signs it with the release key, checks the signature against `deploy/release-signers`, and attaches all three files. It refuses until that file lists a key (`docs/RELEASING.md`, the release key).
+- The install test updates the package it installed (T-021): from a stand-in for GitHub behind a CA of the test's own, through a proxy, with a tampered release, a release that does not start, and one that clashes with the site's nginx edit.
 
 ### Changed
 
+- An upgrade of the package adds new settings to `segl.toml` and merges nginx changes into the site's files. It still never replaces a file in `/opt/segl/etc`. D2-034 said an upgrade never changes one.
 - The dev container's command is `scripts/testplan.py`. It was `uv run pytest`.
 - `scripts/release.py upgrade` no longer runs the whole suite once for each component. The components that can break anything move together and the suite runs once. Only when that fails does it run the suite on the tree as it stands and then for each component alone. A tool that can only break its own check gets that check: ruff, ty, pytest, httpx2, md2html's packages, Prettier, TypeScript, and the `@types` packages. A GitHub Action moves without a run, since only CI runs it.
 - fastapi 0.162.7, ruff 0.17.5, ty 0.0.104, and `@playwright/test` 1.65.1, each moved by `scripts/release.py upgrade` after the suite passed with it.

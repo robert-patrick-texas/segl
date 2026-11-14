@@ -24,10 +24,12 @@ FROM docker.io/library/ubuntu:26.04
 # uv downloads CPython and packages over HTTPS. The release script's tests
 # run git in a temporary repository. The mount tests run nginx with the
 # deploy/nginx/ files, and openssl makes their certificate. Node's own
-# binary needs libatomic.
+# binary needs libatomic. The tests of `segl update` sign test releases with
+# ssh-keygen and check them, as a server does. diff3, which merges the nginx
+# files, is in diffutils, which every Ubuntu image has.
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        ca-certificates git libatomic1 nginx openssl \
+        ca-certificates git libatomic1 nginx openssh-client openssl \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=uv /uv /uvx /usr/local/bin/
 COPY --from=node /usr/local/bin/node /usr/local/bin/node

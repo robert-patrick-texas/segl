@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The ``segl`` command: serve the application, or print the version."""
+"""The ``segl`` command: serve the application, or run one of its commands.
+
+``segl --config PATH`` serves, as the unit runs it. ``segl check``,
+``segl config merge``, and ``segl update`` are in ``segl.update.command``.
+"""
 
 import argparse
 import sys
@@ -28,13 +32,17 @@ from segl.assets import AssetsError
 from segl.config import ConfigError, load_settings
 from segl.names import DisplayNamesError
 from segl.repository import Repository, StorageError
+from segl.update import command
 from segl.versions import app_version
 from segl.web import WebBuildError
 
 
 def build_parser() -> argparse.ArgumentParser:
     """Return the command-line parser."""
-    parser = argparse.ArgumentParser(prog="segl", description="Serve segl until interrupted.")
+    parser = argparse.ArgumentParser(
+        prog="segl",
+        description="Serve segl until interrupted. With a command, run it and leave.",
+    )
     parser.add_argument("--version", action="version", version=f"segl {app_version()}")
     parser.add_argument(
         "--config",
@@ -42,14 +50,23 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="TOML configuration file (docs/DEPLOY.md). Without it, development defaults apply.",
     )
+    command.add_commands(parser)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the command and return its exit status."""
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.command is not None:
+        return command.run(parser, args)
+    return serve(args.config)
+
+
+def serve(config: Path | None) -> int:
+    """Serve until interrupted, and return the exit status."""
     try:
-        settings = load_settings(args.config)
+        settings = load_settings(config)
     except ConfigError as exc:
         print(f"segl: {exc}", file=sys.stderr)
         return 2

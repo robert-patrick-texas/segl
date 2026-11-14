@@ -29,6 +29,7 @@ from pathlib import Path
 
 import release_edits as edits
 import release_notes as notes
+import release_sign as signing
 from release_components import Sources, gate_passes, load_versions, report
 from release_proc import CommandError, Runner
 from release_upgrade import run_suite
@@ -163,6 +164,10 @@ class Preflight:
             ("every component is current or held", self.currency),
         ]
         if has_package(self.root):
+            # A server installs only a release signed with a key its package
+            # lists. Without both halves of the key there is nothing to publish.
+            steps.append((f"{signing.SIGNERS} lists a key", self.signers))
+            steps.append(("the release key is there", self.release_key))
             # Last: it takes minutes, and it builds what the release carries.
             steps.append(("the package builds and installs", self.package))
         return steps
@@ -206,6 +211,18 @@ class Preflight:
     def currency(self) -> tuple[bool, str]:
         return gate(self.root, self.sources), "see `release.py check`"
 
+    def signers(self) -> tuple[bool, str]:
+        count = signing.signer_entries(self.root / signing.SIGNERS)
+        if count == 0:
+            return False, "add the release key's public half (docs/RELEASING.md, the release key)"
+        return True, f"{count} key(s)"
+
+    def release_key(self) -> tuple[bool, str]:
+        key = signing.key_path()
+        if not key.is_file():
+            return False, f"no key at {key} (set {signing.KEY_VARIABLE} to another path)"
+        return True, str(key)
+
     def package(self) -> tuple[bool, str]:
         result = self.runner.run([PACKAGE_TEST], check=False)
         built = package_path(self.root, self.version)
@@ -242,12 +259,28 @@ def publish(root: Path, runner: Runner, sources: Sources) -> int:
     changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
     summary, topics = notes.parse_section(changelog, notes.version_heading(version))
     body = notes.render_notes(root, doc, summary, topics, notes.project_loc(runner))
+    # The package the preflight just built and installed, and no other file
+    # that happens to be in dist/. Then its checksum, and the signature over
+    # that, which is checked here as a server will check it. All of this
+    # comes before the tag, so a failure leaves nothing published.
+    packages: list[str] = []
+    if has_package(root):
+        package = package_path(root, version)
+        sums = signing.write_sums([package], package.parent)
+        try:
+            signature = signing.sign(runner, signing.key_path(), sums)
+        except CommandError as exc:
+            print(f"not published: signing {sums.name} failed ({exc})")
+            return 1
+        good, said = signing.verify(runner, root / signing.SIGNERS, sums)
+        if not good:
+            print(f"not published: {signing.SIGNERS} does not vouch for the signature: {said}")
+            return 1
+        print(f"ok   {sums.name} is signed: {said}")
+        packages = [str(package), str(sums), str(signature)]
     runner.run(["git", "tag", "-a", tag, "-m", f"segl {version}"])
     runner.run(["git", "push", REMOTE, tag])
     if destinations.get("github"):
-        # The package the preflight just built and installed, and no other
-        # file that happens to be in dist/.
-        packages = [str(package_path(root, version))] if has_package(root) else []
         with tempfile.TemporaryDirectory() as folder:
             notes_file = Path(folder) / "notes.md"
             notes_file.write_text(body, encoding="utf-8")

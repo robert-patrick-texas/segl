@@ -66,3 +66,14 @@ history_interval_seconds = 1
 
 # How long after an edit the slot is written to the database.
 head_flush_seconds = 0.2
+
+# Where `segl update` asks for releases: the GitHub API of segl's repository.
+# A GitHub Enterprise server, or a mirror that answers the same paths, works
+# too (docs/DEPLOY.md, updates). It must be an https:// address.
+update_url = "https://api.github.com/repos/robert-patrick-texas/segl"
+
+# The proxy `segl update` reaches GitHub through, such as
+# "http://proxy.example.com:3128". The update timer uses it too. "" is none:
+# then `--proxy` on the command line, or https_proxy from the environment,
+# which the timer does not have.
+update_proxy = ""

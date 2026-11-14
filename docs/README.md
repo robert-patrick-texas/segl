@@ -10,7 +10,7 @@ Contributor and operator manual, also published at <https://robert-patrick-texas
 | [API.md](API.md) | HTTP and WebSocket contract |
 | [DATA-MODEL.md](DATA-MODEL.md) | SQLite tables and the repository seam |
 | [SECURITY.md](SECURITY.md) | Product controls for the open slots |
-| [DEPLOY.md](DEPLOY.md) | `/opt/segl`, the `.deb`, systemd, and nginx |
+| [DEPLOY.md](DEPLOY.md) | `/opt/segl`, the `.deb`, systemd, nginx, and updates |
 | [OPERATOR.md](../deploy/OPERATOR.md) | The short form for the person who installs segl. The package installs it. |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Host tools, checks, browsers for the tests, and the dev loop |
 | [RELEASING.md](RELEASING.md) | Versions, release notes, and publish destinations |

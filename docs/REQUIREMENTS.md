@@ -24,6 +24,7 @@ Priority **M** is required for the MVP gate. **L** is recorded so it is not buil
 | S-016 | M | Shared notice | Every slot shows that the workspace is shared and open. View-only clients also show that editing is locked. |
 | S-017 | M | Dev container | The dev container runs the automated test suite, including the two-browser cases, under rootful Docker, rootless Docker, or rootless Podman. |
 | S-018 | M | Internal networks | With `internal_networks` set, segl answers no request and no WebSocket handshake from an address outside those networks. Loopback is inside. With the list empty, segl answers every address. |
+| S-019 | M | Updates | `segl update` installs a newer release from GitHub on an installed `.deb`, by hand or from a nightly timer that is off until the site turns it on. It installs only a release whose signature verifies against the keys the installed package ships. It can go through a proxy. It adds a new version's statements to the site's settings and nginx files and keeps every line the site wrote. It checks the settings and `nginx -t` before it starts the new version, and goes back to the previous version when a check fails. |
 
 ## Later — do not implement in P0
 

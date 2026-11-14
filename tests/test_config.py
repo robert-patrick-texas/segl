@@ -615,3 +615,64 @@ def test_the_command_says_when_passes_are_ended_from_a_time_still_to_come(
     # It starts either way: the setting is usable, and may be meant.
     assert cli.main(["--config", str(config)]) == 0
     assert (AHEAD_WARNING in capsys.readouterr().err) is warned
+
+
+def test_the_update_settings_have_their_defaults(tmp_path: Path) -> None:
+    settings = load_settings(write(tmp_path, ""))
+
+    assert settings.update_url == "https://api.github.com/repos/robert-patrick-texas/segl"
+    assert settings.update_proxy == ""
+
+
+def test_update_url_and_update_proxy_are_read(tmp_path: Path) -> None:
+    config = write(
+        tmp_path,
+        'update_url = "https://github.example.net/api/v3/repos/noc/segl/"\n'
+        'update_proxy = "http://proxy.example.com:2025/"\n',
+    )
+
+    settings = load_settings(config)
+
+    assert settings.update_url == "https://github.example.net/api/v3/repos/noc/segl"
+    assert settings.update_proxy == "http://proxy.example.com:2025/"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        '"http://mirror.example.net/segl"',
+        '"file:///opt/segl/mirror"',
+        '"https://"',
+        '"https://mirror.example.net/segl and more"',
+        '""',
+        "7",
+    ],
+)
+def test_an_update_url_that_is_not_https_is_refused(tmp_path: Path, value: str) -> None:
+    with pytest.raises(ConfigError, match="update_url must be an https:// address"):
+        load_settings(write(tmp_path, f"update_url = {value}\n"))
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        '"proxy.example.com:3128"',
+        '"https://proxy.example.com:3128"',
+        '"http://proxy.example.com"',
+        "3128",
+    ],
+)
+def test_an_update_proxy_that_cannot_be_used_is_refused(tmp_path: Path, value: str) -> None:
+    with pytest.raises(ConfigError, match="update_proxy"):
+        load_settings(write(tmp_path, f"update_proxy = {value}\n"))
+
+
+def test_a_proxys_password_is_in_no_message_and_no_repr(tmp_path: Path) -> None:
+    good = load_settings(
+        write(tmp_path, 'update_proxy = "http://pat:s3cret@proxy.example.com:3128"\n')
+    )
+
+    assert "s3cret" not in repr(good)
+    with pytest.raises(ConfigError) as refused:
+        load_settings(write(tmp_path, 'update_proxy = "https://pat:s3cret@proxy.example.com"\n'))
+    assert "s3cret" not in str(refused.value)

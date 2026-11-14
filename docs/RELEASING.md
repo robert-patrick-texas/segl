@@ -25,7 +25,7 @@ python3 scripts/release.py cut            # gate and suite, then the version bum
 python3 scripts/release.py publish        # preflight, tag, and GitHub Release
 ```
 
-The script needs only the host's `python3` (3.11 or newer). It runs `uv`, `gh`, `git`, `cloc`, and `npm`, with the Node of `web/.node-version` first on `PATH`.
+The script needs only the host's `python3` (3.11 or newer). It runs `uv`, `gh`, `git`, `cloc`, `ssh-keygen`, and `npm`, with the Node of `web/.node-version` first on `PATH`.
 
 - `check` lists every pinned component beside its newest stable release:
   - Python, from `uv python list`.
@@ -43,11 +43,36 @@ The script needs only the host's `python3` (3.11 or newer). It runs `uv`, `gh`, 
 - The suite is what CI runs, in CI's order: `uv sync` and `npm install` in `web/`, which bring both environments to the pins; `uv run ruff check .`, `uv run ruff format --check .`, and `uv run ty check`; `check`, `test`, `format:check`, and `build` in `web/`; `uv run pytest`; and the browser tests, through `scripts/e2e.py`, which runs them in as many groups at once as the machine has room for (`DEVELOPMENT.md`, the browser tests in groups). pytest comes after `npm install` because it holds the web lockfile to `versions.toml`, and after the build because it compares its stand-in for the build with the real one. The browser tests need a browser of the pinned `@playwright/test` version (`DEVELOPMENT.md`, browsers for the tests). A move of `@playwright/test` needs the browser of the new version: install it, or start the browser server at that version, before `upgrade`, or the move fails the suite and is held.
 - `notes` prints the notes for `Unreleased`, or for the current version's section when `Unreleased` is empty after a cut. Each hold adds an Additional Notes bullet.
 - `cut` requires a summary of one to three sentences, at least one bullet, `check --gate`, and the suite. Then it writes the new application version into `versions.toml` and `pyproject.toml`, runs `uv lock`, turns `Unreleased` into `## <version> — <date>`, and opens a fresh `Unreleased`. It leaves those files unchanged when a check fails. Commit and push the result, and CI runs on it.
-- `publish` runs a preflight and stops at the first failure. The tree must be clean, `HEAD` must be on `main`, `CHANGELOG.md` must have the version's section, the version must not be `0.0.0`, tag `v<version>` must exist neither locally nor on `origin`, every GitHub check run for `HEAD` must have passed, and `check --gate` must pass now. Last, `deploy/debian/package-test.sh` must pass: it builds `dist/segl_<version>_amd64.deb` and installs it in a container that booted with systemd (`TEST-PLAN.md` T-017), which needs Docker. Then it tags `v<version>`, pushes the tag, and runs `gh release create v<version> --verify-tag` with the notes and that `.deb`. It attaches no other file from `dist/`. It uploads to PyPI, with `uv build` and `uv publish`, only when `publish.pypi` is true.
+- `publish` runs a preflight and stops at the first failure. The tree must be clean, `HEAD` must be on `main`, `CHANGELOG.md` must have the version's section, the version must not be `0.0.0`, tag `v<version>` must exist neither locally nor on `origin`, every GitHub check run for `HEAD` must have passed, and `check --gate` must pass now. `deploy/release-signers` must list a key, and the release key must be where `publish` looks for it (the release key, below). Last, `deploy/debian/package-test.sh` must pass: it builds `dist/segl_<version>_amd64.deb`, installs it in a container that booted with systemd, and updates it there with `segl update` (`TEST-PLAN.md` T-017 and T-021), which needs Docker, `ssh-keygen`, and `openssl`. Then `publish` writes `dist/SHA256SUMS` for that package, signs it with the release key, which asks for the key's passphrase, and checks the signature against `deploy/release-signers` as a server will. A signature that does not verify stops it, with nothing tagged. Then it tags `v<version>`, pushes the tag, and runs `gh release create v<version> --verify-tag` with the notes and three files: that `.deb`, `SHA256SUMS`, and `SHA256SUMS.sig`. It attaches no other file from `dist/`. It uploads to PyPI, with `uv build` and `uv publish`, only when `publish.pypi` is true.
 
 Before `1.0.0`, a release that contains New or Changed increments the minor number. A release that contains only Fixed increments the patch number.
 
 Publish destinations are `[publish]` in `versions.toml`. GitHub Releases are enabled, to `publish.github_repo`. PyPI is off until there is a build worth demonstrating. A container registry waits for L-005. The script reads credentials from the environment (`GH_TOKEN` or an authenticated `gh`, and a PyPI token only after that destination is enabled). It does not store tokens in the repository.
+
+## The release key
+
+A server installs a release only when `SHA256SUMS` carries a signature from a key its installed package lists (`DEPLOY.md`, updates). So every release is signed, and the key outlives any one release.
+
+- **The private half** is on the maintainer's development host, at `~/.config/segl-release/release_ed25519`, beside the release keys of vakr and Sunstone. It has a passphrase. It is never in the repository, in CI, or on GitHub. `SEGL_RELEASE_KEY` names another path.
+- **The public half** is a line in `deploy/release-signers`, in ssh-keygen's allowed-signers form. The package installs that file as `/opt/segl/share/release-signers`. The principal and the namespace are both `segl-release`.
+
+To make the key, once:
+
+```bash
+mkdir -p ~/.config/segl-release && chmod 700 ~/.config/segl-release
+ssh-keygen -t ed25519 -C segl-release -f ~/.config/segl-release/release_ed25519
+printf 'segl-release namespaces="segl-release" %s\n' \
+    "$(cut -d' ' -f1,2 ~/.config/segl-release/release_ed25519.pub)" >>deploy/release-signers
+ssh-keygen -lf ~/.config/segl-release/release_ed25519.pub   # the fingerprint, for the file's comment
+```
+
+Commit `deploy/release-signers` with the key's date and fingerprint in a comment. Keep a copy of the private key somewhere safe: a server that runs a release signed with it installs no release signed with another.
+
+Until the file lists a key, `publish` stops at `deploy/release-signers lists a key`, and a package built from the tree refuses every update.
+
+To change the key, add the new one to `deploy/release-signers` and publish that release signed with the old key. Servers that install it trust both. Sign later releases with the new key, and take the old key out in a release after that. A server that skipped the release with both keys must be upgraded by hand, with `apt install`.
+
+The install test does not use the release key. It makes a throwaway key, and its test releases trust that one (`deploy/debian/package-test.sh`).
 
 ## Release note shape
 

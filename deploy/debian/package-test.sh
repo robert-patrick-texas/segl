@@ -2,9 +2,15 @@
 # The install test, docs/TEST-PLAN.md T-017, in the form of Sunstone's
 # packaging/package-test.sh: install the package in an ubuntu:26.04
 # container that booted with systemd, put nginx in front of it with the
-# deploy/nginx/ files and the snakeoil certificate, use it, then upgrade,
-# remove, and purge it (deploy/debian/systemd-test.sh). It needs docker, git,
-# and the host's python3.
+# deploy/nginx/ files and the snakeoil certificate, use it, then upgrade it,
+# update it with `segl update` from a stand-in for GitHub, and remove and
+# purge it (deploy/debian/systemd-test.sh). It needs docker, git, the host's
+# python3, and, for the test releases, ssh-keygen and openssl.
+#
+# The update needs releases to install. They are made here from the package
+# under test (deploy/debian/test-releases.sh), and signed with a throwaway
+# key that those packages trust. The package under test trusts only the
+# keys in deploy/release-signers.
 #
 # Usage: deploy/debian/package-test.sh [DEB]
 #   DEB   a package to test. Without it, the script builds one into dist/.
@@ -43,16 +49,52 @@ cleanup() {
     rm -rf "$work"
 }
 trap cleanup EXIT
-mkdir -p "$work/release" "$work/upgrade"
+mkdir -p "$work/release" "$work/keys" "$work/pki"
 cp "$deb" "$work/release/$name"
 
-# The upgrade: the same package under a higher version, so dpkg upgrades.
-docker run --rm --volume "$work:/w" docker.io/library/ubuntu:26.04 bash -c '
-    set -e
-    dpkg-deb -R "/w/release/'"$name"'" /tmp/x
-    sed -i "s/^Version: .*/Version: '"$version"'+upgrade/" /tmp/x/DEBIAN/control
-    dpkg-deb --root-owner-group -b /tmp/x "/w/upgrade/segl_'"$version"'+upgrade_amd64.deb" >/dev/null
-    chown -R '"$(id -u):$(id -g)"' /w/upgrade'
+# The test's release key, and a key no package trusts.
+ssh-keygen -q -t ed25519 -N "" -C package-test -f "$work/keys/release"
+ssh-keygen -q -t ed25519 -N "" -C untrusted -f "$work/keys/untrusted"
+printf 'segl-release namespaces="segl-release" %s\n' \
+    "$(cat "$work/keys/release.pub")" >"$work/keys/signers"
+
+sign() {
+    # SHA256SUMS for the package in folder $1, signed with key $2.
+    (cd "$1" && sha256sum segl_*_amd64.deb >SHA256SUMS)
+    ssh-keygen -q -Y sign -f "$2" -n segl-release "$1/SHA256SUMS"
+}
+
+# Releases 9.0.1 to 9.0.5: the package under test at higher versions, each
+# with a few files changed.
+docker run --rm --volume "$work:/w" --volume "$PWD/deploy/debian:/d:ro" \
+    docker.io/library/ubuntu:26.04 bash /d/test-releases.sh "$name" "$version" "$(id -u):$(id -g)"
+for release in 9.0.1 9.0.2 9.0.3 9.0.4 9.0.5; do
+    sign "$work/$release" "$work/keys/release"
+done
+
+# 9.0.2 changed after it was signed, and 9.0.2 signed by the other key.
+mkdir -p "$work/tampered" "$work/untrusted"
+cp "$work"/9.0.2/* "$work/tampered/"
+printf x >>"$work/tampered/segl_9.0.2_amd64.deb"
+cp "$work/9.0.2/segl_9.0.2_amd64.deb" "$work/untrusted/"
+sign "$work/untrusted" "$work/keys/untrusted"
+
+# A CA the machine does not trust, as a firewall that inspects TLS has, and
+# the certificate it issues to the stand-in for GitHub
+# (deploy/debian/fake_github.py). In the form of Sunstone's package test.
+ec=(-newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes)
+printf '%s\n' '[req]' 'distinguished_name = dn' 'prompt = no' '[dn]' 'CN = segl package test CA' \
+    '[ext]' 'basicConstraints = critical,CA:TRUE' 'subjectKeyIdentifier = hash' \
+    'keyUsage = critical,keyCertSign,cRLSign' >"$work/pki/ca.cnf"
+openssl req -x509 -config "$work/pki/ca.cnf" -extensions ext "${ec[@]}" -days 2 \
+    -keyout "$work/pki/ca.key" -out "$work/pki/ca.pem" 2>/dev/null
+openssl req -new "${ec[@]}" -subj /CN=localhost \
+    -keyout "$work/pki/server.key" -out "$work/pki/server.csr" 2>/dev/null
+printf '%s\n' 'subjectAltName = DNS:localhost' 'basicConstraints = CA:FALSE' \
+    'keyUsage = critical,digitalSignature' 'extendedKeyUsage = serverAuth' \
+    'authorityKeyIdentifier = keyid' 'subjectKeyIdentifier = hash' >"$work/pki/server.ext"
+openssl x509 -req -in "$work/pki/server.csr" -CA "$work/pki/ca.pem" -CAkey "$work/pki/ca.key" \
+    -set_serial 2 -days 2 -extfile "$work/pki/server.ext" -out "$work/pki/server.pem" 2>/dev/null
 chmod -R a+rX "$work"
 
 image=segl-systemd-test

@@ -15,7 +15,9 @@
 """`notes`, `cut`, and `publish`: what is written, and every reason to stop."""
 
 import datetime as dt
+import hashlib
 import json
+import subprocess
 import tomllib
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -25,6 +27,19 @@ import release
 import release_notes
 from release_proc import CommandError, Result
 from release_publish import PACKAGE_TEST, bump_version, check_runs_pass, cut, publish
+from release_sign import (
+    KEY_VARIABLE,
+    SIG_NAME,
+    SIGNER,
+    SIGNERS,
+    SUMS_NAME,
+    key_path,
+    signer_entries,
+)
+
+from segl.update import verify
+
+ROOT = Path(__file__).resolve().parents[1]
 
 TODAY = dt.date(2026, 11, 12)
 GREEN = {"check_runs": [{"name": "checks", "status": "completed", "conclusion": "success"}]}
@@ -227,15 +242,45 @@ def break_remote_tag(repo: Path, run_git) -> None:
     run_git(repo, "tag", "-d", "v0.1.0")
 
 
-def add_package_test(repo: Path, run_git) -> None:
-    """Give the tree the install test, as a file the fake runner answers for."""
+@pytest.fixture
+def release_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A throwaway release key with no passphrase, where ``publish`` looks for one."""
+    key = tmp_path / "keys" / "release_ed25519"
+    key.parent.mkdir()
+    subprocess.run(
+        ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "test", "-f", str(key)], check=True
+    )
+    monkeypatch.setenv(KEY_VARIABLE, str(key))
+    return key
+
+
+def signers_line(key: Path) -> str:
+    public = key.with_name(key.name + ".pub").read_text(encoding="utf-8").strip()
+    return f'{SIGNER} namespaces="{SIGNER}" {public}\n'
+
+
+def add_package_test(repo: Path, run_git, signers: str | None = None) -> None:
+    """Give the tree the install test, as a file the fake runner answers for,
+    and a signers file that lists the test's release key."""
     script = repo / PACKAGE_TEST
     script.parent.mkdir(parents=True)
     script.write_text("#!/bin/bash\n")
+    if signers is None:
+        signers = "# The test's key.\n" + signers_line(key_path())
+    (repo / SIGNERS).write_text(signers, encoding="utf-8")
     (repo / ".git" / "info" / "exclude").write_text("dist/\n")
-    run_git(repo, "add", PACKAGE_TEST)
+    run_git(repo, "add", PACKAGE_TEST, SIGNERS)
     run_git(repo, "commit", "-q", "-m", "the install test")
     run_git(repo, "push", "-q", "origin", "main")
+
+
+def add_package_test_without_a_key(repo: Path, run_git) -> None:
+    add_package_test(repo, run_git, signers="# No key is listed yet.\n\n")
+
+
+def add_package_test_and_lose_the_key(repo: Path, run_git) -> None:
+    add_package_test(repo, run_git)
+    key_path().unlink()
 
 
 @pytest.mark.parametrize(
@@ -260,6 +305,18 @@ def add_package_test(repo: Path, run_git) -> None:
         ),
         (None, {}, {"good": "1.1.0"}, "every component is current or held"),
         (
+            add_package_test_without_a_key,
+            {(PACKAGE_TEST,): Result(0, "all checks passed\n")},
+            {},
+            "deploy/release-signers lists a key: add the release key's public half",
+        ),
+        (
+            add_package_test_and_lose_the_key,
+            {(PACKAGE_TEST,): Result(0, "all checks passed\n")},
+            {},
+            "the release key is there: no key at ",
+        ),
+        (
             add_package_test,
             {(PACKAGE_TEST,): Result(1, "the unit is not active\n")},
             {},
@@ -278,6 +335,7 @@ def test_publish_stops_at_each_preflight_failure(
     fake_runner,
     fake_sources,
     run_git,
+    release_key: Path,
     capsys: pytest.CaptureFixture[str],
     spoil: Callable[..., None] | None,
     replies: dict,
@@ -304,7 +362,7 @@ def test_publish_stops_at_each_preflight_failure(
 
 
 def test_a_successful_publish_tags_and_creates_the_release_with_the_notes(
-    repo: Path, fake_runner, fake_sources, run_git
+    repo: Path, fake_runner, fake_sources, run_git, release_key: Path
 ) -> None:
     seen: dict[str, str] = {}
 
@@ -349,21 +407,94 @@ def test_a_successful_publish_tags_and_creates_the_release_with_the_notes(
         "--title",
     ]
     assert create[8] == "segl 0.1.0"
-    assert create[-1] == str(repo / "dist" / "segl_0.1.0_amd64.deb")
-    assert [arg for arg in create if arg.endswith(".deb")] == [create[-1]], "that package alone"
+    dist = repo / "dist"
+    assert create[-3:] == [
+        str(dist / "segl_0.1.0_amd64.deb"),
+        str(dist / "SHA256SUMS"),
+        str(dist / "SHA256SUMS.sig"),
+    ]
+    assert [arg for arg in create if arg.endswith(".deb")] == [create[-3]], "that package alone"
+    # The checksums list that package alone, and the signature over them
+    # verifies as it will on a server: against the signers file of the tree.
+    digest = hashlib.sha256(b"deb").hexdigest()
+    assert (dist / "SHA256SUMS").read_text() == f"{digest}  segl_0.1.0_amd64.deb\n"
+    check = ["ssh-keygen", "-Y", "verify", "-f", str(repo / SIGNERS), "-I", SIGNER, "-n", SIGNER]
+    verified = subprocess.run(
+        [*check, "-s", str(dist / "SHA256SUMS.sig")],
+        input=(dist / "SHA256SUMS").read_bytes(),
+        capture_output=True,
+        check=False,
+    )
+    assert verified.returncode == 0, verified.stdout + verified.stderr
     assert seen["notes"].startswith(
         "The first release. It serves a health route.\n\n### New\n\n- A health route."
     )
     assert (
         "| Project lines of code | 1234 |\n| Python | 3.15.2 |\n| segl | 0.1.0 |" in seen["notes"]
     )
-    order = [
-        call[:2]
-        for call in runner.calls
-        if call[:2] in ([PACKAGE_TEST], ["git", "tag"], ["git", "push"], ["gh", "release"])
+    steps = ([PACKAGE_TEST], ["ssh-keygen", "-Y"], ["git", "tag"], ["git", "push"])
+    order = [call[:2] for call in runner.calls if call[:2] in (*steps, ["gh", "release"])]
+    # Signed and checked before the tag, so a failure leaves nothing published.
+    assert order == [
+        [PACKAGE_TEST],
+        ["ssh-keygen", "-Y"],
+        ["ssh-keygen", "-Y"],
+        ["git", "tag"],
+        ["git", "push"],
+        ["gh", "release"],
     ]
-    assert order == [[PACKAGE_TEST], ["git", "tag"], ["git", "push"], ["gh", "release"]]
+    assert [call[2] for call in runner.called("ssh-keygen", "-Y")] == ["sign", "verify"]
     assert not runner.called("uv", "publish"), "PyPI is off"
+
+
+def test_a_signature_the_signers_file_does_not_vouch_for_is_not_published(
+    repo: Path,
+    fake_runner,
+    fake_sources,
+    run_git,
+    release_key: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def package_test(argv: Sequence[str]) -> Result:
+        (repo / "dist").mkdir(exist_ok=True)
+        (repo / "dist" / "segl_0.1.0_amd64.deb").write_bytes(b"deb")
+        return Result(0, "systemd-test: all checks passed\n")
+
+    runner = fake_runner(repo, {("gh", "api"): json.dumps(GREEN), (PACKAGE_TEST,): package_test})
+    cut_and_commit(repo, runner, fake_sources(runner), run_git)
+    # The tree lists another key than the one that signs.
+    other = tmp_path / "other"
+    subprocess.run(
+        ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "other", "-f", str(other)], check=True
+    )
+    add_package_test(repo, run_git, signers=signers_line(other))
+
+    assert publish(repo, runner, fake_sources(runner)) == 1
+
+    out = capsys.readouterr().out
+    assert "not published: deploy/release-signers does not vouch for the signature" in out
+    assert not runner.called("git", "tag")
+    assert not runner.called("git", "push")
+    assert not runner.called("gh", "release")
+    assert run_git(repo, "tag", "--list") == ""
+
+
+def test_the_release_key_is_looked_for_beside_the_sibling_projects_keys() -> None:
+    assert key_path({}) == Path.home() / ".config/segl-release/release_ed25519"
+    assert key_path({KEY_VARIABLE: "/media/key/release"}) == Path("/media/key/release")
+    assert key_path({KEY_VARIABLE: ""}) == Path.home() / ".config/segl-release/release_ed25519"
+
+
+def test_the_release_script_and_the_server_agree_on_the_signature(tmp_path: Path) -> None:
+    # One signs and the other checks, in two programs that share no code.
+    assert (SIGNER, SUMS_NAME, SIG_NAME) == (verify.SIGNER, verify.SUMS, verify.SIG)
+    assert SIGNERS == "deploy/release-signers"
+    empty = tmp_path / "signers"
+    empty.write_text("# a comment\n\n   # another\n")
+    assert signer_entries(empty) == 0
+    assert signer_entries(tmp_path / "absent") == 0
+    assert signer_entries(ROOT / SIGNERS) == len(verify.signer_keys(ROOT / SIGNERS))
 
 
 def test_pypi_is_used_only_when_enabled(repo: Path, fake_runner, fake_sources, run_git) -> None:

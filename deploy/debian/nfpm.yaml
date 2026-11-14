@@ -29,7 +29,7 @@ umask: 0o022
 
 contents:
   # The interpreter, the virtualenv, the web application, the nginx files,
-  # and the two files postinst copies to /opt/segl/etc.
+  # the release signers, and the two files postinst copies to /opt/segl/etc.
   - src: /opt/segl
     dst: /opt/segl
     type: tree
@@ -39,6 +39,17 @@ contents:
   - src: deploy/systemd/segl.service
     dst: /usr/lib/systemd/system/segl.service
     file_info: {mode: 0o644}
+  # The nightly update, which the package leaves disabled.
+  - src: deploy/systemd/segl-update.service
+    dst: /usr/lib/systemd/system/segl-update.service
+    file_info: {mode: 0o644}
+  - src: deploy/systemd/segl-update.timer
+    dst: /usr/lib/systemd/system/segl-update.timer
+    file_info: {mode: 0o644}
+  # So that an operator types `sudo segl update`, and not the long path.
+  - src: /opt/segl/venv/bin/segl
+    dst: /usr/bin/segl
+    type: symlink
   - src: deploy/debian/sysusers.conf
     dst: /usr/lib/sysusers.d/segl.conf
     file_info: {mode: 0o644}
@@ -75,6 +86,8 @@ overrides:
       # The interpreter and the wheels need at least this glibc. build.sh
       # fails when a packaged file needs a newer symbol version.
       - libc6 (>= 2.17)
+      # ssh-keygen checks a release's signature for `segl update`.
+      - openssh-client
     suggests:
       # The TLS proxy. It may be on another host.
       - nginx

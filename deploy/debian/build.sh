@@ -125,6 +125,8 @@ install_share() {
     install -D -m 0644 -t "$share/nginx" deploy/nginx/*.conf
     install -D -m 0644 deploy/segl.toml.example "$share/segl.toml.example"
     install -D -m 0644 deploy/display-names.txt "$share/display-names.txt"
+    # The keys `segl update` trusts a release by.
+    install -D -m 0644 deploy/release-signers "$share/release-signers"
     install -D -m 0644 -t "$DOC" deploy/OPERATOR.md LICENSE NOTICE
     write_debian_changelog
 }
@@ -199,7 +201,8 @@ verify_unit() {
     log "systemd-analyze verify"
     local out
     out=$(systemd-analyze verify --man=no --recursive-errors=no \
-        "$SRC/deploy/systemd/segl.service" 2>&1) || die "systemd-analyze verify failed: $out"
+        "$SRC/deploy/systemd/segl.service" "$SRC/deploy/systemd/segl-update.service" \
+        "$SRC/deploy/systemd/segl-update.timer" 2>&1) || die "systemd-analyze verify failed: $out"
     [ -z "$out" ] || die "systemd-analyze verify said: $out"
 }
 

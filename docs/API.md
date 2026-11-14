@@ -13,6 +13,7 @@ A mutation, or a WebSocket upgrade, whose `Origin` header is present and does no
 | Method | Path | Function |
 |---|---|---|
 | GET | `/api/v1/health` | `{ "status": "ok" }` |
+| GET | `/api/v1/version` | `{ "version" }`, the release that is serving, as `segl --version` prints it. `segl update` waits for the new version here after it starts segl. |
 | GET | `/api/v1/config` | `{ "editRequired" }`, true when `access_codes` has a code. Same fact as the injected script. No pass, and no code is ever in the response. |
 | POST | `/api/v1/access` | Body `{ "code" }`, a JSON object of at most 4096 bytes. Issues a pass for an access code and returns `{ "pass", "expiresAt" }`. No pass is needed to call it. A wrong code is `403` with `wrong_code`. After five wrong codes in a row from one client address, every code from it gets `429` with `rate_limited` for fifteen minutes. |
 | GET | `/api/v1/slots` | `{ "slots": [ ... ] }` with nine entries in number order: number, title, epoch, savedAt. |

@@ -1,0 +1,13 @@
+# The keys a segl release may be signed with, in ssh-keygen's "allowed
+# signers" format (ssh-keygen(1), ALLOWED SIGNERS). The package installs this
+# file as /opt/segl/share/release-signers, and `segl update` checks a
+# release's SHA256SUMS.sig against it before it installs anything.
+#
+# The principal and the namespace are both "segl-release", so a signature
+# made for another project's releases never passes for one of segl's.
+#
+# To change the key: add the new one here, publish that release signed with
+# the old key, and take the old key out in a later release.
+#
+# No key is listed yet. `scripts/release.py publish` refuses to publish until
+# one is (docs/RELEASING.md, the release key).

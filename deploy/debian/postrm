@@ -1,9 +1,11 @@
 #!/bin/sh
 # postrm for segl, in the form of Sunstone's.
 #
-# `apt remove` keeps the settings (/opt/segl/etc) and the boards
-# (/opt/segl/var). `apt purge` removes the settings and the link that
-# `systemctl enable` made. It keeps boards that are not empty, and says so.
+# `apt remove` keeps the settings (/opt/segl/etc), the boards
+# (/opt/segl/var), and what `segl update` kept (/opt/segl/update). `apt
+# purge` removes the settings, the update folder, whose backups are copies
+# of the settings, and the links that `systemctl enable` made. It keeps
+# boards that are not empty, and says so.
 # The segl account stays, as Debian leaves system accounts, so the files
 # that are left keep an owner.
 set -e
@@ -19,9 +21,10 @@ case "$1" in
         reload_systemd
         ;;
     purge)
-        rm -rf /opt/segl/etc
-        # The links of `systemctl enable`, and a mask, for a unit that is gone.
-        find /etc/systemd/system -maxdepth 2 -type l -name 'segl.service' -delete 2>/dev/null || true
+        rm -rf /opt/segl/etc /opt/segl/update
+        # The links of `systemctl enable`, and a mask, for units that are gone.
+        find /etc/systemd/system -maxdepth 2 -type l \
+            \( -name 'segl.service' -o -name 'segl-update.*' \) -delete 2>/dev/null || true
         reload_systemd
         rmdir /opt/segl/var /opt/segl 2>/dev/null || true
         if [ -d /opt/segl/var ]; then

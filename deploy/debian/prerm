@@ -1,14 +1,17 @@
 #!/bin/sh
 # prerm for segl, in the form of Sunstone's.
 #
-# On removal, stop segl before its files go. The stop is SIGTERM, on which
-# segl writes every slot with unsaved edits. On an upgrade nothing is
-# stopped: segl keeps running, and the new postinst restarts it.
+# On removal, stop segl before its files go, and the update timer and its
+# service first, so that no update starts meanwhile. The stop is SIGTERM, on
+# which segl writes every slot with unsaved edits. On an upgrade nothing is
+# stopped: segl keeps running, and the new postinst restarts it. The upgrade
+# may itself be segl-update.service at work.
 set -e
 
 case "$1" in
     remove)
         if [ -d /run/systemd/system ]; then
+            deb-systemd-invoke stop segl-update.timer segl-update.service >/dev/null || true
             deb-systemd-invoke stop segl.service >/dev/null || true
         fi
         ;;

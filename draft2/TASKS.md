@@ -370,6 +370,7 @@ As built, where the text above left a choice open (D2-034):
 - The license texts: every npm package in the web build and every font gets its text in the package, and one without a text fails the build. `web/licenses/` keeps the texts for what ships none. Liberation Sans in the editor is version 1.05, under the GPL version 2 with a font exception. Changed the same day, at the user's request and after the task: the build ships Liberation Sans 2.1.5, under the Open Font License, in its place (`web/fonts/`, D2-026).
 - `scripts/release.py publish` runs `package-test.sh` as its last preflight step and attaches the package it built.
 - CI builds and installs the package as a second job.
+- Changed the same day, at the user's request and after the task (D2-035): the package also carries `segl update`, its timer, and the release signers. Its `postinst` adds a new version's settings to `segl.toml` and merges nginx changes into the site's files. `package-test.sh` is T-021 too.
 
 Acceptance: T-017 on Ubuntu 26.04, on a host or in an `ubuntu:26.04` container booted with systemd. That machine runs nginx with the `deploy/nginx/` files and `site-board.example.conf`, using Ubuntu's snakeoil certificate. If neither is available, log what was checked and leave a follow-up line on T13.
 
@@ -379,9 +380,9 @@ Out of scope: the production container image (L-005).
 
 - Status: pending
 - Requires: T12
-- Requirements: all S-001–S-017
+- Requirements: all S-001–S-019
 - Read: `docs/TEST-PLAN.md` evidence section
 
-Re-run T-001 through T-020. Append the evidence block to `STATUS.md`. On full pass, set Next task to `NONE` and Completed to T00–T13. On a failure, set Next task to the task that owns the defect and do not open P1.
+Re-run T-001 through T-021. Append the evidence block to `STATUS.md`. On full pass, set Next task to `NONE` and Completed to T00–T13. On a failure, set Next task to the task that owns the defect and do not open P1.
 
 This task does not add features.

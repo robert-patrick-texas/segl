@@ -16,7 +16,9 @@ These versions were verified on the development host, Ubuntu 26.04.1 LTS on amd6
 | Docker | 29.8.2, rootful and rootless | The dev container, `FROM ubuntu:26.04`. T11 ran it under both. Rootless Podman is allowed too (D2-015) and was not tried. | T01 |
 | Node.js and npm | 26.13.1 and 11.20.0 | Building and testing `web/`. The version is `web/.node-version`, the newest LTS release (D2-023). npm refuses another major (`engine-strict`), so put this Node first on `PATH` when the host's default is a different one. | T04 |
 | nginx | 1.28.3 | The mount tests, which run it without root on loopback ports with the `deploy/nginx/` files. They need 1.25.1 or newer. The dev container installs its own. | T02 |
-| openssl | 3.5.5 | The mount tests' certificate. | T02 |
+| openssl | 3.5.5 | The mount tests' certificate, and the certificates of the update tests. | T02 |
+| ssh-keygen | OpenSSH 10.2p1 | The update tests sign test releases and check them, as a server does. `release.py publish` signs a release with it. Package `openssh-client`. | D2-035 |
+| diff3 | GNU diffutils 3.12 | The tests of the nginx merge. Every Ubuntu has it. | D2-035 |
 | Docker, again | 29.8.2, rootful | Building the `.deb` and installing it in a container that boots systemd, which needs a privileged container. nfpm, lintian, and `dpkg-deb` are in the build's image, not on the host. | T12 |
 
 Python-side tools come from `uv.lock`, not the host: ruff, ty, pytest, and httpx2 (T01). httpx2 is the transport of the FastAPI test client. Starlette deprecates plain httpx there. `websockets` (T06) is a dependency of segl itself, the WebSocket protocol uvicorn serves `/collab` with (D2-027), and the tests that need a real socket use its client. Web-side tools come from `web/package-lock.json`: Vite, TypeScript, Vitest, Playwright, and Prettier (T04).
@@ -202,7 +204,7 @@ The runs are not part of the gate and hold no time to a limit. They fail only wh
 
 ```bash
 deploy/debian/build-deb.sh        # dist/segl_<version>_amd64.deb
-deploy/debian/package-test.sh     # builds it, then installs it (TEST-PLAN.md T-017)
+deploy/debian/package-test.sh     # builds it, installs it, and updates it (T-017, T-021)
 deploy/debian/package-test.sh dist/segl_<version>_amd64.deb   # installs one already built
 ```
 
@@ -216,13 +218,22 @@ deploy/debian/package-test.sh dist/segl_<version>_amd64.deb   # installs one alr
 - The package's own Python draws an element over the WebSocket through nginx (`deploy/debian/socket_check.py`). The element is still there after a restart.
 - A setting segl cannot use stops the unit, the journal names the key, and systemd does not start it again.
 - With access codes in the file, a code buys a pass, and the journal has neither the code nor the secret.
-- An upgrade keeps the settings and the board and restarts segl. A stop is clean and leaves no write-ahead log. Remove keeps the settings and the board. Purge removes the settings, keeps the board, and says so.
+- An upgrade with apt keeps the settings and the board and restarts segl. A stop is clean and leaves no write-ahead log. Remove keeps the settings and the board. Purge removes the settings and the update folder, keeps the board, and says so.
 
-The upgrade is the same package under a higher version number, which the script makes by repacking it. Set `SEGL_KEEP_CONTAINER=1` to leave the container running afterwards and look around in it.
+The same run is T-021, the update. `segl update` needs releases to install, so `package-test.sh` makes them from the package under test (`deploy/debian/test-releases.sh`): 9.0.1 to 9.0.5, each the same package with a few files changed, and each signed with a throwaway key that those packages trust. 9.0.2 adds a statement to the package's `segl-proxy.conf`. 9.0.3 does not start. 9.0.4 changes the line of `segl-proxy.conf` that the test's site edits. A stand-in for GitHub serves them over HTTPS (`deploy/debian/fake_github.py`), with a certificate from a CA the test makes, and a small CONNECT proxy logs what goes through it (`deploy/debian/connect_proxy.py`). Both run on the package's own Python. The checks:
+
+- `segl update --check` refuses the stand-in's certificate until the test installs its CA with `update-ca-certificates`. Then it finds 9.0.2, with exit status 100, and `--proxy` sends the request through the proxy.
+- A package changed after signing, and a release signed by another key, are refused. segl is not stopped, and nothing is saved.
+- The site's `segl.toml` loses `update_proxy` and gets a value and a comment of its own, and its `segl-proxy.conf` gets an edit. The update to 9.0.2 puts `update_proxy` back with its note, keeps the site's lines, merges the release's statement into the nginx file beside the site's edit, passes `nginx -t`, reloads nginx, and answers as 9.0.2 with the board still there.
+- 9.0.3, which does not start, and 9.0.4, which clashes with the site's edit, are taken out again. 9.0.2 answers, and the settings and the nginx file are as they were.
+- The timer is not enabled. Turned on, its next run is from 21:00 to 03:00. A run leaves out 9.0.4, which failed, and the next run installs 9.0.5 through `update_proxy`.
+- With the stand-in stopped, `--from` installs 9.0.2 from its folder.
+
+The test releases also carry the apt upgrade by hand: 9.0.1 over the package under test. Set `SEGL_KEEP_CONTAINER=1` to leave the container running afterwards and look around in it. The host needs `ssh-keygen` and `openssl` for the keys and the certificates.
 
 The container is privileged, because systemd as PID 1 needs a cgroup tree of its own. The test was run under rootful Docker.
 
-`tests/test_package.py` reads the same files without building anything: the unit, the nfpm spec, the maintainer scripts, the copyright file, and the operator notes. It also runs `web/scripts/collect-licenses.ts` against the real web build, when there is one, so a bundled package or a font without a license text fails pytest.
+`tests/test_package.py` reads the same files without building anything: the units, the nfpm spec, the maintainer scripts, the copyright file, and the operator notes. The update's own logic has pytest tests that need no container (`tests/test_update_*.py`): the merge of settings, the merge of nginx files with the real `diff3`, the signature check with the real `ssh-keygen`, the HTTPS client against a local server and a local proxy, and the update's order with apt, systemctl, and nginx played by a stand-in. It also runs `web/scripts/collect-licenses.ts` against the real web build, when there is one, so a bundled package or a font without a license text fails pytest.
 
 ## Dev loop
 

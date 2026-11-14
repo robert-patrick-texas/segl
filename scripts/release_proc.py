@@ -51,8 +51,22 @@ class Runner:
     def __init__(self, cwd: Path) -> None:
         self.cwd = cwd
 
-    def run(self, argv: Sequence[str], *, check: bool = True) -> Result:
+    def run(
+        self,
+        argv: Sequence[str],
+        *,
+        check: bool = True,
+        capture: bool = True,
+        stdin: str | None = None,
+    ) -> Result:
         """Run one command and wait for it.
+
+        Args:
+            argv: The program and its arguments.
+            check: Raise when the exit status is not 0.
+            capture: Keep the output. False leaves it on the terminal, for a
+                program that asks something there, such as a passphrase.
+            stdin: Text to give the program on its standard input.
 
         Raises:
             CommandError: When the program is missing, or exits with a status
@@ -60,7 +74,12 @@ class Runner:
         """
         try:
             done = subprocess.run(
-                list(argv), cwd=self.cwd, capture_output=True, text=True, check=False
+                list(argv),
+                cwd=self.cwd,
+                capture_output=capture,
+                text=True,
+                check=False,
+                input=stdin,
             )
         except FileNotFoundError as exc:
             raise CommandError(f"command not found: {argv[0]}") from exc

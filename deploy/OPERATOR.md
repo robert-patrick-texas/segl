@@ -16,14 +16,17 @@ How to install segl on Ubuntu 26.04, put nginx in front of it, and run it. The p
 | `/opt/segl/python` | CPython, pinned and installed by uv when the package was built. segl does not use the system's Python. |
 | `/opt/segl/venv` | The virtualenv, from `uv.lock`, with the `segl` command. |
 | `/opt/segl/app/web/dist` | The built web application. |
-| `/opt/segl/share` | The nginx files, and the two files `/opt/segl/etc` starts from. |
+| `/opt/segl/share` | The nginx files, the two files `/opt/segl/etc` starts from, and the keys a release may be signed with. |
 | `/opt/segl/etc/segl.toml` | The settings. Mode `0640`, owner `root`, group `segl`. |
 | `/opt/segl/etc/display-names.txt` | The words new visitors are named from. |
 | `/opt/segl/var` | The database and the uploaded images. Only user `segl` writes here. |
+| `/opt/segl/update` | What `segl update` keeps: downloaded packages, and copies of the settings and the database. Only root opens it. |
+| `/usr/bin/segl` | The `segl` command. |
 | `/usr/lib/systemd/system/segl.service` | The unit. It runs segl as user `segl`. |
+| `/usr/lib/systemd/system/segl-update.timer` | The nightly update. Off until you turn it on. |
 | `/usr/share/doc/segl` | These notes, `LICENSE`, `NOTICE`, and the licenses of the bundled parts. |
 
-The package creates system user `segl`. It creates the two files in `/opt/segl/etc` only when they are missing. An upgrade never changes them.
+The package creates system user `segl`. It creates the two files in `/opt/segl/etc` only when they are missing. An upgrade never replaces them. It adds new settings to `segl.toml` and keeps every line you wrote.
 
 ## Install and start
 
@@ -141,13 +144,59 @@ sudo systemctl start segl
 
 Back up `/opt/segl/etc` too.
 
-## Upgrade
+## Update
+
+```bash
+segl update --check    # is a newer release out? It changes nothing
+sudo segl update       # install it, after asking
+```
+
+`segl update` downloads the newest release from GitHub and checks its signature. Then it:
+
+1. Stops segl, and saves the settings, the nginx files, and the database.
+2. Installs the package.
+3. Adds the new version's settings to `segl.toml`, and merges its nginx changes into your files in `/etc/nginx`. Every line you wrote stays.
+4. Checks the settings and runs `nginx -t`.
+5. Starts segl, and reloads nginx if an nginx file changed.
+
+If a step fails, it puts the previous version back, with your files as they were, and says which step failed. segl is down for some seconds while the package installs. Browsers reconnect by themselves.
+
+More options:
+
+```bash
+sudo segl update --yes                      # do not ask
+sudo segl update --version <version>        # that release, also an older one
+sudo segl update --proxy=http://proxy.example.com:3128/
+sudo segl update --from /root/segl-<version>
+```
+
+- **Proxy.** `--proxy` is for one run. For every run, set `update_proxy` in `segl.toml`.
+- **A firewall that inspects TLS.** `segl update` refuses its certificate and says so. Install the firewall's CA: copy it as a `.crt` file to `/usr/local/share/ca-certificates/` and run `sudo update-ca-certificates`.
+- **No way out to GitHub.** Download the release's three files on another machine: the `.deb`, `SHA256SUMS`, and `SHA256SUMS.sig`. Copy them into one folder on the server and use `--from`.
+
+### Update every night
+
+The nightly update is off as installed. To turn it on:
+
+```bash
+sudo systemctl enable --now segl-update.timer
+```
+
+Each night it checks once, at a random time from 21:00 to 03:00, server time. It installs a newer release as above. It does not try a release again after that release failed.
+
+```bash
+systemctl list-timers segl-update.timer   # the next run
+journalctl -u segl-update                 # what each run did
+sudo systemctl disable --now segl-update.timer   # off again
+```
+
+### Upgrade by hand
 
 ```bash
 sudo apt install ./segl_<new version>_amd64.deb
 ```
 
-The upgrade keeps the settings and the boards, and restarts segl if it was running. Browsers reconnect by themselves.
+This keeps the settings and the boards, merges new statements as an update does, and restarts segl if it was running. It checks no signature and does not go back if the new version fails.
 
 ## Stop and remove
 
@@ -157,7 +206,7 @@ A stop writes every unsaved edit first:
 sudo systemctl stop segl
 ```
 
-`sudo apt remove segl` removes the program and keeps `/opt/segl/etc` and `/opt/segl/var`. `sudo apt purge segl` also removes the settings. It keeps the boards, and says so. To delete them, remove `/opt/segl`.
+`sudo apt remove segl` removes the program and keeps `/opt/segl/etc`, `/opt/segl/var`, and `/opt/segl/update`. `sudo apt purge segl` also removes the settings and the update folder. It keeps the boards, and says so. To delete them, remove `/opt/segl`.
 
 ## When something is wrong
 
@@ -170,6 +219,8 @@ journalctl -u segl -e
 - **`start ... was attempted too often`.** systemd allows five starts in a minute. Fix the cause, then run `sudo systemctl reset-failed segl` and start segl again.
 - **`502 Bad Gateway`.** segl is not running, or `bind` and the upstream in `/etc/nginx/conf.d/segl.conf` differ.
 - **The page says `Disconnected`.** segl stopped, or nginx is not passing the WebSocket. Check that `conf.d/segl.conf` and `snippets/segl-proxy.conf` are the files from `/opt/segl/share/nginx`.
+- **An update failed.** `segl update` says which step failed, and `journalctl -u segl-update` has the same for a nightly run. The previous version is back. `/opt/segl/update/last-update.json` has the reason.
+- **`changed the same lines`.** You and the new release changed the same lines of an nginx file. Compare your file with the one in `/opt/segl/share/nginx`, merge it by hand, and update again.
 - **`cannot open the database` after you moved it.** The unit lets segl write in `/opt/segl/var` alone. For another folder, run `sudo systemctl edit segl`, add the two lines below, and restart.
 
 ```ini

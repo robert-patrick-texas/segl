@@ -32,11 +32,14 @@ from pathlib import Path
 import pytest
 
 from segl.config import DEFAULTS, load_settings
+from segl.update.paths import INSTALLED, NGINX_FILES
 
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY = ROOT / "deploy"
 DEBIAN = DEPLOY / "debian"
 UNIT = DEPLOY / "systemd" / "segl.service"
+UPDATE_SERVICE = DEPLOY / "systemd" / "segl-update.service"
+UPDATE_TIMER = DEPLOY / "systemd" / "segl-update.timer"
 VERSIONS = tomllib.loads((ROOT / "versions.toml").read_text(encoding="utf-8"))
 OPT = Path("/opt/segl")
 SHELL_SCRIPTS = {
@@ -44,6 +47,7 @@ SHELL_SCRIPTS = {
     "build.sh": "bash",
     "package-test.sh": "bash",
     "systemd-test.sh": "bash",
+    "test-releases.sh": "bash",
     "testlib.sh": "bash",
     "postinst": "sh",
     "prerm": "sh",
@@ -58,10 +62,10 @@ def read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def unit() -> configparser.ConfigParser:
+def unit(path: Path = UNIT) -> configparser.ConfigParser:
     parser = configparser.ConfigParser(interpolation=None)
     parser.optionxform = str  # ty: ignore[invalid-assignment]
-    parser.read_string(read(UNIT))
+    parser.read_string(read(path))
     return parser
 
 
@@ -202,8 +206,13 @@ def test_every_file_nfpm_is_told_to_package_is_in_the_tree() -> None:
     assert len(scripts) == 3
     in_tree = [source for source in sources if not source.startswith("/")]
     # What build.sh makes inside the container: /opt/segl, the documents, and
-    # the changelog.
-    assert sorted(set(sources) - set(in_tree)) == ["/build/changelog.gz", "/build/doc", "/opt/segl"]
+    # the changelog. And the command in the virtualenv, which /usr/bin/segl links to.
+    assert sorted(set(sources) - set(in_tree)) == [
+        "/build/changelog.gz",
+        "/build/doc",
+        "/opt/segl",
+        "/opt/segl/venv/bin/segl",
+    ]
     for path in (*in_tree, *scripts):
         assert (ROOT / path).is_file(), path
 
@@ -251,7 +260,11 @@ def test_the_folders_are_roots_settings_and_segls_data() -> None:
     assert folders == [
         ["d", "/opt/segl/etc", "0755", "root", "root", "-"],
         ["d", "/opt/segl/var", "0750", "segl", "segl", "-"],
+        # Copies of the settings, with the access codes, and the packages root
+        # installs: nobody else reads or writes there.
+        ["d", "/opt/segl/update", "0700", "root", "root", "-"],
     ]
+    assert Path("/opt/segl/update") == INSTALLED.update_dir
 
 
 def test_the_example_settings_keep_everything_in_those_two_folders() -> None:
@@ -287,6 +300,147 @@ def test_purge_removes_the_settings_and_keeps_the_boards() -> None:
     assert "rm -rf /opt/segl/var" not in postrm
     assert "rm -rf /opt/segl\n" not in postrm
     assert "userdel" not in postrm
+
+
+def test_postinst_merges_new_statements_after_the_files_exist_and_before_the_restart() -> None:
+    postinst = read(DEBIAN / "postinst")
+    merge = "        if ! /opt/segl/venv/bin/segl config merge --write; then\n"
+
+    assert postinst.count(merge) == 1
+    created = postinst.index('install_file "$SHARE/display-names.txt"')
+    restarted = postinst.index("systemctl try-restart segl.service")
+    assert created < postinst.index(merge) < restarted
+    # A merge that cannot be done is said, and dpkg is not left half-configured.
+    after = postinst.split(merge, 1)[1]
+    assert after.lstrip().startswith('echo "segl: something was not merged')
+    assert "exit 1" not in after.split("fi", 1)[0]
+    assert Path("/opt/segl/venv/bin/segl") == INSTALLED.binary
+
+
+def test_removal_stops_the_update_timer_before_segl_and_an_upgrade_stops_nothing() -> None:
+    prerm = read(DEBIAN / "prerm")
+    remove = prerm.split("    remove)", 1)[1].split(";;", 1)[0]
+
+    timer = "deb-systemd-invoke stop segl-update.timer segl-update.service"
+    assert timer in remove
+    assert remove.index(timer) < remove.index("deb-systemd-invoke stop segl.service")
+    # The upgrade may be segl-update.service at work. Nothing stops it.
+    assert "upgrade | deconfigure | failed-upgrade) ;;" in prerm
+
+
+def test_purge_removes_the_update_folder_and_the_timers_link() -> None:
+    postrm = read(DEBIAN / "postrm")
+    purge = postrm.split("    purge)", 1)[1].split(";;", 1)[0]
+
+    assert "rm -rf /opt/segl/etc /opt/segl/update\n" in purge
+    assert "-name 'segl-update.*'" in purge
+    # A removal keeps it: the record, and the packages to go back to.
+    assert "/opt/segl/update" not in postrm.split("    remove)", 1)[1].split(";;", 1)[0]
+
+
+# The update: the command, the signers, the units
+
+
+def test_the_package_ships_what_segl_update_needs() -> None:
+    spec = read(DEBIAN / "nfpm.yaml")
+    build = read(DEBIAN / "build.sh")
+
+    assert "    dst: /usr/lib/systemd/system/segl-update.service\n" in spec
+    assert "    dst: /usr/lib/systemd/system/segl-update.timer\n" in spec
+    link = "  - src: /opt/segl/venv/bin/segl\n    dst: /usr/bin/segl\n    type: symlink\n"
+    assert link in spec
+    # ssh-keygen checks a release's signature. diff3 and apt-get are in
+    # packages every Ubuntu has.
+    assert re.search(r"^\s+- openssh-client$", spec, re.M)
+    assert '    install -D -m 0644 deploy/release-signers "$share/release-signers"\n' in build
+    assert Path("/opt/segl/share/release-signers") == INSTALLED.signers
+    assert Path("/opt/segl/share/segl.toml.example") == INSTALLED.example
+    assert Path("/opt/segl/etc/segl.toml") == INSTALLED.config_file
+
+
+def test_the_build_checks_all_three_units() -> None:
+    build = read(DEBIAN / "build.sh")
+    verify = build.split("systemd-analyze verify --man=no", 1)[1].split("||", 1)[0]
+
+    for name in ("segl.service", "segl-update.service", "segl-update.timer"):
+        assert f'"$SRC/deploy/systemd/{name}"' in verify
+        assert (DEPLOY / "systemd" / name).is_file()
+
+
+def test_the_update_service_runs_the_unattended_update_as_root() -> None:
+    parsed = unit(UPDATE_SERVICE)
+    service = parsed["Service"]
+
+    assert service["Type"] == "oneshot"
+    assert service["ExecStart"] == "/opt/segl/venv/bin/segl update --auto"
+    assert service["User"] == "root"
+    assert service["TimeoutStartSec"] == "1h"
+    # The update stops and starts segl. It must not be stopped along with it.
+    assert "PartOf" not in parsed["Unit"]
+    assert "Install" not in parsed, "only the timer starts it"
+
+
+def test_the_timer_runs_once_a_night_from_21_00_to_03_00_local_time() -> None:
+    parsed = unit(UPDATE_TIMER)
+    timer = parsed["Timer"]
+
+    assert timer["OnCalendar"] == "*-*-* 21:00", "no time zone: the server's own"
+    assert timer["RandomizedDelaySec"] == "6h"
+    start, spread = 21, int(timer["RandomizedDelaySec"].removesuffix("h"))
+    assert (start + spread) % 24 == 3
+    # A server that was off at night must not update when it boots at noon.
+    assert "Persistent" not in timer
+    assert "Unit" not in timer, "it starts the service of its own name"
+    assert parsed["Install"]["WantedBy"] == "timers.target"
+
+
+def test_the_package_turns_the_timer_on_nowhere() -> None:
+    for name in ("postinst", "prerm", "postrm"):
+        # The commands, without the comments, which name the command a site runs.
+        commands = [
+            line for line in read(DEBIAN / name).splitlines() if not line.lstrip().startswith("#")
+        ]
+        assert not [line for line in commands if re.search(r"systemctl\b.*\benable\b", line)], name
+        assert not [line for line in commands if "start segl-update" in line], name
+    spec = read(DEBIAN / "nfpm.yaml")
+    assert "timers.target.wants" not in spec
+
+
+def test_the_merge_knows_the_nginx_files_the_manual_has_a_site_install() -> None:
+    notes = read(DEPLOY / "OPERATOR.md")
+    manual = read(ROOT / "docs" / "DEPLOY.md")
+
+    for name, place in NGINX_FILES:
+        assert (DEPLOY / "nginx" / name).is_file()
+        command = (
+            rf"sudo install -m 644 /opt/segl/share/nginx/{re.escape(name)} +/etc/nginx/{place}"
+        )
+        assert re.search(command, notes), name
+        assert re.search(command, manual), name
+    # The two site examples are the site's own, and are never merged.
+    shipped = {path.name for path in (DEPLOY / "nginx").glob("*.conf")}
+    assert shipped - {name for name, _ in NGINX_FILES} == {
+        "site-board.example.conf",
+        "site-root.example.conf",
+    }
+    assert Path("/etc/nginx") == INSTALLED.nginx_dir
+
+
+def test_the_test_releases_differ_as_the_install_test_expects() -> None:
+    releases = read(DEBIAN / "test-releases.sh")
+    test = read(DEBIAN / "systemd-test.sh")
+    proxy = read(DEPLOY / "nginx" / "segl-proxy.conf")
+
+    # The lines the test releases change are in the package's file, once each.
+    assert proxy.count("\nproxy_connect_timeout 5s;\n") == 1
+    assert proxy.count("\nclient_max_body_size 52m;\n") == 1
+    assert "proxy_next_upstream_tries" not in proxy
+    for version in ("9.0.1", "9.0.2", "9.0.3", "9.0.4", "9.0.5"):
+        assert f"\npack {version}\n" in releases
+        assert version in test
+    # The broken release replaces the function the command serves with.
+    assert "def serve(config: Path | None) -> int:" in read(ROOT / "src/segl/cli.py")
+    assert "\ndef serve(config):\n" in releases
 
 
 # The unit

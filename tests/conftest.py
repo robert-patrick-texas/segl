@@ -178,7 +178,14 @@ class FakeRunner(Runner):
         self.replies.update(replies or {})
         self.calls: list[list[str]] = []
 
-    def run(self, argv: Sequence[str], *, check: bool = True) -> Result:
+    def run(
+        self,
+        argv: Sequence[str],
+        *,
+        check: bool = True,
+        capture: bool = True,
+        stdin: str | None = None,
+    ) -> Result:
         self.calls.append(list(argv))
         # The longest matching prefix wins.
         for prefix in sorted(self.replies, key=len, reverse=True):
@@ -192,7 +199,8 @@ class FakeRunner(Runner):
             if isinstance(reply, str):
                 return Result(0, reply)
             return reply(argv)
-        return super().run(argv, check=check)
+        # Always captured: a test has no terminal for a program to ask at.
+        return super().run(argv, check=check, stdin=stdin)
 
     def called(self, *prefix: str) -> list[list[str]]:
         """Return the recorded calls that start with ``prefix``."""

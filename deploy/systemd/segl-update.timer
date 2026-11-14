@@ -1,0 +1,24 @@
+# The nightly update. The package installs it disabled. Turn it on with
+#   sudo systemctl enable --now segl-update.timer
+#
+# Each night it starts segl-update.service once, at a random moment from
+# 21:00 to 03:00 in the server's own time zone: after the working day, and
+# not at the same minute on every server. An update stops segl for about
+# half a minute, and browsers reconnect by themselves.
+#
+# For other hours: sudo systemctl edit segl-update.timer, then
+#   [Timer]
+#   OnCalendar=
+#   OnCalendar=Sun 01:00
+[Unit]
+Description=Nightly segl update, at a random time from 21:00 to 03:00
+Documentation=https://robert-patrick-texas.github.io/segl/docs/DEPLOY.html
+
+[Timer]
+OnCalendar=*-*-* 21:00
+RandomizedDelaySec=6h
+# No Persistent=: a server that was off through the night does not update
+# when it boots in the middle of the day. It waits for the next night.
+
+[Install]
+WantedBy=timers.target

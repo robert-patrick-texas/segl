@@ -34,6 +34,7 @@ from segl.access import (
     letters_and_digits,
     normalize,
 )
+from segl.update.releases import DEFAULT_URL, proxy_problem
 
 DEFAULT_BIND = "127.0.0.1:8888"
 
@@ -55,6 +56,8 @@ DEFAULTS: Mapping[str, object] = {
     "history_limit": 50,
     "history_interval_seconds": 1,
     "head_flush_seconds": 0.2,
+    "update_url": DEFAULT_URL,
+    "update_proxy": "",
 }
 
 # What differs without --config. The paths are relative to the working directory.
@@ -100,6 +103,11 @@ class Settings:
     history_limit: int
     history_interval_seconds: float
     head_flush_seconds: float
+    # The releases API `segl update` asks (docs/DEPLOY.md, updates).
+    update_url: str = DEFAULT_URL
+    # The proxy it goes through, "" for none. It may hold a password, so it
+    # stays out of the repr, as the codes do.
+    update_proxy: str = field(default="", repr=False)
 
     @property
     def bind(self) -> str:
@@ -299,6 +307,24 @@ def _seconds(key: str, value: object) -> float:
     return float(value)
 
 
+def _update_url(value: object) -> str:
+    usable = isinstance(value, str) and value.startswith("https://") and not value.split()[1:]
+    if not usable or value == "https://":
+        raise ConfigError(
+            f"update_url must be an https:// address, such as {DEFAULT_URL!r}, not {value!r}"
+        )
+    return str(value).rstrip("/")
+
+
+def _update_proxy(value: object) -> str:
+    # The message leaves the value out: it may hold a password.
+    if not isinstance(value, str):
+        raise ConfigError('update_proxy must be text, "" for none')
+    if value and (why := proxy_problem(value)):
+        raise ConfigError(f"update_proxy: {why}")
+    return value
+
+
 # The one static token of an earlier build, which no release shipped (D2-033).
 _REPLACED = "edit_token"
 
@@ -361,4 +387,6 @@ def load_settings(path: Path | None = None) -> Settings:
             "history_interval_seconds", values["history_interval_seconds"]
         ),
         head_flush_seconds=_seconds("head_flush_seconds", values["head_flush_seconds"]),
+        update_url=_update_url(values["update_url"]),
+        update_proxy=_update_proxy(values["update_proxy"]),
     )

@@ -49,3 +49,8 @@ segl: unstripped-binary-or-object [opt/segl/venv/lib/python3.*/site-packages/web
 # (D2-026), which web/e2e/mount.spec.ts holds on every run.
 segl: privacy-breach-twitter * [opt/segl/app/web/dist/assets/*]
 segl: privacy-breach-generic * [opt/segl/app/web/dist/assets/*]
+
+# /usr/bin/segl is a link to the command in the virtualenv, so that an
+# operator types `sudo segl update`. `segl --help` and the operator notes in
+# /usr/share/doc/segl are its manual.
+segl: no-manual-page [usr/bin/segl]

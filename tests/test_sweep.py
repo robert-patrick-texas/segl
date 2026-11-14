@@ -157,6 +157,7 @@ MUTATIONS = (
 SOCKET = Call("WS", "/collab", "/collab?slot=1", mutation=True)
 READS = (
     Call("GET", "/api/v1/health", "/api/v1/health"),
+    Call("GET", "/api/v1/version", "/api/v1/version"),
     Call("GET", "/api/v1/config", "/api/v1/config"),
     Call("GET", "/api/v1/slots", "/api/v1/slots"),
     Call("GET", "/api/v1/slots/{n}", "/api/v1/slots/1"),

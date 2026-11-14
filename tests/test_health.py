@@ -21,6 +21,7 @@ from harness import make_settings, running_segl
 
 from segl.app import create_app
 from segl.repository import Repository
+from segl.versions import app_version
 
 
 def test_health_answers_ok(repository: Repository) -> None:
@@ -28,6 +29,14 @@ def test_health_answers_ok(repository: Repository) -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+    assert "set-cookie" not in response.headers
+
+
+def test_version_says_which_release_is_serving(repository: Repository) -> None:
+    response = TestClient(create_app(make_settings(), repository)).get("/api/v1/version")
+
+    assert response.status_code == 200
+    assert response.json() == {"version": app_version()}
     assert "set-cookie" not in response.headers
 
 
@@ -44,4 +53,5 @@ def test_process_serves_health_on_the_configured_bind(tmp_path: Path) -> None:
 
         assert reply.status == 200
         assert reply.json() == {"status": "ok"}
+        assert server.get("/api/v1/version").json() == {"version": app_version()}
         assert f"127.0.0.1:{server.port}" in server.logged_line("Uvicorn running on")

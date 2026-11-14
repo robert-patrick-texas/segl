@@ -21,6 +21,8 @@ max_scene_bytes = 52428800
 history_limit = 50
 history_interval_seconds = 1
 head_flush_seconds = 0.2
+update_url = "https://api.github.com/repos/robert-patrick-texas/segl"
+update_proxy = ""
 ```
 
 There is no base-path setting. segl serves at its root, and nginx strips the path it mounts segl under (`ARCHITECTURE.md`, mount and navigation).
@@ -42,6 +44,8 @@ segl checks the file when it starts. A key it does not know, such as a misspelle
 Without `--config`, segl runs with development defaults: the values above, except `database = "var/segl.sqlite"`, `assets_dir = "var/assets"`, `display_names = "deploy/display-names.txt"`, and `web_dir = "web/dist"`, relative to the working directory. Git ignores `var/`. Without `--config`, segl also reads `segl.toml` from the working directory when that file exists, so a local file, which git ignores too, can override any of them. With `--config`, only the named file is read. Tests point `database`, `assets_dir`, and `display_names` at temporary paths and may shorten the flush interval.
 
 `display_names` is the word file new visitors are named from (`ARCHITECTURE.md`, display names): one word of 1–10 ASCII letters on a line, with blank lines and `#` comments skipped. segl reads it once, when it starts, so a changed file takes a restart. A file that is missing, has a line that is not such a word, or has no words stops segl with exit status 1 and one line that names the file, and the line number when a line is at fault.
+
+`update_url` is the releases API that `segl update` asks, and `update_proxy` is the proxy it goes through, `""` for none (updates, below). `update_url` must be an `https://` address. `update_proxy` is `http://HOST:PORT`, and may carry a user name and a password, which no message repeats. The server itself uses neither.
 
 After the settings, segl opens `database`, before it listens. It creates the file, and its folder, when they are missing, applies the migrations the file lacks, and adds the nine slots (`DATA-MODEL.md`). A database it cannot open, or one written by a newer segl, stops it with exit status 1 and one line that names the file.
 
@@ -90,11 +94,14 @@ A firewall, or the `allow` and `deny` lines in `segl-board.conf`, can do the sam
 | `/opt/segl/venv` | Virtualenv created from `uv.lock` using that interpreter. It holds the `segl` package, which is the server's code. The package carries a copy of `versions.toml`, which `segl --version` reads. |
 | `/opt/segl/app/web/dist` | The built web application. |
 | `/opt/segl/share/nginx` | The files from `deploy/nginx/`. |
-| `/opt/segl/share` | `segl.toml.example` and `display-names.txt`, the two files `/opt/segl/etc` starts from. |
+| `/opt/segl/share` | `segl.toml.example` and `display-names.txt`, the two files `/opt/segl/etc` starts from. `release-signers`, the keys a release may be signed with. |
 | `/opt/segl/etc/segl.toml` | Site config. |
 | `/opt/segl/etc/display-names.txt` | Copy of `deploy/display-names.txt`. Sites edit this copy. |
 | `/opt/segl/var` | SQLite database, asset directory, writable by user `segl`. |
+| `/opt/segl/update` | What `segl update` keeps: downloaded packages, and copies of the settings and the database. Root's alone. |
+| `/usr/bin/segl` | A link to `/opt/segl/venv/bin/segl`, so that `sudo segl update` finds the command. |
 | `/usr/lib/systemd/system/segl.service` | The unit, `deploy/systemd/segl.service`. |
+| `/usr/lib/systemd/system/segl-update.service`, `segl-update.timer` | The nightly update, which the package leaves off. |
 | `/usr/share/doc/segl` | `OPERATOR.md`, `LICENSE`, `NOTICE`, the copyright file, and the license texts of the bundled parts. |
 
 The `.deb` creates system user `segl`, shell `nologin`, home `/opt/segl`. The unit runs as that user. The interpreter, the virtualenv, the web application, and `/opt/segl/etc` are owned by root and are not writable by `segl`. `/opt/segl/var` is mode `0750`, owner `segl`.
@@ -127,7 +134,7 @@ The package installs the unit disabled. `systemctl enable --now segl` starts it,
 
 ```bash
 deploy/debian/build-deb.sh        # writes dist/segl_<version>_amd64.deb
-deploy/debian/package-test.sh     # builds it, then installs it: T-017
+deploy/debian/package-test.sh     # builds it, installs it, and updates it: T-017, T-021
 ```
 
 Both need Docker, git, and the host's `python3`, which reads the version. `DEVELOPMENT.md` (the package) says what each does and how long it takes.
@@ -142,12 +149,12 @@ The build runs in a clean `ubuntu:26.04` container (`deploy/debian/Containerfile
 
 What the package does on a machine:
 
-- **Install.** It creates user `segl`, `/opt/segl/etc`, and `/opt/segl/var`. It copies the two files into `/opt/segl/etc` when they are missing. It enables and starts nothing.
-- **Upgrade.** It leaves `/opt/segl/etc` and `/opt/segl/var` as they are. Neither file in `/opt/segl/etc` is a dpkg conffile, so an upgrade never stops to ask about one. It restarts segl if it was running.
-- **Remove.** It stops segl and removes the program. The settings and the boards stay.
-- **Purge.** It also removes `/opt/segl/etc`. It keeps the boards in `/opt/segl/var`, and says so. User `segl` stays, so those files keep an owner.
+- **Install.** It creates user `segl`, `/opt/segl/etc`, `/opt/segl/var`, and `/opt/segl/update`. It copies the two files into `/opt/segl/etc` when they are missing. It enables and starts nothing.
+- **Upgrade.** It never replaces a file in `/opt/segl/etc`, and leaves `/opt/segl/var` as it is. Neither file in `/opt/segl/etc` is a dpkg conffile, so an upgrade never stops to ask about one. It adds the new version's settings to `segl.toml`, and merges what the new version changed in its nginx files into the site's copies (updates, below). It restarts segl if it was running.
+- **Remove.** It stops the update timer and segl, and removes the program. The settings, the boards, and `/opt/segl/update` stay.
+- **Purge.** It also removes `/opt/segl/etc` and `/opt/segl/update`. It keeps the boards in `/opt/segl/var`, and says so. User `segl` stays, so those files keep an owner.
 
-The package depends on `systemd` and `libc6`. It suggests nginx, which may run on another host.
+The package depends on `systemd`, `libc6`, and `openssh-client`, whose `ssh-keygen` checks a release's signature. It suggests nginx, which may run on another host.
 
 ### License texts in the package
 
@@ -202,6 +209,116 @@ T00 checked these files with nginx 1.28.3 on 2026-11-11. `nginx -t` passed for b
 
 The test suite repeats the check against segl itself on every run (`tests/test_mount.py`, T02). It copies these files into a temporary folder laid out like `/etc/nginx`, and runs nginx there in front of a real segl process. The copies differ from the shipped files only in the upstream port, the listening ports, and a test certificate in place of snakeoil. The tests run `nginx -t` on each site example, then check the `/board` redirect, the health and config routes under `/board/` and at a host root, the path and client address segl sees, and that no response sets a cookie.
 
+## Updates
+
+`segl update` installs a newer release on a server that runs the `.deb`. A person runs it, or a timer runs it once a night. The order of its steps follows Sunstone's updater, and its merge of settings follows texas2step's (D2-035).
+
+```bash
+segl update --check                         # is a newer release out? It changes nothing
+sudo segl update                            # install the newest release, after asking
+sudo segl update --yes                      # install it without asking
+sudo segl update --version 0.2.0            # install that release, also an older one
+sudo segl update --from /root/segl-0.2.0    # install the release whose files are in a folder
+sudo segl update --proxy=http://proxy.example.com:3128/
+```
+
+`--check` asks for the newest release and compares it with the installed version. It reads the settings, so it needs root or membership of group `segl`. Its exit status says what it found:
+
+| Exit status | Meaning |
+|---|---|
+| 0 | Up to date, or newer than the newest release |
+| 100 | A newer release is out |
+| 1 | It could not tell. The message says why |
+
+Without a terminal and without `--yes`, `segl update` installs nothing.
+
+### What an update does
+
+1. It asks `update_url` for the newest release. Drafts and pre-releases are never offered.
+2. It downloads three files to `/opt/segl/update/cache/<version>/`: `segl_<version>_amd64.deb`, `SHA256SUMS`, and `SHA256SUMS.sig`.
+3. It checks the signature on `SHA256SUMS` against `/opt/segl/share/release-signers`, with `ssh-keygen -Y verify`. Then the package must match its line in `SHA256SUMS`. If either check fails, it stops. Nothing has changed.
+4. It runs `nginx -t`, and asks apt whether it can install the package (`apt-get install --simulate`). If nginx fails its test as things are, or apt cannot install the package, such as when it needs another package that the server cannot fetch, it stops. Nothing has changed.
+5. It makes sure it has a verified package of the installed version, to go back to. It downloads that release if the cache does not have it.
+6. It stops segl, which writes every unsaved edit. Then it copies `/opt/segl/etc`, the three nginx files, and the database to `/opt/segl/update/backups/pre-update-<time>/`.
+7. It installs the package with `apt-get install`. The package's `postinst` merges the new version's statements into the settings and the nginx files (below).
+8. It runs the new version's `segl config merge --write`, which must find nothing left to merge. It runs the new version's `segl check`, and `nginx -t`.
+9. It starts segl, and waits up to a minute for `/api/v1/version` to answer as the new version.
+
+If a step from 7 on fails, the update goes back. It installs the previous package again and puts back the settings and the nginx files, and it reloads nginx if an nginx file went back. It puts the database back only if step 9 started the new version: that version may have migrated the database, and an older segl does not open a database a newer one wrote. Then it starts the previous version and checks that it answers. The run ends with exit status 1 and says which step failed.
+
+segl is down from step 6 to step 9. In the install test's container an update took 9 seconds, and segl gave no answer for 6 of them. A release that did not start took 45 seconds to take out again, most of it systemd's five tries to start it. Browsers reconnect by themselves. A server that had segl stopped before the update is left stopped.
+
+Only one update runs at a time. A second one stops with `another segl update is running`. `/opt/segl/update/last-update.json` records the last update: `updated`, `failed`, or `refused`, the two versions, the time, and the reason.
+
+### What the merge does to the site's files
+
+The package never replaces a file the site edits. `segl config merge --write` adds a new version's statements to those files and keeps every line the site wrote. The package's `postinst` runs it on every install and upgrade, also one done by hand with `apt install`. Without `--write` it only says what it would do.
+
+- **`segl.toml`.** Each key the new version added goes in with its note, after the key that comes before it in the new example file. Every line already in the file stays as it is: the values, the order, and the site's own comments. A key the site commented out counts as there. The merged file must hold every value the old one held, or nothing is written.
+- **The nginx files.** For each of `conf.d/segl.conf`, `snippets/segl-proxy.conf`, and `snippets/segl-board.conf` under `/etc/nginx`, the merge compares three files with `diff3`: the site's copy, the package's file as it was last merged, and the package's file now. What the release changed goes into the site's copy, and what the site changed stays. Then `nginx -t` must pass, and nginx is reloaded. The two site examples are never merged: a site's own server block is the site's.
+
+If the site and the release changed the same lines of an nginx file, the merge changes no nginx file and exits with status 1. The same holds when `nginx -t` fails with the merged files: they go back as they were. Under `segl update` that is a failed step, and the update goes back to the previous version. After `apt install` by hand, the new version stays, with the site's nginx files as they were, and `sudo segl config merge` says which file to merge by hand.
+
+The merge keeps a copy of each file it changes under `/opt/segl/update/backups/merge-<time>/`. It records the package's nginx files, as last merged, under `/opt/segl/update/merged/nginx/`. On a server without nginx it leaves `/etc/nginx` alone.
+
+A key that a later version no longer knows is not handled by the merge today: no release has dropped one. segl still refuses a key it does not know, so a misspelled `access_codes` cannot be merged away.
+
+### The nightly update
+
+The package installs a timer, and leaves it off. A site turns it on:
+
+```bash
+sudo systemctl enable --now segl-update.timer
+```
+
+Each night the timer starts `segl update --auto` once, at a random moment from 21:00 to 03:00 in the server's own time zone. An update at night stops segl when few people draw, and the random moment keeps a group of servers from downloading in the same minute. A server that was off through those hours does not update when it boots. It waits for the next night.
+
+`--auto` installs without asking, and has three rules of its own:
+
+- It installs only a release newer than the installed one.
+- It does not try again a release that failed to install last time. It waits for a newer one. So a bad release is not installed and taken out every night. `sudo segl update --version <version>` tries it by hand.
+- It does not start without a verified package of the installed version to go back to.
+
+```bash
+systemctl list-timers segl-update.timer   # the next run and the last
+journalctl -u segl-update                 # what each run did
+systemctl --failed                        # a run that failed shows here
+```
+
+For other hours, run `sudo systemctl edit segl-update.timer` and set `OnCalendar=` (first empty, then the new time) and `RandomizedDelaySec=`. To turn the updates off again: `sudo systemctl disable --now segl-update.timer`.
+
+### Behind a proxy, or a firewall that inspects TLS
+
+`--proxy=http://HOST:PORT/` sends the requests through a proxy that takes `CONNECT`. `update_proxy` in `segl.toml` does the same for every run, the timer's too. Without either, `https_proxy` from the environment is used, which the timer does not have. A user name and password may be in the address (`http://user:password@proxy.example.com:3128`). They are never printed.
+
+Certificates are checked against the system's CA store. A firewall that inspects HTTPS shows a certificate of its own, and `segl update` refuses it and says so. Install the firewall's CA once:
+
+```bash
+sudo cp organization-ca.crt /usr/local/share/ca-certificates/   # PEM, ending in .crt
+sudo update-ca-certificates
+```
+
+There is no option to skip the certificate check. A CA that is trusted by mistake still cannot slip a release in: the package must carry a signature from a key in `release-signers`.
+
+### Without access to GitHub
+
+- **From files.** On a machine that reaches GitHub, download the release's three files into one folder. Copy the folder to the server, and run `sudo segl update --from <folder>`. The files are copied to root's own folder and checked there, as a download is.
+- **From GitHub Enterprise or a mirror.** Set `update_url` to an address that answers `<update_url>/releases/latest` and `<update_url>/releases/tags/v<version>` in the shape of GitHub's API: `tag_name`, and `assets` with a `name` and a `browser_download_url` each. For GitHub Enterprise that is `https://HOST/api/v3/repos/OWNER/segl`. It must be an `https://` address.
+
+### What the update keeps
+
+`/opt/segl/update` is root's alone, mode `0700`: the settings in its backups hold the access codes, and nobody else may plant a package there.
+
+| Path | Contents |
+|---|---|
+| `cache/<version>/` | The package, `SHA256SUMS`, and `SHA256SUMS.sig` of the installed version and of the one before it. |
+| `backups/pre-update-<time>/` | What the last three updates saved: the settings, the nginx files, and the database. Only the newest keeps its copy of the database. |
+| `backups/merge-<time>/` | The files the last three merges changed, as they were. |
+| `merged/nginx/` | The package's nginx files as last merged into the site's. |
+| `last-update.json` | The record of the last update. |
+
+`apt remove` keeps the folder. `apt purge` removes it.
+
 ## Dev container
 
 `deploy/Containerfile` is based on Ubuntu 26.04 and installs uv, Node for the web build, nginx for the mount tests, and Chromium for the browser tests. It does not install the production `.deb` layout. Tests run with `uv sync` and `uv run` inside the container, using the project's pinned Python. Rootful Docker, rootless Docker, or rootless Podman can build and run it (D2-015). T01 created the file with uv alone, pinned by image digest, and its build runs `uv run pytest` as the image's unprivileged `ubuntu` account. T02 added nginx and openssl, and set `SEGL_REQUIRE_NGINX=1`, so the tests through nginx fail there instead of skipping. T04 added Node, at the version in `web/.node-version` and pinned by image digest, and the build now also runs `npm ci`, the web typecheck, Vitest, Prettier, and `vite build` before pytest. T11 added Chromium, from the pinned `@playwright/test`, with the system libraries Playwright lists for Ubuntu 26.04. The image's command is now `scripts/testplan.py`: `docker run --rm --init segl-dev` runs pytest and the browser tests and prints one line for each row of `TEST-PLAN.md`. It passed under rootful Docker and under rootless Docker. Podman was not tried. The host tools are in `DEVELOPMENT.md`.
@@ -212,6 +329,6 @@ Not part of the MVP. After the gate, L-005 adds an image that runs the same `/op
 
 ## Operator notes
 
-[`deploy/OPERATOR.md`](../deploy/OPERATOR.md) is the short form of this page for the person who installs segl. The package installs it as `/usr/share/doc/segl/OPERATOR.md`. It covers: install the `.deb` and start the unit, install the nginx files and add the include line, leave `access_codes` empty or set codes with `access_secret`, end every pass with `access_passes_after`, set `internal_networks` where the site wants the second check, replace `display-names.txt`, back up, upgrade, and remove. It says that the access page is not a login, that slots are shared, and that protected inventory is not available on them.
+[`deploy/OPERATOR.md`](../deploy/OPERATOR.md) is the short form of this page for the person who installs segl. The package installs it as `/usr/share/doc/segl/OPERATOR.md`. It covers: install the `.deb` and start the unit, install the nginx files and add the include line, leave `access_codes` empty or set codes with `access_secret`, end every pass with `access_passes_after`, set `internal_networks` where the site wants the second check, replace `display-names.txt`, back up, update with `segl update` or the nightly timer, and remove. It says that the access page is not a login, that slots are shared, and that protected inventory is not available on them.
 
 The install test runs the nginx commands of those notes as they are written, and pytest holds the two to each other (`tests/test_package.py`).

@@ -1,0 +1,23 @@
+# The unattended update, started by segl-update.timer: `segl update --auto`.
+# It checks a release's signature against /opt/segl/share/release-signers
+# before it changes anything. It installs only a release newer than this one,
+# leaves out one that failed to install last time, and goes back to the
+# previous version if the new one fails its checks (deploy/OPERATOR.md).
+# What each run did:
+#   journalctl -u segl-update
+[Unit]
+Description=segl update from signed releases
+Documentation=https://robert-patrick-texas.github.io/segl/docs/DEPLOY.html
+Wants=network-online.target
+After=network-online.target
+# Not PartOf=segl.service, on purpose: the update stops and starts segl, and
+# must not be stopped with it in the middle of an install.
+
+[Service]
+Type=oneshot
+ExecStart=/opt/segl/venv/bin/segl update --auto
+# apt, dpkg, and starting the service need root.
+User=root
+SyslogIdentifier=segl-update
+# So that a download that hangs behind a proxy cannot block the next night's run.
+TimeoutStartSec=1h
