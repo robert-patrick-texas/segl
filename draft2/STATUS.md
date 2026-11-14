@@ -1253,3 +1253,12 @@ This file is the source of truth for what is done and what to do next. Update it
   - Not exercised:
     - A real `cut`, `upgrade`, or `publish` with it. The next release is the first.
     - The browser tests through it. They need a browser, and none was started for this change.
+- 2026-11-14: CI failed on `8711e26`, the commit of the two entries above, on a race in the tests that neither commit touched. Fixed. Evidence:
+  - CI run 43561856985, the one run for `6bf0009` and `8711e26`, pushed together: `checks` failed after 42 seconds, at pytest, with `ERROR gw0 - Different tests were collected between gw1 and gw0` and `1 error in 4.11s`. No test ran. `package` succeeded, and so did Pages run 43561856956.
+  - The cause: two parametrized tests in `tests/test_sweep.py` (T10b) took their names from a pass, and a pass begins with the second of its issue. Each pytest worker is a process that imports the file for itself. The log shows one worker with `1794634271` in six names and the other with `1794634272`: they had imported it on either side of a second. pytest-xdist stops a run whose workers disagree. The race came in with pytest in workers (`090955a`, the evening before). In one process there is nothing to disagree with.
+  - Shown here without workers: two runs of `uv run pytest --collect-only -q -n 0`, 1.2 seconds apart and with two hash seeds, differed in those six names and in no other of the 1971.
+  - The fix: the two parametrizations give their cases fixed names (`ids=`). No test's check changed.
+  - So that it does not come back: `test_every_worker_gives_each_test_the_same_name` in `tests/test_capacity.py` collects the suite twice, in two different seconds and with two hash seeds, and compares the names and their order. It takes 3.9 seconds. Against `tests/test_sweep.py` as it was, it failed and named the test. With the fix it passed.
+  - `uv run pytest` gave `1972 passed in 31.22s` in three workers, one test more. The run before the test was added took 29.63 seconds. `uv run ruff check .` and `uv run ty check` printed `All checks passed!`.
+  - How often it could fail was not measured. The whole suite had passed in workers on every earlier run, here and on CI.
+  - This is the sixth CI failure of this project on a commit that did not touch what failed. The cause was in the log this time.
