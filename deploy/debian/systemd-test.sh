@@ -44,6 +44,18 @@ restart() {
     systemctl restart segl.service
 }
 fingerprint() { openssl x509 -noout -fingerprint -sha256 2>/dev/null; }
+nginx_workers() { pgrep -f "nginx: worker process" | tr '\n' ' '; }
+gone() {
+    # The processes named are gone within ten seconds.
+    local pid alive
+    for _ in $(seq 100); do
+        alive=0
+        for pid in "$@"; do [ -e "/proc/$pid" ] && alive=1; done
+        [ "$alive" = 0 ] && return 0
+        sleep 0.1
+    done
+    return 1
+}
 journal() { journalctl -u segl.service --no-pager -o cat; }
 as_segl() { setpriv --reuid=segl --regid=segl --clear-groups "$@"; }
 scene() { https "$SITE/board/api/v1/slots/$1/scene"; }
@@ -129,7 +141,13 @@ install -m 644 /opt/segl/share/nginx/segl-board.conf /etc/nginx/snippets/segl-bo
 install -m 644 /opt/segl/share/nginx/site-board.example.conf /etc/nginx/sites-available/dev.example.com
 ln -sf ../sites-available/dev.example.com /etc/nginx/sites-enabled/
 check "nginx -t passes" nginx -t
+before_reload=$(nginx_workers)
 check "nginx reloads" systemctl reload-or-restart nginx
+# A reload returns before it is done. Until the workers of the old
+# configuration exit, one of them can still answer on port 80, and it knows
+# only the default site: a 404 where the new site sends a 301.
+# shellcheck disable=SC2086
+check "the workers from before the reload are gone" gone $before_reload
 page=$(https "$SITE/board/s/1")
 check "nginx proxies a TLS request to a slot page" contains "$page" "window.SEGL_CONFIG"
 check "the certificate nginx shows is that snakeoil certificate" equals \

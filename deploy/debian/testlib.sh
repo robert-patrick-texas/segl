@@ -17,10 +17,21 @@ check() {
     local what=$1
     shift
     checks=$((checks + 1))
-    if "$@" >/dev/null 2>&1; then pass "$what"; else fail "$what"; fi
+    if "$@" >/tmp/check.out 2>&1; then
+        pass "$what"
+    else
+        fail "$what"
+        # What the command said, so that a failure seen once can be read.
+        printf '      %s\n' "$*" | cut -c1-300
+        tail -n 5 /tmp/check.out | cut -c1-300 | sed 's/^/      | /'
+    fi
 }
 section() { printf '\n== %s\n' "$*"; }
-equals() { [ "$1" = "$2" ]; }
+equals() {
+    [ "$1" = "$2" ] && return 0
+    printf 'got:    %s\nwanted: %s\n' "$1" "$2"
+    return 1
+}
 contains() { case $1 in *"$2"*) return 0 ;; *) return 1 ;; esac; }
 lacks() { ! contains "$1" "$2"; }
 mode() { stat -c '%a %U:%G' "$1"; }

@@ -495,6 +495,26 @@ def test_the_install_test_runs_the_nginx_commands_of_the_operator_notes() -> Non
     assert "include snippets/segl-board.conf;" in read(DEPLOY / "nginx" / "site-board.example.conf")
 
 
+def test_the_install_test_waits_for_nginx_to_finish_its_reload() -> None:
+    """A reload returns before the old workers are gone, and one of them can
+    still answer on port 80 with the old configuration. The test asked port 80
+    too soon once, on CI."""
+    test = read(DEBIAN / "systemd-test.sh")
+    reload = test.index('check "nginx reloads" systemctl reload-or-restart nginx')
+    waited = test.index('check "the workers from before the reload are gone" gone $before_reload')
+    asked = test.index('check "plain HTTP only sends the browser to HTTPS"')
+
+    assert test.index("before_reload=$(nginx_workers)") < reload < waited < asked
+
+
+def test_a_failed_check_of_the_install_test_says_what_the_command_printed() -> None:
+    library = read(DEBIAN / "testlib.sh")
+
+    assert 'if "$@" >/tmp/check.out 2>&1; then' in library
+    assert "tail -n 5 /tmp/check.out" in library
+    assert "printf 'got:    %s\\nwanted: %s\\n'" in library
+
+
 def test_the_operator_notes_say_what_the_manual_asks_for() -> None:
     notes = read(DEPLOY / "OPERATOR.md")
 
