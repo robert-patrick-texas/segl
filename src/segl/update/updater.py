@@ -68,6 +68,9 @@ from segl.update.versions import PACKAGE_NAME, Version
 
 # How long the started service has to answer as the version it should be.
 SETTLE_SECONDS = 60.0
+# A started unit that systemd had to start again this often, and that has
+# not answered, is taken as broken. One restart can be chance.
+CRASHES = 2
 # The exit status of --check when a newer release is out, as `dnf check-update`.
 AVAILABLE = 100
 # How long apt waits for another apt, such as the night's unattended upgrades.
@@ -393,6 +396,11 @@ class Updater:
                 # systemd gave up on it: a setting it cannot use, or the
                 # start limit. Waiting longer changes nothing.
                 raise _Failed(f"{SERVICE} failed to start; see `journalctl -u segl` ({last})")
+            if self._restarts() >= CRASHES:
+                # It has started and died this often, and never answered.
+                # The boards are down meanwhile: go back now, and do not
+                # wait for systemd to count to its own limit.
+                raise _Failed(f"{SERVICE} keeps stopping; see `journalctl -u segl` ({last})")
             self.sleep(2)
         raise _Failed(f"{SERVICE} did not answer as {version} within {self.settle:g} s ({last})")
 
@@ -478,6 +486,12 @@ class Updater:
         for path in self.paths.cache.iterdir():
             if path.name not in keep:
                 shutil.rmtree(path, ignore_errors=True)
+
+    def _restarts(self) -> int:
+        """Return how often systemd has started the unit again since its start."""
+        asked = self.run(["systemctl", "show", "-p", "NRestarts", "--value", SERVICE], None, None)
+        text = asked.output.strip()
+        return int(text) if asked.code == 0 and text.isdecimal() else 0
 
     def _nginx_here(self) -> bool:
         return self.run(["nginx", "-v"], None, None).code == 0

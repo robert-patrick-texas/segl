@@ -14,11 +14,17 @@
 
 """scripts/capacity.py: how many groups of tests fit on the machine right now."""
 
+import importlib.util
+import socket
+import tomllib
 from pathlib import Path
 
 import capacity
+import harness
 import pytest
 from capacity import GROUP_BYTES, Machine, room, wait_for_room
+
+ROOT = Path(__file__).resolve().parents[1]
 
 GIB = 1024**3
 
@@ -213,3 +219,221 @@ def test_a_number_of_groups_that_is_not_one_is_refused(value: str) -> None:
 def test_a_wait_that_is_not_a_number_is_refused() -> None:
     with pytest.raises(SystemExit, match="SEGL_TEST_WAIT must be a whole number"):
         wait_for_room(environ={"SEGL_TEST_WAIT": "soon"}, look=Looks(IDLE), say=lambda _: None)
+
+
+# pytest's own workers, and the one-job wait of the package build.
+
+
+@pytest.mark.parametrize(
+    ("cores", "busy", "free_gib", "workers"),
+    [
+        (4, 0.2, 7.6, 3),
+        (4, 2.1, 7.6, 1),
+        (4, 3.6, 7.6, 0),
+        # A worker is counted at half a gibibyte, a third of a browser group.
+        (8, 0.0, 1.6, 3),
+        (16, 0.0, 60.0, 8),
+    ],
+)
+def test_the_pytest_workers_that_fit(
+    cores: int, busy: float, free_gib: float | None, workers: int
+) -> None:
+    found = room(machine(cores, busy, free_gib), capacity.MOST_WORKERS, capacity.WORKER_BYTES)
+
+    assert found == workers
+
+
+def test_the_messages_name_what_is_being_counted() -> None:
+    said: list[str] = []
+
+    workers = wait_for_room(
+        capacity.MOST_WORKERS,
+        each=capacity.WORKER_BYTES,
+        unit="pytest worker",
+        environ={},
+        look=lambda: machine(4, 0.2, 7.6),
+        say=said.append,
+    )
+
+    assert workers == 3
+    assert said == [
+        "capacity: 3 pytest worker(s) at once (0.2 of 4 cores busy, 7.6 GiB of memory free)"
+    ]
+
+
+def test_the_command_says_what_there_is_room_for(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(capacity, "look", lambda: machine(4, 1.0, 7.6))
+
+    assert capacity.main([]) == 0
+
+    assert capsys.readouterr().out.splitlines() == [
+        "capacity: 1.0 of 4 cores busy, 7.6 GiB of memory free",
+        "capacity: room for 2 group(s) of browser tests",
+        "capacity: room for 2 pytest worker(s)",
+    ]
+
+
+def test_the_command_waits_for_one_job_and_goes_ahead_after_the_limit(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A machine that stays busy: every core in use by other work.
+    slept: list[float] = []
+    monkeypatch.setattr(capacity, "look", lambda: machine(4, 4.0, 7.6))
+    monkeypatch.setattr(capacity.time, "sleep", slept.append)
+    monkeypatch.delenv(capacity.GROUPS_SETTING, raising=False)
+    monkeypatch.delenv(capacity.WAIT_SETTING, raising=False)
+    waiter = capacity.wait_for_room
+    monkeypatch.setattr(
+        capacity,
+        "wait_for_room",
+        lambda *args, **named: waiter(
+            *args, **named, look=capacity.look, sleep=capacity.time.sleep
+        ),
+    )
+
+    assert capacity.main(["--wait"]) == 0
+
+    # Ten minutes in all, a look every fifteen seconds, and then it goes ahead.
+    assert sum(slept) == capacity.WAIT_SECONDS == 600
+    assert set(slept) == {capacity.LOOK_EVERY}
+    out = capsys.readouterr().out.splitlines()
+    assert out[0].startswith("capacity: no room now (4.0 of 4 cores busy")
+    assert out[-1].startswith("capacity: still busy after 600 seconds")
+    assert out[-1].endswith("running 1 job")
+
+
+def test_the_command_starts_a_job_at_once_on_an_idle_machine(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(capacity, "look", lambda: machine(4, 0.2, 7.6))
+    monkeypatch.delenv(capacity.GROUPS_SETTING, raising=False)
+    waiter = capacity.wait_for_room
+    monkeypatch.setattr(
+        capacity, "wait_for_room", lambda *args, **named: waiter(*args, **named, look=capacity.look)
+    )
+
+    assert capacity.main(["--wait"]) == 0
+
+    assert capsys.readouterr().out == (
+        "capacity: 1 job(s) at once (0.2 of 4 cores busy, 7.6 GiB of memory free)\n"
+    )
+
+
+# conftest.py at the root: how many processes pytest runs in.
+
+
+def root_conftest():
+    spec = importlib.util.spec_from_file_location("segl_root_conftest", ROOT / "conftest.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class _Config:
+    """What the hook reads of pytest's configuration."""
+
+    def __init__(self, args: list[str], given: bool) -> None:
+        self.args = args
+        source = pytest.Config.ArgsSource
+        self.args_source = source.ARGS if given else source.TESTPATHS
+
+
+def test_a_run_of_a_few_named_files_is_small() -> None:
+    small = root_conftest().is_small_run
+    here = "tests/test_capacity.py"
+
+    assert small([here], True)
+    assert small([f"{here}::test_a_run_of_a_few_named_files_is_small"], True)
+    assert small([here, "tests/test_health.py", "tests/test_config.py"], True)
+    # One file named twice is one file.
+    assert small([here, f"{here}::x", "tests/test_health.py", "tests/test_config.py"], True)
+    # A folder, a fourth file, or no path at all: the suite, or much of it.
+    assert not small(["tests"], True)
+    assert not small(
+        [here, "tests/test_health.py", "tests/test_config.py", "tests/test_web.py"], True
+    )
+    assert not small(["tests", "tools"], False)
+    assert not small([here], False)
+
+
+def test_a_small_run_stays_in_one_process_and_does_not_look_at_the_machine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conftest = root_conftest()
+
+    def never(*args: object, **named: object) -> int:
+        raise AssertionError("a small run must not wait")
+
+    monkeypatch.setattr(conftest.capacity, "wait_for_room", never)
+
+    assert conftest.pytest_xdist_auto_num_workers(_Config(["tests/test_capacity.py"], True)) == 0
+
+
+@pytest.mark.parametrize(("fit", "workers"), [(3, 3), (8, 8), (2, 2), (1, 0)])
+def test_the_whole_suite_runs_in_as_many_workers_as_fit(
+    monkeypatch: pytest.MonkeyPatch, fit: int, workers: int
+) -> None:
+    conftest = root_conftest()
+    asked: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def room_for(*args: object, **named: object) -> int:
+        asked.append((args, named))
+        return fit
+
+    monkeypatch.setattr(conftest.capacity, "wait_for_room", room_for)
+
+    assert conftest.pytest_xdist_auto_num_workers(_Config(["tests", "tools"], False)) == workers
+    assert asked == [
+        ((capacity.MOST_WORKERS,), {"each": capacity.WORKER_BYTES, "unit": "pytest worker"})
+    ]
+
+
+def test_pytest_is_told_to_ask() -> None:
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    options = project["tool"]["pytest"]["ini_options"]["addopts"]
+
+    assert options[options.index("-n") + 1] == "auto"
+
+
+# The ports of each worker.
+
+
+def test_each_worker_has_ports_of_its_own() -> None:
+    ranges = [harness.worker_ports(f"gw{number}") for number in range(capacity.MOST_WORKERS)]
+
+    assert ranges[0] == range(20000, 21000)
+    assert ranges[7] == range(27000, 28000)
+    ports = [port for found in ranges if found for port in found]
+    assert len(ports) == len(set(ports)) == 8000
+    # Clear of the ports the system hands out, and of the browser tests' own.
+    assert max(ports) < 32768 and min(ports) > 18999
+    for other in ("", "master", "gw", "gwx"):
+        assert harness.worker_ports(other) is None
+
+
+def test_a_worker_takes_free_ports_from_its_range_in_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PYTEST_XDIST_WORKER", "gw5")
+
+    first, second = harness.free_port(), harness.free_port()
+
+    assert first in range(25000, 26000) and second in range(25000, 26000)
+    assert first != second
+    # A port that something holds is passed over.
+    with socket.socket() as held:
+        taken = 25000 + (second - 25000 + 1) % 1000
+        held.bind(("127.0.0.1", taken))
+        assert harness.free_port() not in (taken, first, second)
+
+
+def test_outside_a_worker_the_system_picks_the_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("PYTEST_XDIST_WORKER", raising=False)
+
+    port = harness.free_port()
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", port))

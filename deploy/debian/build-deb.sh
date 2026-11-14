@@ -12,6 +12,8 @@
 #                   checked against a hash, so a cache cannot change the result.
 #   SEGL_BUILD_TRACE
 #                   set to anything to trace the build inside the container.
+#   SEGL_TEST_WAIT  the most seconds to wait for a machine that is busy with
+#                   other work, 600 unless set. 0 does not wait.
 #
 # The container is given every tracked file, and every untracked file git
 # does not ignore, so work in progress builds too. On a clean tree that is
@@ -19,6 +21,9 @@
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
+# On a machine that is busy with other work, wait for room, and go ahead
+# after ten minutes (scripts/capacity.py). package-test.sh has waited already.
+[ -n "${SEGL_CAPACITY_WAITED:-}" ] || python3 scripts/capacity.py --wait
 out_dir=${1:-dist}
 mkdir -p "$out_dir"
 out_dir=$(cd "$out_dir" && pwd)

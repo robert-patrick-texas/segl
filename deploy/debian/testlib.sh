@@ -26,7 +26,18 @@ check() {
         tail -n 5 /tmp/check.out | cut -c1-300 | sed 's/^/      | /'
     fi
 }
-section() { printf '\n== %s\n' "$*"; }
+# Each section says how long it took when the next one starts, so that a
+# slow part of the test is seen without a stopwatch.
+section_started=""
+section() {
+    took
+    printf '\n== %s\n' "$*"
+    section_started=$SECONDS
+}
+took() {
+    [ -z "$section_started" ] || printf '      (%s s)\n' "$((SECONDS - section_started))"
+    section_started=""
+}
 equals() {
     [ "$1" = "$2" ] && return 0
     printf 'got:    %s\nwanted: %s\n' "$1" "$2"
@@ -46,6 +57,7 @@ apt_get() {
 
 finish() {
     section "summary"
+    section_started=""
     if [ "$failures" -gt 0 ]; then
         echo "$1: $failures of $checks checks FAILED"
         exit 1

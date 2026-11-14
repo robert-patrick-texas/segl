@@ -18,9 +18,19 @@
 #   SEGL_KEEP_CONTAINER   set to anything to leave the container running
 #                         afterwards, to look around in it. The script prints
 #                         its name. Remove it with `docker rm -f <name>`.
+#   SEGL_TEST_WAIT        the most seconds to wait for a machine that is busy
+#                         with other work, 600 unless set. 0 does not wait.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
+# On a machine that is busy with other work, wait for room, and go ahead
+# after ten minutes (scripts/capacity.py). The build below does not wait again.
+python3 scripts/capacity.py --wait
+export SEGL_CAPACITY_WAITED=1
+# The image the test boots is built meanwhile: it needs nothing of the package.
+image=segl-systemd-test
+docker build --quiet --tag "$image" - <deploy/debian/Containerfile.systemd >/dev/null &
+image_build=$!
 version=$(python3 -c '
 import tomllib
 print(tomllib.load(open("versions.toml", "rb"))["project"]["version"])')
@@ -97,8 +107,7 @@ openssl x509 -req -in "$work/pki/server.csr" -CA "$work/pki/ca.pem" -CAkey "$wor
     -set_serial 2 -days 2 -extfile "$work/pki/server.ext" -out "$work/pki/server.pem" 2>/dev/null
 chmod -R a+rX "$work"
 
-image=segl-systemd-test
-docker build --quiet --tag "$image" - <deploy/debian/Containerfile.systemd >/dev/null
+wait "$image_build"
 # systemd as PID 1 needs a privileged container with a cgroup tree of its
 # own. The host name is the one in site-board.example.conf.
 docker run --detach --name "$container" --hostname dev.example.com \

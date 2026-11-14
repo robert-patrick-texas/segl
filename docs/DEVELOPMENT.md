@@ -21,7 +21,7 @@ These versions were verified on the development host, Ubuntu 26.04.1 LTS on amd6
 | diff3 | GNU diffutils 3.12 | The tests of the nginx merge. Every Ubuntu has it. | D2-035 |
 | Docker, again | 29.8.2, rootful | Building the `.deb` and installing it in a container that boots systemd, which needs a privileged container. nfpm, lintian, and `dpkg-deb` are in the build's image, not on the host. | T12 |
 
-Python-side tools come from `uv.lock`, not the host: ruff, ty, pytest, and httpx2 (T01). httpx2 is the transport of the FastAPI test client. Starlette deprecates plain httpx there. `websockets` (T06) is a dependency of segl itself, the WebSocket protocol uvicorn serves `/collab` with (D2-027), and the tests that need a real socket use its client. Web-side tools come from `web/package-lock.json`: Vite, TypeScript, Vitest, Playwright, and Prettier (T04).
+Python-side tools come from `uv.lock`, not the host: ruff, ty, pytest, pytest-xdist, and httpx2 (T01). pytest-xdist runs the tests in several processes (checks, below). httpx2 is the transport of the FastAPI test client. Starlette deprecates plain httpx there. `websockets` (T06) is a dependency of segl itself, the WebSocket protocol uvicorn serves `/collab` with (D2-027), and the tests that need a real socket use its client. Web-side tools come from `web/package-lock.json`: Vite, TypeScript, Vitest, Playwright, and Prettier (T04).
 
 Do not use pip, poetry, pnpm, yarn, a virtualenv made by hand, or a Playwright installed system-wide.
 
@@ -81,7 +81,7 @@ So the development host, with 4 cores and 10 GB, runs three groups when it is id
 | Setting | What it does |
 |---|---|
 | `SEGL_TEST_GROUPS=3` | Run this many groups. Nothing is measured, and nothing waits. |
-| `SEGL_TEST_WAIT=60` | Wait at most this many seconds for room. `0` does not wait. |
+| `SEGL_TEST_WAIT=60` | Wait at most this many seconds for room. `0` does not wait. pytest, the package build, and the install test read it too. |
 | `SEGL_E2E_PORT=19950` | The first group's port base. |
 
 Each group's lines are printed with its number in front, `[2]`. Its traces of a failure are in `web/test-results/group-2/`. The last line counts all groups together. `--report FILE` writes one Playwright JSON report for all of them, which `scripts/testplan.py` reads. Arguments after `--` go to every group's `playwright test`.
@@ -132,6 +132,29 @@ uv run ty check
 `uv run pytest` covers `tests/` and `tools/md2html`. The page tests (`tests/test_web.py`) use a small stand-in for `web/dist`, so pytest needs no web build. One of them holds the stand-in to the real build when `web/dist` exists, and skips when it does not. Some tests start a real `segl` process on a free loopback port. The mount tests (`tests/test_mount.py`) also start nginx in front of it, from a temporary copy of the `deploy/nginx/` files (`tests/harness.py`), and so does the display-name limit's test (`tests/test_names.py`). A test server's word file is `Guest` and `Staff`. On a host without nginx or openssl they skip, and the summary line says why. With `SEGL_REQUIRE_NGINX=1` they fail instead. The dev container and CI set it. The harness's own client is held at TLS 1.2 (`running_mount`). Under TLS 1.3 its WebSocket client, the `websockets` package, sometimes lost its request on a busy machine, and a test then failed with a handshake that was not answered. nginx runs the shipped files either way and still offers TLS 1.3, which the browser tests use. `uv run python tests/handshake_loop.py 3000 --busy 8` repeats the measurement, and with `--tls13` it runs without the hold, which is how to find out whether a newer `websockets` lets it go (`ROADMAP.md`, held until a dependency moves). When a server keeps a test waiting, the harness says what the server had written. A WebSocket handshake that is not answered in ten seconds fails the test with the last 40 lines of segl's log, and through nginx also of nginx's `error.log` and `access.log`, where the client's bare timeout used to be. Through nginx that failure comes when the connection ends, which may be later than the ten seconds: the client waits for nginx to let go. A server that has not stopped ten seconds after SIGTERM is killed, as before, and is now named in a warning in pytest's summary with the end of its log. `tests/test_harness.py` holds both, with a segl that is stopped where it stands (SIGSTOP) to stand in for a host that stalls. The release script's tests use fakes for the network, `gh`, and `git push`, and real `git` in a temporary repository. One test builds the wheel with `uv build` to confirm it carries `versions.toml` and the SQL migrations, so it needs the network the first time. The repository and slot tests each use a SQLite file in pytest's temporary folder. The room tests (`tests/test_room.py`) need no socket: a test's browser is a list of the messages the room delivered. The socket tests (`tests/test_collab.py`) use the FastAPI test client entered as a context manager, so that every socket of a test shares one event loop as in the server, then a real `segl` process, and then nginx in front of one, with the `websockets` client. The saver's tests (`tests/test_saver.py`) run a room over a real database with flush intervals of a hundredth of a second, or of an hour where only a leave or a stop may be the reason for a write, and with a clock the test moves for the history interval. `tests/test_durability.py` is T-005, T-006, and T-007 at the socket: it kills a `segl` process with SIGKILL, or stops it with SIGTERM, and starts another over the same folder. `tests/test_assets.py` covers the file store and its two routes, through nginx too. `tests/test_history.py` is the revision routes and restore: T-011 and the history part of T-008 at the socket, the 51st revision as the list route shows it, a restore across two kills of a `segl` process, and both through nginx. How a restore takes its turn with the head flushes is in `tests/test_saver.py`, where a test holds a write open in its worker thread. `tests/test_sweep.py` is T-012 as one walk: a table of one request for every route, asked as segl's own page asks, as a page of another site asks, and as a browser without a pass asks, in process and through nginx in front of a real process that has access codes. No answer may set a cookie or carry a CORS header, a refusal among them. One of its tests compares the table with the routes the application registers, so a new route has to join the walk. `tests/reconcile_cases.json` is one table of which copy of an element is kept. pytest, Vitest, and a browser test all read it. `tests/test_access.py` is the access codes: a code's normal form, the pass and each reason to refuse one with a clock the test moves, the count of wrong codes, the route, and each gate, then a real process with codes in its TOML, and nginx in front of one. `tests/test_networks.py` is `internal_networks`: in process, where the test says which address the client has, and against a real process that is sent `X-Forwarded-For`. `tests/harness.py` has a code, a secret, and `issue_pass` for the tests of the other routes. `tests/header_value_cases.json` is one table of what a page can, and cannot, send in a request header, which Vitest holds the page's stored pass to and pytest holds an issued pass to. ruff's settings are in `pyproject.toml`: 100-character lines, Markdown left alone, and `scripts/` kept to Python 3.11 syntax because the host's `python3` runs them.
 
 The dev container runs the same suite while it builds (below).
+
+### pytest in several processes
+
+`uv run pytest` runs the suite in worker processes side by side (pytest-xdist, `-n auto` in `pyproject.toml`). `conftest.py` at the repository root says how many, and asks `scripts/capacity.py`, as the browser tests do (the browser tests in groups, below):
+
+- One worker for each core that is idle at that moment, less one, 8 at most, and no more than the free memory allows at 512 MiB a worker.
+- When the machine is busy with other work and there is no room, it waits. It looks again every 15 seconds, and after ten minutes it goes ahead in one process.
+- A run that names at most three test files, and no folder, stays in one process and does not wait. It is over before workers would have started.
+
+```bash
+uv run pytest                        # the suite, in as many workers as there is room for
+uv run pytest tests/test_health.py   # one file: one process, at once
+uv run pytest -n 0                   # the suite in one process, as before
+SEGL_TEST_GROUPS=2 uv run pytest     # this many workers. Nothing is measured, and nothing waits
+SEGL_TEST_WAIT=0 uv run pytest       # do not wait for room
+python3 scripts/capacity.py          # what there is room for now
+```
+
+On the development host, idle, three workers ran the 1,924 tests in about 34 seconds on 2026-11-13, where one process took 79 to 92. With all four cores busy on purpose and `SEGL_TEST_WAIT=20`, a run said `capacity: no room now (4.0 of 4 cores busy ...)`, waited 20 seconds, and ran in one process.
+
+Each worker takes the ports for its servers from a range of its own (`free_port` in `tests/harness.py`: 1,000 ports a worker, from 20000). Two workers that asked the system for a free port could be handed the same one. A test must not use a fixed port or a fixed path outside its `tmp_path`.
+
+The package build and the install test are one job each. They wait the same way before they start (`python3 scripts/capacity.py --wait`), and go ahead after ten minutes.
 
 Web, from T04:
 
@@ -228,6 +251,8 @@ The same run is T-021, the update. `segl update` needs releases to install, so `
 - 9.0.3, which does not start, and 9.0.4, which clashes with the site's edit, are taken out again. 9.0.2 answers, and the settings and the nginx file are as they were.
 - The timer is not enabled. Turned on, its next run is from 21:00 to 03:00. A run leaves out 9.0.4, which failed, and the next run installs 9.0.5 through `update_proxy`.
 - With the stand-in stopped, `--from` installs 9.0.2 from its folder.
+
+The whole run took 191 seconds on the development host on 2026-11-13, twice: about a minute for the build and the test releases, and 130 seconds in the container. It took 334 seconds before three changes: the image the test boots is built while the package builds, the test releases are packed with fast compression and side by side, and `segl update` no longer waits for systemd's start limit on a release that keeps stopping. The test prints how long each section took, in brackets after it. The longest is the release that does not start, 29 seconds.
 
 The test releases also carry the apt upgrade by hand: 9.0.1 over the package under test. Set `SEGL_KEEP_CONTAINER=1` to leave the container running afterwards and look around in it. The host needs `ssh-keygen` and `openssl` for the keys and the certificates.
 

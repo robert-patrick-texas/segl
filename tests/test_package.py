@@ -435,9 +435,13 @@ def test_the_test_releases_differ_as_the_install_test_expects() -> None:
     assert proxy.count("\nproxy_connect_timeout 5s;\n") == 1
     assert proxy.count("\nclient_max_body_size 52m;\n") == 1
     assert "proxy_next_upstream_tries" not in proxy
-    for version in ("9.0.1", "9.0.2", "9.0.3", "9.0.4", "9.0.5"):
-        assert f"\npack {version}\n" in releases
+    versions = ("9.0.1", "9.0.2", "9.0.3", "9.0.4", "9.0.5")
+    for version in versions:
+        assert f"\nvariant {version} " in releases
         assert version in test
+    # Each is packed, all at once, and one that fails fails the script.
+    assert f'\nfor version in {" ".join(versions)}; do\n    pack "$version" &\n' in releases
+    assert '\nfor job in "${packs[@]}"; do\n    wait "$job"\ndone\n' in releases
     # The broken release replaces the function the command serves with.
     assert "def serve(config: Path | None) -> int:" in read(ROOT / "src/segl/cli.py")
     assert "\ndef serve(config):\n" in releases
@@ -703,3 +707,26 @@ def test_the_install_test_names_the_host_of_the_example_site() -> None:
     assert "--hostname dev.example.com" in runner
     assert "include snippets/snakeoil.conf;" in site
     assert "ssl-cert" in read(DEBIAN / "Containerfile.systemd")
+
+
+def test_the_build_and_the_install_test_wait_for_a_machine_that_is_busy() -> None:
+    install = read(DEBIAN / "package-test.sh")
+    build = read(DEBIAN / "build-deb.sh")
+    wait = "python3 scripts/capacity.py --wait\n"
+
+    # The install test waits once, before anything else, and tells the build.
+    assert install.count(f"\n{wait}export SEGL_CAPACITY_WAITED=1\n") == 1
+    assert install.index(wait) < install.index("deploy/debian/build-deb.sh dist")
+    assert f'\n[ -n "${{SEGL_CAPACITY_WAITED:-}}" ] || {wait}' in build
+    assert (ROOT / "scripts" / "capacity.py").is_file()
+
+
+def test_the_install_test_builds_its_image_while_the_package_builds() -> None:
+    install = read(DEBIAN / "package-test.sh")
+    started = install.index(
+        'docker build --quiet --tag "$image" - <deploy/debian/Containerfile.systemd >/dev/null &\n'
+    )
+
+    assert started < install.index("deploy/debian/build-deb.sh dist")
+    # And it is waited for, so a failed image build fails the test, before the container starts.
+    assert started < install.index('\nwait "$image_build"\n') < install.index("docker run --detach")

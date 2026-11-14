@@ -242,11 +242,11 @@ Without a terminal and without `--yes`, `segl update` installs nothing.
 6. It stops segl, which writes every unsaved edit. Then it copies `/opt/segl/etc`, the three nginx files, and the database to `/opt/segl/update/backups/pre-update-<time>/`.
 7. It installs the package with `apt-get install`. The package's `postinst` merges the new version's statements into the settings and the nginx files (below).
 8. It runs the new version's `segl config merge --write`, which must find nothing left to merge. It runs the new version's `segl check`, and `nginx -t`.
-9. It starts segl, and waits up to a minute for `/api/v1/version` to answer as the new version.
+9. It starts segl, and waits up to a minute for `/api/v1/version` to answer as the new version. It does not wait the minute out when systemd reports the unit failed, or has had to start it again twice with no answer.
 
 If a step from 7 on fails, the update goes back. It installs the previous package again and puts back the settings and the nginx files, and it reloads nginx if an nginx file went back. It puts the database back only if step 9 started the new version: that version may have migrated the database, and an older segl does not open a database a newer one wrote. Then it starts the previous version and checks that it answers. The run ends with exit status 1 and says which step failed.
 
-segl is down from step 6 to step 9. In the install test's container an update took 9 seconds, and segl gave no answer for 6 of them. A release that did not start took 45 seconds to take out again, most of it systemd's five tries to start it. Browsers reconnect by themselves. A server that had segl stopped before the update is left stopped.
+segl is down from step 6 to step 9. In the install test's container an update took 9 seconds, and segl gave no answer for 6 of them. A release that did not start was taken out again in 29 seconds, from its download to the previous version's answer. Browsers reconnect by themselves. A server that had segl stopped before the update is left stopped.
 
 Only one update runs at a time. A second one stops with `another segl update is running`. `/opt/segl/update/last-update.json` records the last update: `updated`, `failed`, or `refused`, the two versions, the time, and the reason.
 

@@ -87,6 +87,7 @@ class Machine:
         self.fails: dict[str, str] = {}
         # Versions whose package apt says it cannot install.
         self.unmet: set[str] = set()
+        self.restarts = 0
         self.nginx_broken_before = False
         self.said: list[str] = []
         self.clock = datetime(2026, 11, 13, 21, 0, tzinfo=UTC)
@@ -98,6 +99,10 @@ class Machine:
                 ("systemctl", "stop", SERVICE): self._stop,
                 # Not in systemd's failed state, unless a test says so.
                 ("systemctl", "is-failed", "--quiet", SERVICE): 1,
+                # How often systemd has started the unit again since its start.
+                ("systemctl", "show", "-p", "NRestarts"): lambda args: RunResult(
+                    0, f"{self.restarts}\n"
+                ),
                 ("systemctl", "start", SERVICE): self._start,
                 ("systemctl", "is-active", "--quiet", "nginx.service"): self._nginx_is_active,
                 ("apt-get", "install"): self._apt,
@@ -525,6 +530,42 @@ def test_a_unit_that_systemd_gave_up_on_is_not_waited_for(machine: Machine) -> N
     # Asked once before the install, and once after the start. Not for a minute.
     assert machine.probed == 3
     assert machine.said[-1] == "segl update: 9.0.1 answers again"
+
+
+@pytest.mark.parametrize(("restarts", "probes"), [(0, 5), (1, 5), (2, 2), (5, 2)])
+def test_a_unit_that_keeps_stopping_is_not_waited_for(
+    machine: Machine, restarts: int, probes: int
+) -> None:
+    machine.release(NEW)
+    machine.fails[NEW] = "answer"
+    updater_ = machine.updater()
+    # The new version dies each time systemd starts it. The old one runs.
+    seen: list[str] = []
+
+    def probe(url: str) -> bytes:
+        seen.append(machine.package)
+        machine.restarts = restarts if machine.package == NEW else 0
+        return machine._probe(url)
+
+    updater_.probe = probe
+
+    assert updater_.update(None, yes) == 1
+
+    # Asked once before the install. Then to the end of the wait, unless
+    # the unit was started again twice: then once, and it goes back.
+    assert seen.count(NEW) == probes - 1
+    said = machine.text()
+    assert ("segl.service keeps stopping; see `journalctl -u segl`" in said) == (restarts >= 2)
+    assert ("segl.service did not answer as 9.0.2 within 6 s" in said) == (restarts < 2)
+    assert machine.said[-1] == "segl update: 9.0.1 answers again"
+
+
+def test_a_unit_that_answers_is_not_asked_how_often_it_restarted(machine: Machine) -> None:
+    machine.release(NEW)
+    machine.restarts = 4
+
+    # It crashed on the way and came up: it answers as the new version.
+    assert machine.updater().update(None, yes) == 0
 
 
 def test_a_service_that_was_stopped_is_left_stopped(machine: Machine) -> None:

@@ -46,22 +46,22 @@ variant() {
 
 pack() {
     # pack VERSION: the tree as a package. dpkg checks files against md5sums.
+    # Fast compression: these packages live for one test run.
     local version=$1 tree=/tmp/$1
     (cd "$tree" && find . -type f ! -path './DEBIAN/*' -printf '%P\0' |
         sort -z | xargs -0 md5sum >DEBIAN/md5sums)
     mkdir -p "/w/$version"
-    dpkg-deb --root-owner-group -Zzstd -b "$tree" "/w/$version/segl_${version}_amd64.deb" >/dev/null
+    dpkg-deb --root-owner-group -Zzstd -z1 -b "$tree" \
+        "/w/$version/segl_${version}_amd64.deb" >/dev/null
 }
 
 dpkg-deb -R "/w/release/$name" /tmp/base
 grep -q "^Version: $base\$" /tmp/base/DEBIAN/control
 
 variant 9.0.1 /tmp/base
-pack 9.0.1
 
 variant 9.0.2 /tmp/9.0.1
 edit "/tmp/9.0.2/$PROXY" 's/^proxy_connect_timeout 5s;$/&\nproxy_next_upstream_tries 2;/'
-pack 9.0.2
 
 variant 9.0.3 /tmp/9.0.2
 # A second `serve` replaces the first. The other commands still run, so the
@@ -72,13 +72,20 @@ cat >>"$(echo /tmp/9.0.3/opt/segl/venv/lib/python3.*/site-packages/segl/cli.py)"
 def serve(config):
     raise SystemExit("segl: broken on purpose by the package test")
 EOF
-pack 9.0.3
 
 variant 9.0.4 /tmp/9.0.2
 edit "/tmp/9.0.4/$PROXY" 's/^client_max_body_size 52m;$/client_max_body_size 64m;/'
-pack 9.0.4
 
 variant 9.0.5 /tmp/9.0.2
-pack 9.0.5
+
+# Every tree is made. Pack them side by side, and fail if one pack fails.
+packs=()
+for version in 9.0.1 9.0.2 9.0.3 9.0.4 9.0.5; do
+    pack "$version" &
+    packs+=($!)
+done
+for job in "${packs[@]}"; do
+    wait "$job"
+done
 
 chown -R "$owner" /w

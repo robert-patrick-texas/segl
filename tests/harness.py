@@ -27,6 +27,7 @@ T04's browser tests put the same nginx in front of the production build.
 """
 
 import http.client
+import itertools
 import json
 import os
 import re
@@ -157,11 +158,41 @@ def make_settings(**changes: Any) -> Settings:
     return replace(load_settings(ROOT / "deploy" / "segl.toml.example"), **changes)
 
 
+# With the tests in several processes (conftest.py at the root), each worker
+# takes its ports from a range of its own. Two workers that asked the system
+# for a free port could be handed the same one, each before the other's
+# server had it. The ranges are below the ports the system hands out and
+# above the browser tests' fixed ones.
+WORKER_PORTS_FROM = 20000
+WORKER_PORTS_EACH = 1000
+_port_turn = itertools.count()
+
+
+def worker_ports(worker: str) -> range | None:
+    """Return the ports of a pytest-xdist worker such as ``gw2``, or None for none."""
+    if not (worker.startswith("gw") and worker[2:].isdecimal()):
+        return None
+    first = WORKER_PORTS_FROM + int(worker[2:]) * WORKER_PORTS_EACH
+    return range(first, first + WORKER_PORTS_EACH)
+
+
 def free_port() -> int:
     """Return a loopback TCP port that nothing is listening on."""
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return probe.getsockname()[1]
+    ports = worker_ports(os.environ.get("PYTEST_XDIST_WORKER", ""))
+    if ports is None:
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            return probe.getsockname()[1]
+    # In turn, so that a port a test has just let go is not the next one out.
+    for _ in ports:
+        port = ports[next(_port_turn) % len(ports)]
+        with socket.socket() as probe:
+            try:
+                probe.bind(("127.0.0.1", port))
+            except OSError:
+                continue
+            return port
+    raise RuntimeError(f"no free port from {ports.start} to {ports.stop - 1}")
 
 
 @dataclass(frozen=True)

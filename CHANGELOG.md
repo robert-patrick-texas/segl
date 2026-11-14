@@ -94,6 +94,9 @@ segl is nine shared Excalidraw boards on one server: people on a board draw toge
 ### Changed
 
 - An upgrade of the package adds new settings to `segl.toml` and merges nginx changes into the site's files. It still never replaces a file in `/opt/segl/etc`. D2-034 said an upgrade never changes one.
+- `uv run pytest` runs the suite in worker processes side by side (pytest-xdist 3.8.0). `conftest.py` at the root takes the number from `scripts/capacity.py`: the idle cores less one. On a machine that is busy with other work it waits, and goes ahead after ten minutes. A run of up to three named files stays in one process. `-n 0` is one process, as before. Each worker has a port range of its own (`tests/harness.py`).
+- The package build and the install test wait for a busy machine the same way (`python3 scripts/capacity.py --wait`). The install test builds its image while the package builds, and packs its test releases fast and side by side. It prints how long each section took.
+- `segl update` goes back from a new version as soon as systemd has started it again twice without an answer. It waited for systemd's start limit before.
 - The dev container's command is `scripts/testplan.py`. It was `uv run pytest`.
 - `scripts/release.py upgrade` no longer runs the whole suite once for each component. The components that can break anything move together and the suite runs once. Only when that fails does it run the suite on the tree as it stands and then for each component alone. A tool that can only break its own check gets that check: ruff, ty, pytest, httpx2, md2html's packages, Prettier, TypeScript, and the `@types` packages. A GitHub Action moves without a run, since only CI runs it.
 - fastapi 0.162.7, ruff 0.17.5, ty 0.0.104, and `@playwright/test` 1.65.1, each moved by `scripts/release.py upgrade` after the suite passed with it.

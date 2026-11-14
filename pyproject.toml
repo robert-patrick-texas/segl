@@ -36,6 +36,9 @@ dev = [
     # httpx there and asks for httpx2, which vakr and Sunstone also use.
     "httpx2==2.16.0",
     "pytest==9.2.0",
+    # Runs the tests in several processes at once. The root conftest.py says
+    # how many: what scripts/capacity.py finds room for.
+    "pytest-xdist==3.8.0",
     "ruff==0.17.5",
     "ty==0.0.104",
 ]
@@ -92,4 +95,6 @@ testpaths = ["tests", "tools"]
 # md2html's and the release script's modules import their siblings the way
 # the scripts do at runtime. tests/harness.py is imported as `harness`.
 pythonpath = ["tools/md2html", "scripts", "tests"]
-addopts = ["-ra", "--strict-markers", "--import-mode=importlib"]
+# -n auto: as many worker processes as the machine has room for now, which
+# conftest.py at the root decides. `-n 0` is one process, as before.
+addopts = ["-ra", "--strict-markers", "--import-mode=importlib", "-n", "auto"]

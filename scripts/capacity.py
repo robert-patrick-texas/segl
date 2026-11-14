@@ -21,12 +21,20 @@ give more groups, and a machine that is busy with other work gives fewer.
 When there is no room for even one, `wait_for_room` waits for the other
 work to end, and after a limit runs one group anyway.
 
+pytest asks the same way for its worker processes, each counted at a core
+and `WORKER_BYTES` (conftest.py at the root). The package build and the
+install test, which are one job each, only wait:
+
+    python3 scripts/capacity.py          # say what there is room for now
+    python3 scripts/capacity.py --wait   # wait for room, ten minutes at most
+
 The scripts run under the host's python3, so this is the standard library
 alone (docs/DEVELOPMENT.md).
 """
 
 from __future__ import annotations
 
+import argparse
 import math
 import os
 import time
@@ -42,6 +50,12 @@ GROUP_BYTES = 1536 * 1024 * 1024
 # More groups than this gain little: a group has servers to start, and the
 # longest single spec file sets the floor.
 MOST_GROUPS = 6
+# What a pytest worker is counted at. A worker starts a segl and an nginx of
+# its own for some tests, and none holds a browser.
+WORKER_BYTES = 512 * 1024 * 1024
+# More workers than this gain little: the suite is about 80 seconds in one
+# process, and each worker takes a second to start.
+MOST_WORKERS = 8
 # A machine with more than one core keeps this many free for everything else.
 SPARE_CORES = 1
 # How long to wait for room before running one group anyway, and how often
@@ -131,12 +145,15 @@ def look() -> Machine:
     return Machine(cores, busy_cores(cores), free_bytes())
 
 
-def room(machine: Machine, most: int = MOST_GROUPS) -> int:
-    """Return how many groups fit on the machine now. 0 means: wait."""
+def room(machine: Machine, most: int = MOST_GROUPS, each: int = GROUP_BYTES) -> int:
+    """Return how many groups fit on the machine now. 0 means: wait.
+
+    ``each`` is the memory one of them is counted at.
+    """
     spare = SPARE_CORES if machine.cores > 1 else 0
     # Half a busy core is rounded away: something is always running a little.
     by_cores = math.floor(machine.cores - machine.busy_cores + 0.5) - spare
-    by_memory = most if machine.free_bytes is None else machine.free_bytes // GROUP_BYTES
+    by_memory = most if machine.free_bytes is None else machine.free_bytes // each
     return max(0, min(most, by_cores, by_memory))
 
 
@@ -153,6 +170,8 @@ def _setting(name: str, environ: dict[str, str]) -> int | None:
 def wait_for_room(
     most: int = MOST_GROUPS,
     *,
+    each: int = GROUP_BYTES,
+    unit: str = "group",
     environ: dict[str, str] | None = None,
     look: Callable[[], Machine] = look,
     sleep: Callable[[float], None] = time.sleep,
@@ -161,29 +180,56 @@ def wait_for_room(
     """Return how many groups to run, 1 or more, waiting while there is no room.
 
     `SEGL_TEST_GROUPS` sets the count and skips the measuring. `SEGL_TEST_WAIT`
-    is the most seconds to wait, 600 unless set, and 0 is no wait.
+    is the most seconds to wait, 600 unless set, and 0 is no wait. ``each``
+    is the memory one of them is counted at, and ``unit`` is what the
+    messages call one: a group, a worker, a job.
     """
     environ = dict(os.environ) if environ is None else environ
     fixed = _setting(GROUPS_SETTING, environ)
     if fixed is not None:
         if fixed < 1:
             raise SystemExit(f"{GROUPS_SETTING} must be 1 or more")
-        say(f"capacity: {fixed} group(s), set by {GROUPS_SETTING}")
+        say(f"capacity: {fixed} {unit}(s), set by {GROUPS_SETTING}")
         return fixed
     limit = _setting(WAIT_SETTING, environ)
     limit = WAIT_SECONDS if limit is None else limit
     waited = 0
     while True:
         machine = look()
-        groups = room(machine, most)
+        groups = room(machine, most, each)
         if groups >= 1:
-            say(f"capacity: {groups} group(s) at once ({machine.summary})")
+            say(f"capacity: {groups} {unit}(s) at once ({machine.summary})")
             return groups
         if waited >= limit:
-            say(f"capacity: still busy after {waited} seconds ({machine.summary}); running 1 group")
+            busy = f"still busy after {waited} seconds ({machine.summary})"
+            say(f"capacity: {busy}; running 1 {unit}")
             return 1
         if waited == 0:
             say(f"capacity: no room now ({machine.summary}); waiting up to {limit} seconds")
         step = min(LOOK_EVERY, limit - waited)
         sleep(step)
         waited += step
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Say what there is room for, or wait for room as one job does."""
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--wait",
+        action="store_true",
+        help="wait until one job has room, or until the limit has passed, then exit 0",
+    )
+    args = parser.parse_args(argv)
+    if args.wait:
+        # One job: a package build, or the install test. It only needs a start.
+        wait_for_room(1, each=WORKER_BYTES, unit="job")
+        return 0
+    machine = look()
+    print(f"capacity: {machine.summary}")
+    print(f"capacity: room for {room(machine)} group(s) of browser tests")
+    print(f"capacity: room for {room(machine, MOST_WORKERS, WORKER_BYTES)} pytest worker(s)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

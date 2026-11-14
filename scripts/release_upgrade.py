@@ -86,6 +86,7 @@ NARROW_PYTHON: dict[str, tuple[tuple[str, ...], ...]] = {
     "ty": PYTHON_CHECKS[2:],
     # The test runner and the test client's transport: only pytest uses them.
     "pytest": (PYTHON_TESTS,),
+    "pytest-xdist": (PYTHON_TESTS,),
     "httpx2": (PYTHON_TESTS,),
     # md2html's packages, which its tests in tools/ cover.
     "markdown-it-py": (PYTHON_TESTS,),
