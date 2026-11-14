@@ -45,5 +45,5 @@ If a task is blocked, leave Next task unchanged, set `Blocked: yes`, and log the
 ## Additional notes
 
 - `versions.toml` is the version list. Code that displays or checks a version reads that file. `.python-version`, `pyproject.toml`, `web/.node-version`, and `web/package.json` mirror it.
-- Release notes start with one to three sentences, then only the New, Changed, Fixed, and Additional Notes headings that have bullets. The closing table starts with the `cloc` line count of first-party work, then the versions. Transitive dependencies go in a collapsed details block.
-- The line count excludes dependency and vendor trees (`node_modules`, virtualenvs, build output, lockfiles, and embedded upstream packages). It includes the source and documents covered by `LICENSE`.
+- Release notes start with one to three sentences, then only the New, Changed, Fixed, and Additional Notes headings that have bullets. Two tables close them, each under its own heading: Lines of code, the `cloc` count of first-party work by language, with a statement that it does not count the dependencies, and then Versions. Transitive dependencies go in a collapsed details block.
+- The line count is of the files git tracks, so it excludes dependency and vendor trees (`node_modules`, virtualenvs, build output, and embedded upstream packages). It also leaves out lockfiles, word lists, and other projects' license texts. The source covered by `LICENSE` is in the table, and the documents are in the sentence under it (`docs/RELEASING.md`, lines of code).

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The release-note body: summary, topic bullets, version table, sub-dependencies.
+"""The release-note body: summary, topic bullets, lines of code, versions, sub-dependencies.
 
 The shape is in docs/RELEASING.md, "Release note shape".
 """
@@ -27,50 +27,16 @@ from pathlib import Path
 from typing import Any
 
 from release_components import direct_rows
-from release_proc import CommandError, Runner
+from release_lines import Lines, count_lines, render_lines
+from release_proc import Runner
 
 TOPICS = ("New", "Changed", "Fixed", "Additional Notes")
-CLOC_EXCLUDE_DIRS = ",".join(
-    [
-        "node_modules",
-        ".venv",
-        "venv",
-        "dist",
-        "build",
-        "vendor",
-        "third_party",
-        "site-packages",
-        "_site",
-    ]
-)
-LOCK_NAMES = r"(uv\.lock|package-lock\.json|pnpm-lock\.yaml)"
 UNRELEASED = r"Unreleased"
 
 
 def version_heading(version: str) -> str:
     """Return a pattern for the heading text of a released version's section."""
     return rf"v?\[?{re.escape(version)}\]?(?:\s.*)?"
-
-
-def project_loc(runner: Runner) -> int:
-    """Return cloc's code count for the first-party files of the repository."""
-    argv = [
-        "cloc",
-        ".",
-        "--json",
-        "--quiet",
-        "--fullpath",
-        f"--exclude-dir={CLOC_EXCLUDE_DIRS}",
-        f"--not-match-f={LOCK_NAMES}",
-    ]
-    try:
-        payload = json.loads(runner.run(argv).stdout)
-    except (CommandError, json.JSONDecodeError) as exc:
-        raise SystemExit(f"cloc failed: {exc}") from exc
-    total = payload.get("SUM", {}).get("code")
-    if not isinstance(total, int):
-        raise SystemExit("cloc JSON did not include SUM.code")
-    return total
 
 
 def section_body(text: str, heading: str) -> str | None:
@@ -126,14 +92,14 @@ def hold_bullets(doc: dict[str, Any]) -> list[str]:
     return bullets
 
 
-def version_table(doc: dict[str, Any], loc: int) -> list[str]:
-    """Return the table: the line count, then the application and its pins."""
+def version_table(doc: dict[str, Any]) -> list[str]:
+    """Return the heading and the table of the application and its pins.
+
+    It is a table of its own. The lines of code are in the one before it.
+    """
     runtime = doc.get("runtime", {})
     project = doc.get("project", {})
-    rows = [
-        ("Project lines of code", str(loc)),
-        ("Python", str(runtime.get("python", ""))),
-    ]
+    rows = [("Python", str(runtime.get("python", "")))]
     node = str(runtime.get("node", "") or "")
     if node:
         rows.append(("Node", node))
@@ -143,7 +109,7 @@ def version_table(doc: dict[str, Any], loc: int) -> list[str]:
         if name not in seen:
             seen.add(name)
             rows.append((name, version))
-    lines = ["| Item | Value |", "|---|---|"]
+    lines = ["### Versions", "", "| Item | Version |", "|---|---|"]
     lines.extend(f"| {item} | {value} |" for item, value in rows)
     return lines
 
@@ -198,7 +164,7 @@ def render_notes(
     doc: dict[str, Any],
     summary: str,
     topics: dict[str, list[str]],
-    loc: int,
+    counted: Lines,
     date: str | None = None,
 ) -> str:
     """Return the release-note body. ``date`` None leaves the heading out."""
@@ -214,7 +180,8 @@ def render_notes(
         lines.extend([f"### {topic}", ""])
         lines.extend(f"- {bullet}" for bullet in bullets)
         lines.append("")
-    lines.extend(version_table(doc, loc))
+    lines.extend([*render_lines(counted), ""])
+    lines.extend(version_table(doc))
     lines.extend(lock_details(root, doc))
     return "\n".join(lines).rstrip() + "\n"
 
@@ -229,4 +196,4 @@ def preview(root: Path, runner: Runner, doc: dict[str, Any]) -> str:
         if cut is not None:
             summary, topics = parse_section(changelog, version_heading(version))
     today = dt.date.today().isoformat()
-    return render_notes(root, doc, summary, topics, project_loc(runner), today)
+    return render_notes(root, doc, summary, topics, count_lines(runner), today)

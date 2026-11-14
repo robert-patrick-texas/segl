@@ -39,6 +39,18 @@ from release_progress import Progress
 
 from segl.repository import Repository
 
+# What `cloc --vcs=git --by-file --json` prints, for a tree of 1,234 lines of
+# code in three files, 40 lines of documentation, and a lock file.
+CLOC_BY_FILE = {
+    "header": {"cloc_version": "2.06"},
+    "./src/segl/app.py": {"language": "Python", "code": 1000, "comment": 50, "blank": 9},
+    "./tests/test_app.py": {"language": "Python", "code": 200, "comment": 4, "blank": 9},
+    "./web/src/main.ts": {"language": "TypeScript", "code": 34, "comment": 2, "blank": 9},
+    "./README.md": {"language": "Markdown", "code": 40, "comment": 0, "blank": 9},
+    "./web/package-lock.json": {"language": "JSON", "code": 5000, "comment": 0, "blank": 0},
+    "SUM": {"code": 6274, "comment": 56, "blank": 36, "nFiles": 5},
+}
+
 SHA_OLD = "a" * 40
 SHA_NEW = "b" * 40
 
@@ -172,7 +184,7 @@ class FakeRunner(Runner):
         super().__init__(cwd)
         self.replies: dict[tuple[str, ...], Reply] = {
             ("uv",): "",
-            ("cloc",): json.dumps({"SUM": {"code": 1234}}),
+            ("cloc",): json.dumps(CLOC_BY_FILE),
             ("git", "push"): "",
             ("gh", "release"): "",
         }

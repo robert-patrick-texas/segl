@@ -88,7 +88,7 @@ The install test does not use the release key. It makes a throwaway key, and its
 
 ## Release note shape
 
-The summary is one to three sentences. Then only the headings that have bullets, in this order: New, Changed, Fixed, Additional Notes. After those headings, one table. The first row is the project line count. The following rows are the application, runtimes, and direct dependencies from `versions.toml`. Transitive dependencies, when a lockfile exists, follow the table inside a collapsed details block.
+The summary is one to three sentences. Then only the headings that have bullets, in this order: New, Changed, Fixed, Additional Notes. After those headings, two tables, each under a heading of its own. Lines of code comes first: segl's own lines by language, with a statement that they are this project's and do not count the dependencies (lines of code, below). Versions is the second table: the application, runtimes, and direct dependencies from `versions.toml`. Transitive dependencies, when a lockfile exists, follow it inside a collapsed details block.
 
 ```markdown
 ## 0.1.0 — 2026-11-11
@@ -103,9 +103,20 @@ Two or three sentences on what this release is for.
 
 - Kept example-package at 1.2.3. Version 1.3.0 failed tests/test_scene.py. Deferred to a later release of that package.
 
-| Item | Value |
+### Lines of code
+
+| Language | Files | Code | Comments | Product | Tests | Tooling |
+|---|--:|--:|--:|--:|--:|--:|
+| Python | 98 | 20,488 | 5,026 | 3,766 | 14,590 | 2,132 |
+| TypeScript | 93 | 11,059 | 3,162 | 3,003 | 7,609 | 447 |
+| **All** | **191** | **31,547** | **8,188** | **6,769** | **22,199** | **2,579** |
+
+These lines of code are segl's own. They do not count the dependencies listed below. Counted by cloc 2.06 in the files git tracks. Product is what the package installs and runs. Tests check it. Tooling builds and releases it. Lock files, word lists, and the license texts of other projects are left out. The documentation is another 4,041 lines of Markdown in 48 files.
+
+### Versions
+
+| Item | Version |
 |---|---|
-| Project lines of code | 1200 |
 | Python | 3.15.2 |
 | segl | 0.1.0 |
 | fastapi | 0.115.6 |
@@ -122,17 +133,23 @@ Two or three sentences on what this release is for.
 
 A Fixed-only release omits New, Changed, and Additional Notes. A release with no held packages omits Additional Notes unless some other note belongs there.
 
-## Line count
+## Lines of code
 
-The line count is `cloc`'s code column for files written in this repository. That is the work covered by `LICENSE`. The count excludes dependency and vendor trees and generated lockfiles:
+The table counts segl's own work: the files git tracks, which is the work covered by `LICENSE`. No dependency is counted. Those are named in the Versions table and the blocks under it, and the sentence under the lines-of-code table says so. `scripts/release_lines.py` makes the table, in the shape hirdir's release notes have.
 
 ```bash
-cloc . --json --quiet --fullpath \
-  --exclude-dir=node_modules,.venv,venv,dist,build,vendor,third_party,site-packages,_site \
-  --not-match-f='(uv\.lock|package-lock\.json|pnpm-lock\.yaml)'
+cloc --vcs=git --by-file --json --quiet .
 ```
 
-`cloc` is installed on the development host (`DEVELOPMENT.md`). Documentation, the journal, deploy files, and application source all count. `node_modules`, virtualenvs, build output, the generated documentation site (`_site/`), and an embedded copy of upstream Excalidraw do not.
+- **A row for each language**, with its files, its code lines, and its comment lines. Python and TypeScript come first, and the others follow by code lines.
+- **Three columns split the code lines by path.**
+  - Product is what the package installs and runs: `src/`, `web/src/`, and the deploy files a server gets.
+  - Tests is `tests/`, the browser tests, every `test_*` and `*.test.*` file, and the install test's files in `deploy/debian/`.
+  - Tooling is `scripts/`, `tools/`, the CI files, the web package's settings and build scripts, and what builds the package and the dev container.
+- **Left out:** `uv.lock` and `package-lock.json`, plain text (the word lists), and the license texts of other projects in `web/licenses/`. Whatever git does not track is not counted at all: `node_modules`, virtualenvs, build output, and the generated documentation site.
+- **Markdown is the documentation.** It has no row. The last sentence under the table gives its lines and files.
+
+A new file in `deploy/debian/` needs a column by name, in `scripts/release_lines.py`: a test fails until it has one. `cloc` is installed on the development host (`DEVELOPMENT.md`).
 
 ## Changelog and journal
 

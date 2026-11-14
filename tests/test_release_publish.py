@@ -175,18 +175,37 @@ def test_notes_have_the_shape_in_the_manual(tree: Path, fake_runner) -> None:
     assert lines[0].startswith("## 0.0.0 — ")
     assert lines[2] == "The first release. It serves a health route."
     headings = [line for line in lines if line.startswith("### ")]
+    assert headings[-2:] == ["### Lines of code", "### Versions"]
+    headings = headings[:-2]
     assert headings == ["### New", "### Fixed", "### Additional Notes"], "Changed has no bullets"
     assert (
         "- Kept bad at 1.0.0. Version 2.0.0 failed tests/test_scene.py::test_reconcile. "
         "It is tried again when bad publishes a newer release." in lines
     )
-    table = lines.index("| Item | Value |")
-    assert lines[table + 2 : table + 6] == [
-        "| Project lines of code | 1234 |",
+    # Two tables, each under a heading of its own: the lines of code, which
+    # are this project's, and then the versions, which are mostly not.
+    counted = lines.index("### Lines of code")
+    assert lines[counted + 2 : counted + 7] == [
+        "| Language | Files | Code | Comments | Product | Tests | Tooling |",
+        "|---|--:|--:|--:|--:|--:|--:|",
+        "| Python | 2 | 1,200 | 54 | 1,000 | 200 | - |",
+        "| TypeScript | 1 | 34 | 2 | 34 | - | - |",
+        "| **All** | **3** | **1,234** | **56** | **1,034** | **200** | **-** |",
+    ]
+    assert lines[counted + 8].startswith(
+        "These lines of code are segl's own. They do not count the dependencies listed below."
+    )
+    assert lines[counted + 8].endswith("another 40 lines of Markdown in 1 files.")
+    versions = lines.index("### Versions")
+    assert versions == counted + 10
+    assert lines[versions + 2 : versions + 7] == [
+        "| Item | Version |",
+        "|---|---|",
         "| Python | 3.15.2 |",
         "| segl | 0.0.0 |",
         "| good | 1.0.0 |",
     ]
+    assert not any("lines of code |" in line for line in lines[versions:]), "not in this table"
     assert "<summary>Python sub-dependencies (1)</summary>" in lines
     assert "| starlette | 1.10.0 |" in lines
 
@@ -199,7 +218,7 @@ def test_notes_command_prints_the_preview(
     assert release.main(["notes"], root=tree) == 0
 
     captured = capsys.readouterr()
-    assert "| Project lines of code | 1234 |" in captured.out
+    assert "| **All** | **3** | **1,234** | **56** | **1,034** | **200** | **-** |" in captured.out
     assert "0.0.0, which is not a publishable release" in captured.err
 
 
@@ -456,8 +475,10 @@ def test_a_successful_publish_tags_and_creates_the_release_with_the_notes(
     assert seen["notes"].startswith(
         "The first release. It serves a health route.\n\n### New\n\n- A health route."
     )
+    assert "| **All** | **3** | **1,234** | **56** | **1,034** | **200** | **-** |" in seen["notes"]
     assert (
-        "| Project lines of code | 1234 |\n| Python | 3.15.2 |\n| segl | 0.1.0 |" in seen["notes"]
+        "### Versions\n\n| Item | Version |\n|---|---|\n| Python | 3.15.2 |\n| segl | 0.1.0 |"
+        in (seen["notes"])
     )
     steps = ([PACKAGE_TEST], ["ssh-keygen", "-Y"], ["git", "tag"], ["git", "push"])
     order = [call[:2] for call in runner.calls if call[:2] in (*steps, ["gh", "release"])]

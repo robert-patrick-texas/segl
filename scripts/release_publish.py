@@ -263,7 +263,7 @@ def publish(root: Path, runner: Runner, sources: Sources) -> int:
     version, tag = preflight.version, preflight.tag
     changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
     summary, topics = notes.parse_section(changelog, notes.version_heading(version))
-    body = notes.render_notes(root, doc, summary, topics, notes.project_loc(runner))
+    body = notes.render_notes(root, doc, summary, topics, notes.count_lines(runner))
     # The package the preflight just built and installed, and no other file
     # that happens to be in dist/. Then its checksum, and the signature over
     # that, which is checked here as a server will check it. All of this
