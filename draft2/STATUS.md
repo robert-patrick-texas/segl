@@ -1069,3 +1069,14 @@ This file is the source of truth for what is done and what to do next. Update it
     - The install test and the package build run one at a time and do not ask `capacity.py`.
     - Three groups at a load of 11.8 passed twice here and once on CI. A test that is tight on time could fail under that load on another day. `SEGL_TEST_GROUPS=1` is the way back.
   - Next action remains T13.
+- 2026-11-13: The install test failed once on CI, on a commit that changed only this file, and the cause is fixed. Evidence, on commit `c84d239`:
+  - CI run 43529737259, on the status commit `f9b0e8d`: `checks` passed, and `package` failed with `systemd-test: 1 of 104 checks FAILED`. The check was `plain HTTP only sends the browser to HTTPS`. It had passed in the three CI runs before and in every run on the host. The log did not say what curl got: a failed check printed nothing but its name.
+  - The cause is a race in the test, T12's code. `systemctl reload nginx` returns before the reload is done. Until the workers of the old configuration exit, one of them can still take a connection on port 80, and it knows only Ubuntu's default site: `404` where the new site answers `301`. Port 443 does not show it, because only the new workers listen there. The ten HTTPS checks that come first usually take long enough.
+  - Reproduced in a kept container: with the site newly added, asked right after the reload, port 80 answered `404` in 119 of 120 tries.
+  - The fix: the test notes nginx's workers before the reload and waits for those processes to exit, as a check of its own, before it asks port 80. With two variants of the site switched by the reload, 60 times each way: asked at once, the old answer came 60 times of 60. After the wait, the new answer came 60 of 60.
+  - A failed check now prints its command and the last lines the command said, and `equals` says what it got and what it wanted. This failure would have read `got: 404`.
+  - `deploy/debian/package-test.sh` exited 0 with `systemd-test: all 105 checks passed`. `tests/test_package.py` has 2 more tests, 51: the wait comes before the port-80 check, and a failed check prints.
+  - CI run 43531330009 succeeded on `c84d239`: 1641 pytest, `e2e: 3 group(s) in 3.5 minutes: 240 passed`, and `systemd-test: all 105 checks passed`.
+  - For an operator the race is harmless: the reload is complete a moment later. `deploy/OPERATOR.md` did not change.
+  - A first try at the comparison removed and added the site's link inside the container. A safety check of the tool refused that command, and it was not run. The comparison above removes nothing.
+  - Next action remains T13.
