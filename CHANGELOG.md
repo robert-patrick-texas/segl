@@ -93,6 +93,7 @@ segl is nine shared Excalidraw boards on one server: people on a board draw toge
 
 ### Changed
 
+- The MVP gate passed (T13): every row of `docs/TEST-PLAN.md`, T-001 through T-021, on commit `00ea07f`, in the dev container under rootful and rootless Docker and in the install test. `draft2/STATUS.md` has the evidence, and its next task is `NONE`. `docs/ROADMAP.md` names T-021 in the gate line, where it said T-020.
 - An upgrade of the package adds new settings to `segl.toml` and merges nginx changes into the site's files. It still never replaces a file in `/opt/segl/etc`. D2-034 said an upgrade never changes one.
 - `uv run pytest` runs the suite in worker processes side by side (pytest-xdist 3.8.0). `conftest.py` at the root takes the number from `scripts/capacity.py`: the idle cores less one. On a machine that is busy with other work it waits, and goes ahead after ten minutes. A run of up to three named files stays in one process. `-n 0` is one process, as before. Each worker has a port range of its own (`tests/harness.py`).
 - The package build and the install test wait for a busy machine the same way (`python3 scripts/capacity.py --wait`). The install test builds its image while the package builds, and packs its test releases fast and side by side. It prints how long each section took.

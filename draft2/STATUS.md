@@ -3,9 +3,9 @@
 This file is the source of truth for what is done and what to do next. Update it at the end of every task. Do not mark a task complete unless its acceptance commands were run and passed.
 
 - Updated: 2026-11-13
-- Phase: P0 collaborative slots
-- Next task: T13
-- Completed: T00, T00b, T01, T01b, T02, T03, T04, T05, T06, T07, T08, T09, T10, T10b, T11, T12
+- Phase: P0 collaborative slots. The gate passed (T13)
+- Next task: NONE
+- Completed: T00, T00b, T01, T01b, T02, T03, T04, T05, T06, T07, T08, T09, T10, T10b, T11, T12, T13
 - Blocked: no
 - Application code: Python service (`src/segl`) with settings, SQLite storage for the nine slots, the health, config, and slot routes, and the pages of the web build. Display names: the word file, the allocation route, and its limit per client address. Live collaboration: the WebSocket at `/collab`, a room for each slot, the title route, the edit gate, and the Origin check. Browser application (`web/`) with the segl bar (slots, title, who is here, connection state, this browser's name) and the Excalidraw canvas for each slot, shared live. Saving: each slot's scene is written to its head after an edit, when the last browser leaves, and at a stop, with history rows, and the bar says saving and then saved. Images: the upload and asset routes, the files under `assets_dir`, and each slot's file list. History: the revision list, the single revision, and the restore route, and the History control in the bar, which lists a slot's revisions and puts one back for everyone on the slot. JSON export and import: the editor's own export, named after the slot, the import route, and the Import control in the bar, which puts an exported file's scene in place of a slot's for everyone. The edit gate: access codes in the TOML file, the access route that issues a signed pass for one, the count of wrong codes per client address, and the access page, where a browser that may not edit enters a code. The bar says whether this browser may edit, and a browser that may not watches and changes nothing. `internal_networks`: with the list set, segl answers no address outside it. The Debian package: `deploy/debian/` builds a `.deb` that installs CPython, the virtualenv, the web build, the nginx files, and the systemd unit under `/opt/segl`, and `deploy/debian/package-test.sh` installs it in a container that boots systemd (T-017). Updates: `segl update` installs a newer signed release on an installed package and goes back when a check fails, `segl config merge` adds a new version's statements to the site's settings and nginx files, and `segl-update.timer`, off as installed, runs the update once a night (T-021)
 
@@ -1180,3 +1180,31 @@ This file is the source of truth for what is done and what to do next. Update it
     - A machine with more than four cores.
     - The whole test plan in the dev container. Its image was built, which runs pytest.
   - Next action remains T13.
+- 2026-11-13: T13 done. The MVP gate passed: every row of `docs/TEST-PLAN.md`, T-001 through T-021, passed on commit `00ea07f`. No row failed. This task changed no code and no test. Evidence:
+  - Environment: the development host, Ubuntu 26.04.1, kernel 7.0.0-43, 4 cores, 10 GB, Docker 29.8.2. Git revision `00ea07f`, with a clean tree when each build began. Python pin 3.15.2. Excalidraw 0.18.1.
+  - Commands: `docker build -f deploy/Containerfile -t segl-dev .` and `docker run --rm --init segl-dev` for T-001 through T-016, T-018, T-019, and T-020, once under rootful Docker and once under rootless Docker. `deploy/debian/package-test.sh` for T-017 and T-021.
+  - Rootful Docker 29.8.2:
+    - The build exited 0. It ran 738 Vitest tests in 26 files, Prettier, the web build, and pytest, `1924 passed in 117.22s` in one worker: the install test ran beside it, and `capacity` counted 1.9 of 4 cores busy.
+    - The run started when the install test had ended, and exited 0 after 4 minutes 50 seconds: pytest `1924 passed in 40.05s` in three workers, the browser tests `3 group(s) in 4.1 minutes: 240 passed, 0 failed, 0 flaky, 0 skipped`, and `All 18 rows passed.`
+  - Rootless Docker 29.8.2, with a daemon started by hand (`dockerd-rootless.sh --data-root <a folder of its own>`, rootlesskit 3.1.0, `--net=gvisor-tap-vsock`). `docker info` listed `rootless`:
+    - The build exited 0 with nothing cached: 738 Vitest tests, and pytest `1924 passed in 43.64s` in three workers.
+    - The run exited 0 after 4 minutes 49 seconds: pytest `1924 passed in 40.64s`, the browser tests `3 group(s) in 4.1 minutes: 240 passed, 0 failed, 0 flaky, 0 skipped`, and `All 18 rows passed.`
+    - The daemon was stopped afterwards, and its data folder and its folders under `/run/user/1000` were removed.
+  - Both runs printed the same lines from `Test plan rows` to the end (`diff` found no difference). Each row read `pass`, with the tests that ran it: T-001 2 pytest and 3 browser, T-002 1 and 3, T-003 1 and 6, T-004 0 and 3, T-005 1 and 3, T-006 1 and 1, T-007 2 and 4, T-008 7 and 18, T-009 2 and 3, T-010 0 and 3, T-011 2 and 3, T-012 132 and 6, T-013 30 and 12, T-014 3 and 12, T-015 1 and 3, T-016 2 and 3, T-019 134 and 16, T-020 82 and 0. A browser count is test runs: one test in three mounts is 3.
+  - T-018: `pass  the dev container ran the rows above on uv's Python`. Above the rows both runs printed `segl 0.0.0, revision: no git checkout here, in the dev container`, `Python 3.15.2 from /home/ubuntu/.local/share/uv/python/cpython-3.15.2-linux-x86_64-gnu (pin 3.15.2)`, `Node v26.13.1, nginx/1.28.3 (Ubuntu)`, and `Excalidraw 0.18.1, Playwright 1.65.1, Chromium 159.0.8154.6, run here`. Both images were built from the tree of `00ea07f`.
+  - T-017 and T-021: `deploy/debian/package-test.sh` exited 0 with `systemd-test: all 218 checks passed`, 218 `PASS` lines and no `FAIL` line, 3 minutes 18 seconds from start to end, beside the rootful image build. It built `segl_0.0.0_amd64.deb` (43M) from the tree, installed it in an `ubuntu:26.04` container that booted with systemd, and ran every section: a clean machine, install, the unit, nginx with the snakeoil certificate, a board drawn through nginx with the package's own Python, a setting segl cannot use, access codes, an upgrade with apt, `segl update --check` through the proxy, a release that does not verify, an update on a site that edited its settings and an nginx file, a release that does not start, a release that clashes with the site's nginx edit, the nightly update, a release from files, stop, and remove and purge. The sections' own times add up to 134 seconds.
+  - The kernel log has no out-of-memory kill from the start of the runs to their end. No log of the four container builds and runs has a `had not stopped` line.
+  - On the host, on the same tree: `uv run ruff check .` and `uv run ty check` printed `All checks passed!`. `uv run ruff format --check .` printed `96 files already formatted`. `npm --prefix web run check` and `format:check` passed.
+  - `python3 scripts/release.py check --gate` exited 0: `gate: every component is current or held`, and no component is held. `python3 scripts/release.py notes` printed `| Project lines of code | 39893 |` as the first table row. `python3 scripts/build_docs.py` rendered 48 Markdown files with 0 broken links.
+  - CI run 43553004959 on `00ea07f` had succeeded before the gate began: `1924 passed in 32.28s`, 738 Vitest tests, `240 passed, 0 failed, 0 flaky, 0 skipped` in the browser tests, and `systemd-test: all 218 checks passed` in the `package` job. Pages run 43553004956 succeeded.
+  - Documents that changed with this entry, and nothing else did:
+    - `docs/ROADMAP.md`: the gate line said rows T-001 through T-020. It now says T-021, which the update work added, and that the gate passed. P0's summary names `segl update`.
+    - `README.md`: the status says the MVP is built and its test plan passed, and that it is not released yet.
+    - `CHANGELOG.md`: one bullet.
+  - Not run:
+    - `scripts/testplan.py` on the host, outside the container. T-018 asks for the container.
+    - The size runs (`npm --prefix web run stretch`). They are not part of the gate.
+    - Podman. The host has none.
+    - No deliberate breakage. The gate changed no code.
+  - Still not exercised, as the entries above say: a real signed `publish`, and an update from a real GitHub release. The first release shows both.
+  - The task queue is empty. P1 is not started here: what comes next, the first release or P1, is the user's to name.

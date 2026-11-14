@@ -4,9 +4,11 @@ Phases are dependency order, not dates. P0 is the task list in `draft2/TASKS.md`
 
 ## P0 — Collaborative slots
 
-Nine Excalidraw slots, live sync, SQLite durability, history, optional access codes, an optional list of internal networks, display labels, the relative mount, dev container, and the `/opt/segl` `.deb`.
+Nine Excalidraw slots, live sync, SQLite durability, history, optional access codes, an optional list of internal networks, display labels, the relative mount, dev container, the `/opt/segl` `.deb`, and `segl update`.
 
-**Gate:** `TEST-PLAN.md` rows T-001 through T-020 pass and `draft2/STATUS.md` records the evidence. Next task becomes `NONE`.
+**Gate:** `TEST-PLAN.md` rows T-001 through T-021 pass and `draft2/STATUS.md` records the evidence. Next task becomes `NONE`.
+
+The gate passed on 2026-11-13, on commit `00ea07f` (T13).
 
 ## P1 — Network objects on a canvas (L-001)
 

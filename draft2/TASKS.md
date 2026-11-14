@@ -378,7 +378,7 @@ Out of scope: the production container image (L-005).
 
 ## T13 — MVP gate
 
-- Status: pending
+- Status: done
 - Requires: T12
 - Requirements: all S-001–S-019
 - Read: `docs/TEST-PLAN.md` evidence section
@@ -386,3 +386,9 @@ Out of scope: the production container image (L-005).
 Re-run T-001 through T-021. Append the evidence block to `STATUS.md`. On full pass, set Next task to `NONE` and Completed to T00–T13. On a failure, set Next task to the task that owns the defect and do not open P1.
 
 This task does not add features.
+
+As run, on 2026-11-13 and on commit `00ea07f`:
+
+- The dev container ran T-001 through T-016, T-018, T-019, and T-020, once under rootful Docker and once under rootless Docker. `deploy/debian/package-test.sh` ran T-017 and T-021.
+- Every row passed. `STATUS.md` has the evidence.
+- The gate changed no code and no test. It corrected the gate line of `docs/ROADMAP.md`, which still said T-020.
