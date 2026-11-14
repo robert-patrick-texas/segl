@@ -1262,3 +1262,28 @@ This file is the source of truth for what is done and what to do next. Update it
   - `uv run pytest` gave `1972 passed in 31.22s` in three workers, one test more. The run before the test was added took 29.63 seconds. `uv run ruff check .` and `uv run ty check` printed `All checks passed!`.
   - How often it could fail was not measured. The whole suite had passed in workers on every earlier run, here and on CI.
   - This is the sixth CI failure of this project on a commit that did not touch what failed. The cause was in the log this time.
+- 2026-11-14: The release notes close with a lines-of-code table of its own, and the versions are a second table. The user asked, outside the task queue: "Update the release notes with a table showing Lines of Code count using cloc as is done with other projects (example, /home/netops/code/hirdir) and make a statement that the lines of code are specific to this project and not the dependencies listed below. The version table should be a second table, not the same table as Lines of Code counts." Evidence, on commit `40e2c5a`:
+  - The example: hirdir's `scripts/release_facts.py` and `docs/releases/v0.4.0.md`, read at `724fd1f`. Its notes have a table with a row for each language and the columns Files, Code, Comments, Product, Tests, and Tooling, a sentence under it, and then a table of versions.
+  - What changed:
+    - `scripts/release_lines.py` is new. It runs `cloc --vcs=git --by-file --json --quiet .`, gathers the files into a row for each language, and splits each row's code lines by path into Product, Tests, and Tooling.
+    - The notes now end with `### Lines of code`, that table, the statement, then `### Versions` and the table of versions, whose header is `| Item | Version |`. The row `Project lines of code` is gone from it.
+    - The statement opens: `These lines of code are segl's own. They do not count the dependencies listed below.`
+    - Left out of the count: `uv.lock` and `package-lock.json`, plain text (the word lists), and the license texts of other projects in `web/licenses/`. Markdown is the documentation: a sentence under the table gives its lines and files.
+  - `python3 scripts/release.py notes` on the tree of `40e2c5a`: `| **All** | **227** | **35,035** | **8,781** | **7,506** | **24,048** | **3,481** |`, with Python first at 20,853 lines of code in 100 files, and `The documentation is another 4,054 lines of Markdown in 48 files.` cloc is 2.06.
+  - The notes of the published release 0.1.0 were updated on GitHub, with `gh release edit v0.1.0 --notes-file`:
+    - The new notes were made by the new code on a worktree of the tag `v0.1.0` (`117d3d7`), so the count is of the released tree: 34,244 lines of code in 223 files, of them 7,506 Product, 23,479 Tests, and 3,259 Tooling, with 8,624 comment lines, and 3,979 lines of Markdown in 48 files.
+    - `diff` of the old notes and the new: the two sections stand where the old table's header was, and the row `| Project lines of code | 39940 |` is gone. No other line differs.
+    - Read back from GitHub, the notes are the ones sent. The tag is still on `117d3d7`, the release still has its date and its three files, and `releases/latest` still answers `v0.1.0`.
+    - The old count, 39,940, was of every file in the folder, with Markdown and plain text among them. The two counts are not the same measure.
+  - `uv run pytest` gave `2042 passed in 30.91s`, 70 more, all in `tests/test_release_lines.py`. The notes tests in `tests/test_release_publish.py` hold both tables, their order, and the statement. `uv run ruff check .` and `uv run ty check` printed `All checks passed!`, `uv run ruff format --check .` printed `100 files already formatted`, and `python3 scripts/build_docs.py` found 0 broken links.
+  - 38 deliberate faults, one at a time, each restored: all 38 failed a test. Among them: a lock file, the word lists, or the license texts counted, Markdown as a row, a file in the wrong column, the totals, the order of the rows, the statement gone, one table, and the versions first.
+  - Choices the request left open:
+    - The headings are `###`, the level of New and Changed in segl's notes. hirdir's are `##`.
+    - The install test's files in `deploy/debian/` are Tests. hirdir counts its package test as Tooling. They are rows T-017 and T-021 of the test plan here.
+    - A new file in `deploy/debian/` must be given a column by name, and a test fails until it is: that folder holds installed files, build files, and test files side by side.
+    - Plain text is left out whole. Here it is word lists and license texts.
+    - D2-020 has a dated line. It already said that a first-party count comes ahead of the version table.
+  - Files of other work that changed: `scripts/release_notes.py` and `release_publish.py`, `tests/conftest.py` (the fake `cloc` answers file by file), `tests/test_release_publish.py`, `docs/RELEASING.md`, `docs/DECISIONS.md`, `draft2/AGENTS.md`, and `CHANGELOG.md`.
+  - Not done or not exercised:
+    - No test runs the real `cloc`: CI has none. The real runs are the two above.
+    - A `cut` or a `publish` with the new notes. The next release is the first.
