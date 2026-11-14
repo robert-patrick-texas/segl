@@ -10,6 +10,10 @@ The release script says what it is doing while its long steps run.
 
 - `scripts/release.py` no longer goes silent for minutes. `cut` and `upgrade` name each command of the suite as it starts and say how it ended, with its time. `publish` says each step of the install test as it comes. A command that has said nothing for 30 seconds gets a `still running` line with the last line of its output (`scripts/release_progress.py`, `docs/RELEASING.md`).
 
+### Fixed
+
+- pytest's workers no longer disagree, now and then, on the names of the tests. Two parametrized tests in `tests/test_sweep.py` took their names from a pass, which holds the second of its issue. Two workers that started in different seconds collected different names, and pytest-xdist stopped the run. The names are fixed now, and a test in `tests/test_capacity.py` collects the suite twice, in two seconds and with two hash seeds, and compares.
+
 ## 0.1.0 — 2026-11-13
 
 segl is nine shared Excalidraw boards on one server: people on a board draw together live, and their work is saved, with a history to restore from and export and import as Excalidraw files. Access codes can limit who edits, and a list of internal networks can limit who reaches it. A `.deb` installs it on Ubuntu 26.04, with a Python of its own and a systemd unit, behind nginx at a host root or under a path such as `/board/`, and `segl update` moves it to each newer signed release, by hand or every night.

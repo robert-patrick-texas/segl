@@ -15,7 +15,11 @@
 """scripts/capacity.py: how many groups of tests fit on the machine right now."""
 
 import importlib.util
+import os
 import socket
+import subprocess
+import sys
+import time
 import tomllib
 from pathlib import Path
 
@@ -437,3 +441,48 @@ def test_outside_a_worker_the_system_picks_the_port(monkeypatch: pytest.MonkeyPa
 
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", port))
+
+
+# The workers must agree on the tests.
+
+
+def collected(hash_seed: str) -> list[str]:
+    """Return the name of every test, as a pytest of its own collects them."""
+    done = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--collect-only",
+            "-q",
+            "-n",
+            "0",
+            "-p",
+            "no:cacheprovider",
+        ],
+        cwd=ROOT,
+        env={**os.environ, "PYTHONHASHSEED": hash_seed},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    return [line for line in done.stdout.splitlines() if "::" in line]
+
+
+def test_every_worker_gives_each_test_the_same_name() -> None:
+    # pytest-xdist stops the run when two workers collect different names.
+    # Each worker is a process of its own, started at a moment of its own: a
+    # name made from the time, or from the order of a set, differs between
+    # them now and then. So: collect twice, in two different seconds and with
+    # two hash seeds, and compare.
+    first = collected("1")
+    second = int(time.time())
+    while int(time.time()) == second:
+        time.sleep(0.05)
+
+    again = collected("2")
+
+    assert len(first) > 1000
+    assert sorted(set(first) ^ set(again)) == []
+    assert first == again, "the same tests in another order"

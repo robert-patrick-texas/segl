@@ -373,9 +373,22 @@ def test_a_preflight_is_given_no_permission(client: TestClient) -> None:
 FORGED = issue_pass(secret="another-secret-of-thirty-two-chars!")
 
 
+# The names are fixed. A pass holds the second of its issue, and pytest's
+# workers must all give a test the same name (the root conftest.py).
 @pytest.mark.parametrize(
     "sent",
     [None, "", "wrong", ACCESS_CODE, PASS[:-1], PASS + "x", PASS.swapcase(), f" {PASS}x", FORGED],
+    ids=[
+        "nothing",
+        "empty",
+        "wrong",
+        "the-code",
+        "pass-cut-short",
+        "pass-with-more",
+        "pass-in-other-case",
+        "pass-after-a-space",
+        "pass-of-another-secret",
+    ],
 )
 def test_a_gated_mutation_without_a_pass_is_view_only_and_changes_nothing(
     gated: TestClient, sent: str | None
@@ -418,7 +431,9 @@ def test_a_pass_does_not_help_a_page_of_another_site(gated: TestClient) -> None:
 
 
 @pytest.mark.parametrize(
-    ("sent", "view_only"), [("", True), ("wrong", True), (ACCESS_CODE, True), (PASS, False)]
+    ("sent", "view_only"),
+    [("", True), ("wrong", True), (ACCESS_CODE, True), (PASS, False)],
+    ids=["empty", "wrong", "the-code", "a-pass"],
 )
 def test_a_handshake_on_a_gated_segl_sets_no_cookie_whoever_asks(
     gated: TestClient, sent: str, view_only: bool
