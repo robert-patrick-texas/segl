@@ -46,6 +46,7 @@ from release_components import (
     workflow_files,
 )
 from release_proc import CommandError, Runner
+from release_progress import SUITE_STAGES, Progress, say
 from release_versions import at_precision
 
 # The commands CI runs (docs/DEVELOPMENT.md, "Checks"), in CI's order.
@@ -143,13 +144,20 @@ def run_suite(runner: Runner, root: Path) -> str | None:
 
 
 def run_commands(runner: Runner, commands: Sequence[tuple[str, ...]]) -> str | None:
-    """Run commands in order. Return None when all pass, or what failed first."""
+    """Run commands in order. Return None when all pass, or what failed first.
+
+    Each command is named as it starts, and says when it ends. One that takes
+    long says so meanwhile (release_progress).
+    """
     for argv in commands:
         command = " ".join(argv)
+        say(f"  {command}")
+        progress = Progress(SUITE_STAGES)
         try:
-            result = runner.run(argv, check=False)
+            result = runner.run(argv, check=False, progress=progress)
         except CommandError as exc:
             return str(exc)
+        progress.done(result.returncode == 0)
         if result.returncode != 0:
             failed = _FAILED_TEST.search(result.output)
             tail = "\n".join(result.output.strip().splitlines()[-15:])

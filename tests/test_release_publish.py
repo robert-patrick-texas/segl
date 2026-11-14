@@ -124,12 +124,22 @@ def test_cut_needs_a_summary_and_bullets(
 
 
 def test_a_successful_cut_writes_the_version_and_the_changelog_section(
-    tree: Path, fake_runner, fake_sources
+    tree: Path, fake_runner, fake_sources, capsys: pytest.CaptureFixture[str]
 ) -> None:
     runner = fake_runner(tree)
 
     assert cut(tree, runner, fake_sources(runner), TODAY) == 0
 
+    # It says what it is doing: the gate, then each command of the suite.
+    said = capsys.readouterr().out.splitlines()
+    assert said[:4] == [
+        "checking that every component is current",
+        "running the suite",
+        "  uv sync",
+        "    0:00  done",
+    ]
+    assert "  uv run pytest" in said
+    assert said[-1].startswith("cut 0.1.0.")
     assert tomllib.loads((tree / "versions.toml").read_text())["project"]["version"] == "0.1.0"
     assert tomllib.loads((tree / "pyproject.toml").read_text())["project"]["version"] == "0.1.0"
     changelog = (tree / "CHANGELOG.md").read_text()
@@ -362,7 +372,12 @@ def test_publish_stops_at_each_preflight_failure(
 
 
 def test_a_successful_publish_tags_and_creates_the_release_with_the_notes(
-    repo: Path, fake_runner, fake_sources, run_git, release_key: Path
+    repo: Path,
+    fake_runner,
+    fake_sources,
+    run_git,
+    release_key: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     seen: dict[str, str] = {}
 
@@ -373,7 +388,8 @@ def test_a_successful_publish_tags_and_creates_the_release_with_the_notes(
     def package_test(argv: Sequence[str]) -> Result:
         # What the real script does: build this version's package into dist/.
         (repo / "dist" / "segl_0.1.0_amd64.deb").write_bytes(b"deb")
-        return Result(0, "systemd-test: all checks passed\n")
+        said = "==> lintian\n== install\nPASS  the package installs with apt\n"
+        return Result(0, said + "systemd-test: all checks passed\n")
 
     runner = fake_runner(
         repo,
@@ -391,6 +407,17 @@ def test_a_successful_publish_tags_and_creates_the_release_with_the_notes(
 
     assert publish(repo, runner, fake_sources(runner)) == 0
 
+    # The install test takes minutes: its steps are said as they come, between
+    # the line that it started and the line that it passed.
+    said = capsys.readouterr().out.splitlines()
+    start = said.index(f"     the package builds and installs: running `{PACKAGE_TEST}`")
+    assert said[start - 1].startswith("ok   the release key is there: ")
+    assert said[start + 1 : start + 5] == [
+        "    0:00  ==> lintian",
+        "    0:00  == install",
+        "    0:00  systemd-test: all checks passed",
+        "ok   the package builds and installs: dist/segl_0.1.0_amd64.deb passed the install test",
+    ]
     head = run_git(repo, "rev-parse", "HEAD").strip()
     assert run_git(repo, "rev-parse", "v0.1.0^{commit}").strip() == head
     assert run_git(repo, "cat-file", "-t", "v0.1.0").strip() == "tag", "an annotated tag"

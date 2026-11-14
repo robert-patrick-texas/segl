@@ -44,6 +44,18 @@ The script needs only the host's `python3` (3.11 or newer). It runs `uv`, `gh`, 
 - `notes` prints the notes for `Unreleased`, or for the current version's section when `Unreleased` is empty after a cut. Each hold adds an Additional Notes bullet.
 - `cut` requires a summary of one to three sentences, at least one bullet, `check --gate`, and the suite. Then it writes the new application version into `versions.toml` and `pyproject.toml`, runs `uv lock`, turns `Unreleased` into `## <version> — <date>`, and opens a fresh `Unreleased`. It leaves those files unchanged when a check fails. Commit and push the result, and CI runs on it.
 - `publish` runs a preflight and stops at the first failure. The tree must be clean, `HEAD` must be on `main`, `CHANGELOG.md` must have the version's section, the version must not be `0.0.0`, tag `v<version>` must exist neither locally nor on `origin`, every GitHub check run for `HEAD` must have passed, and `check --gate` must pass now. `deploy/release-signers` must list a key, and the release key must be where `publish` looks for it (the release key, below). Last, `deploy/debian/package-test.sh` must pass: it builds `dist/segl_<version>_amd64.deb`, installs it in a container that booted with systemd, and updates it there with `segl update` (`TEST-PLAN.md` T-017 and T-021), which needs Docker, `ssh-keygen`, and `openssl`. Then `publish` writes `dist/SHA256SUMS` for that package, signs it with the release key, which asks for the key's passphrase, and checks the signature against `deploy/release-signers` as a server will. A signature that does not verify stops it, with nothing tagged. Then it tags `v<version>`, pushes the tag, and runs `gh release create v<version> --verify-tag` with the notes and three files: that `.deb`, `SHA256SUMS`, and `SHA256SUMS.sig`. It attaches no other file from `dist/`. It uploads to PyPI, with `uv build` and `uv publish`, only when `publish.pypi` is true.
+- The long steps say what they are doing (`scripts/release_progress.py`). `cut` and `upgrade` name each command of the suite as it starts, and say `done` or `failed` with its time. `publish` says each step of the install test as it comes: the build's `==>` lines, the test's `==` sections, and a failed check. Each line starts with the time so far, as minutes and seconds. A command that has said nothing for 30 seconds gets a `still running` line with the last line of its output. A wait for a busy machine is said as well. A command that fails still shows the last 15 lines of its output.
+
+```text
+ok   the release key is there: /home/you/.config/segl-release/release_ed25519
+     the package builds and installs: running `deploy/debian/package-test.sh`
+    0:02  ==> installing Python 3.15.2
+    0:44  ==> lintian
+    1:10  == install
+    1:40  still running: PASS  the board is still there
+    3:07  systemd-test: all 218 checks passed
+ok   the package builds and installs: dist/segl_0.2.0_amd64.deb passed the install test
+```
 
 Before `1.0.0`, a release that contains New or Changed increments the minor number. A release that contains only Fixed increments the patch number.
 

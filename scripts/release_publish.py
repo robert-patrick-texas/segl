@@ -32,6 +32,7 @@ import release_notes as notes
 import release_sign as signing
 from release_components import Sources, gate_passes, load_versions, report
 from release_proc import CommandError, Runner
+from release_progress import PACKAGE_STAGES, Progress, say
 from release_upgrade import run_suite
 
 UNPUBLISHED = "0.0.0"
@@ -85,9 +86,11 @@ def cut(root: Path, runner: Runner, sources: Sources, today: dt.date | None = No
     if not any(topics.values()):
         print("not cut: Unreleased has no New, Changed, Fixed, or Additional Notes bullets")
         return 1
+    say("checking that every component is current")
     if not gate(root, sources):
         print("not cut: `check --gate` fails. Run `upgrade`, then try again.")
         return 1
+    say("running the suite")
     failure = run_suite(runner, root)
     if failure is not None:
         print(f"not cut: the suite fails ({failure})")
@@ -224,7 +227,9 @@ class Preflight:
         return True, str(key)
 
     def package(self) -> tuple[bool, str]:
-        result = self.runner.run([PACKAGE_TEST], check=False)
+        # Minutes of work: say each of its steps, and not only its end.
+        say(f"     the package builds and installs: running `{PACKAGE_TEST}`")
+        result = self.runner.run([PACKAGE_TEST], check=False, progress=Progress(PACKAGE_STAGES))
         built = package_path(self.root, self.version)
         if result.returncode != 0:
             tail = "\n".join(result.output.strip().splitlines()[-15:])

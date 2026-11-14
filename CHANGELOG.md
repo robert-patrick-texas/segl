@@ -4,6 +4,12 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
+The release script says what it is doing while its long steps run.
+
+### Changed
+
+- `scripts/release.py` no longer goes silent for minutes. `cut` and `upgrade` name each command of the suite as it starts and say how it ended, with its time. `publish` says each step of the install test as it comes. A command that has said nothing for 30 seconds gets a `still running` line with the last line of its output (`scripts/release_progress.py`, `docs/RELEASING.md`).
+
 ## 0.1.0 — 2026-11-13
 
 segl is nine shared Excalidraw boards on one server: people on a board draw together live, and their work is saved, with a history to restore from and export and import as Excalidraw files. Access codes can limit who edits, and a list of internal networks can limit who reaches it. A `.deb` installs it on Ubuntu 26.04, with a Python of its own and a systemd unit, behind nginx at a host root or under a path such as `/board/`, and `segl update` moves it to each newer signed release, by hand or every night.

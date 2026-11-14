@@ -35,6 +35,7 @@ import pytest
 from harness import NginxTools
 from release_components import Component, LookupFailed, Sources
 from release_proc import Result, Runner
+from release_progress import Progress
 
 from segl.repository import Repository
 
@@ -185,6 +186,7 @@ class FakeRunner(Runner):
         check: bool = True,
         capture: bool = True,
         stdin: str | None = None,
+        progress: Progress | None = None,
     ) -> Result:
         self.calls.append(list(argv))
         # The longest matching prefix wins.
@@ -195,12 +197,18 @@ class FakeRunner(Runner):
             if isinstance(reply, Exception):
                 raise reply
             if isinstance(reply, Result):
-                return reply
-            if isinstance(reply, str):
-                return Result(0, reply)
-            return reply(argv)
+                result = reply
+            elif isinstance(reply, str):
+                result = Result(0, reply)
+            else:
+                result = reply(argv)
+            # A canned command says its lines as a real one would.
+            if progress is not None:
+                for line in result.output.splitlines():
+                    progress.line(line)
+            return result
         # Always captured: a test has no terminal for a program to ask at.
-        return super().run(argv, check=check, stdin=stdin)
+        return super().run(argv, check=check, stdin=stdin, progress=progress)
 
     def called(self, *prefix: str) -> list[list[str]]:
         """Return the recorded calls that start with ``prefix``."""

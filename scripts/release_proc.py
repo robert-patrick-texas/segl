@@ -21,10 +21,18 @@ The pattern follows Sunstone's tools/release.
 
 from __future__ import annotations
 
+import os
+import queue
 import subprocess
+import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+
+from release_progress import Progress
+
+# How often a watched command that prints nothing is looked at.
+WATCH_SECONDS = 1.0
 
 
 class CommandError(RuntimeError):
@@ -58,6 +66,7 @@ class Runner:
         check: bool = True,
         capture: bool = True,
         stdin: str | None = None,
+        progress: Progress | None = None,
     ) -> Result:
         """Run one command and wait for it.
 
@@ -67,11 +76,16 @@ class Runner:
             capture: Keep the output. False leaves it on the terminal, for a
                 program that asks something there, such as a passphrase.
             stdin: Text to give the program on its standard input.
+            progress: Is given each line of output as it comes, for a command
+                that takes minutes. The output is kept all the same, with
+                standard error among standard output, in the order written.
 
         Raises:
             CommandError: When the program is missing, or exits with a status
                 other than 0 while ``check`` is true.
         """
+        if progress is not None:
+            return self._watched(argv, check, stdin, progress)
         try:
             done = subprocess.run(
                 list(argv),
@@ -88,4 +102,59 @@ class Runner:
             last = result.stderr.strip().splitlines()[-1:]
             suffix = f": {last[0]}" if last else ""
             raise CommandError(f"{' '.join(argv[:3])} exited with status {done.returncode}{suffix}")
+        return result
+
+    def _watched(
+        self, argv: Sequence[str], check: bool, stdin: str | None, progress: Progress
+    ) -> Result:
+        """Run one command and hand each line it prints to ``progress``."""
+        try:
+            process = subprocess.Popen(
+                list(argv),
+                cwd=self.cwd,
+                stdin=subprocess.PIPE if stdin is not None else None,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                errors="replace",
+                # Python holds its output back from a pipe otherwise.
+                env={**os.environ, "PYTHONUNBUFFERED": "1"},
+            )
+        except FileNotFoundError as exc:
+            raise CommandError(f"command not found: {argv[0]}") from exc
+        assert process.stdout is not None
+        output = process.stdout
+        lines: queue.Queue[str | None] = queue.Queue()
+
+        def read() -> None:
+            for line in output:
+                lines.put(line)
+            lines.put(None)
+
+        threading.Thread(target=read, daemon=True).start()
+        kept: list[str] = []
+        try:
+            if stdin is not None and process.stdin is not None:
+                process.stdin.write(stdin)
+                process.stdin.close()
+            while True:
+                try:
+                    line = lines.get(timeout=WATCH_SECONDS)
+                except queue.Empty:
+                    progress.tick()
+                    continue
+                if line is None:
+                    break
+                kept.append(line)
+                progress.line(line)
+            returncode = process.wait()
+        except BaseException:
+            process.kill()
+            process.wait()
+            raise
+        result = Result(returncode, "".join(kept))
+        if check and returncode != 0:
+            last = result.stdout.strip().splitlines()[-1:]
+            suffix = f": {last[0]}" if last else ""
+            raise CommandError(f"{' '.join(argv[:3])} exited with status {returncode}{suffix}")
         return result
