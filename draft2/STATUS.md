@@ -2,7 +2,7 @@
 
 This file is the source of truth for what is done and what to do next. Update it at the end of every task. Do not mark a task complete unless its acceptance commands were run and passed.
 
-- Updated: 2026-11-13
+- Updated: 2026-11-14
 - Phase: P0 collaborative slots. The gate passed (T13)
 - Next task: NONE
 - Completed: T00, T00b, T01, T01b, T02, T03, T04, T05, T06, T07, T08, T09, T10, T10b, T11, T12, T13
@@ -1216,3 +1216,40 @@ This file is the source of truth for what is done and what to do next. Update it
   - `README.md`: the status says that version 0.1.0 is the first release and where releases are. That is written for the tag, and it is ahead of the fact until `publish` has run.
   - Not run on the tree at 0.1.0 here: the browser tests and the install test. CI runs both on the push, and `publish` runs the install test again as its last check and attaches the package it built.
   - Not done: the tag, the signature, and the GitHub Release. They are `python3 scripts/release.py publish`, in the user's own terminal, once CI has passed on this commit.
+- 2026-11-14: Version 0.1.0 is published. The user ran `publish` in their own terminal and asked for a check. Evidence:
+  - CI run 43558163394 and Pages run 43558163493 had succeeded on `117d3d7`, the commit of the cut, before the publish.
+  - The tag: `v0.1.0` is an annotated tag on `117d3d7`, which is `HEAD` and `origin/main`. It was made at 00:11:20 on 2026-11-14 (UTC-5) with the message `segl 0.1.0`.
+  - The GitHub Release: `segl 0.1.0`, published 2026-11-14T05:11:24Z, not a draft and not a pre-release. `releases/latest` answers `v0.1.0`. It has three files: `segl_0.1.0_amd64.deb` (44,550,554 bytes), `SHA256SUMS` (87), and `SHA256SUMS.sig` (306).
+  - The files, downloaded into an empty folder with `gh release download v0.1.0`:
+    - `sha256sum -c SHA256SUMS` printed `segl_0.1.0_amd64.deb: OK`.
+    - `ssh-keygen -Y verify -f deploy/release-signers -I segl-release -n segl-release -s SHA256SUMS.sig < SHA256SUMS` printed `Good "segl-release" signature for segl-release with ED25519 key SHA256:xdTzuCf5YQcG6uJe65s3QYZVQdqf3Np1PbFoS5u+kvo`. That is the check a server makes, against the file the package ships, and the fingerprint is the release key's.
+    - `cmp` found the package equal to `dist/segl_0.1.0_amd64.deb`, the file that the preflight's install test had built and installed.
+    - `dpkg-deb -f` printed `Package: segl`, `Version: 0.1.0`, `Architecture: amd64`, and `Depends: systemd, libc6 (>= 2.17), openssh-client`.
+  - `uv run segl update --check`, from the checkout, asked the real GitHub and printed `segl 0.1.0 is installed: up to date.` with exit status 0. Before the release it had printed `no release yet`.
+  - The release's notes have the summary, New, Changed, and Fixed, then the table with `| Project lines of code | 39940 |` and `| segl | 0.1.0 |`, and the two blocks of sub-dependencies, 25 and 349.
+  - The README's sentence that 0.1.0 is the first release is no longer ahead of the fact.
+  - The package build repeats: a build of the same tree later that night gave the same bytes as the published package (`cmp`).
+  - Still not exercised: an update from one real release to a newer one. It needs a second release.
+  - What the user saw: a long pause after `ok   the release key is there`, with nothing printed while the install test ran. The next entry is the change for that.
+- 2026-11-14: The release script says what it is doing while its long steps run. The user asked for it after publishing 0.1.0, outside the task queue: "can a progress bar, dots, or simply the output being each command run get output to the terminal to indicate progress is being made rather than long pause? ... Consider some progress output for the release script to exercise with next release." Evidence:
+  - What changed:
+    - `scripts/release_progress.py` is new. A `Progress` prints the lines of a command's output that mark a stage, each with the time so far as minutes and seconds. When nothing was said for 30 seconds it prints `still running` with the last line of the output.
+    - `Runner.run` (`scripts/release_proc.py`) takes `progress=`. It then reads the command's output line by line as it comes and still keeps all of it, with standard error among standard output.
+    - The suite, in `cut` and `upgrade` (`run_commands`): each command is named as it starts and says `done` or `failed` with its time. A wait for a busy machine and each runner's totals are said. `cut` also says `checking that every component is current` and `running the suite`.
+    - `publish`: the install test says its start, then each `==>` step of the build, each `==` section of the test, a `FAIL` line, and its last line.
+  - Real runs, on this host:
+    - The step the user waited at, through `publish`'s own check (`Preflight.package()`), with each line's arrival time taken: the start line, 30 lines with a time, and the `ok` line, over 3 minutes 4 seconds. The longest gap between two lines was 27.8 seconds, at the section on a release that does not start. It printed nothing for that whole time before. It ended with `systemd-test: all 218 checks passed`.
+    - The suite's printing on real `uv run ruff check .` and `uv run pytest`: the `capacity:` line came 1.4 seconds in, the total at 30.6, and each line reached the terminal when it was said, not at the end.
+    - No gap in those runs reached 30 seconds, so neither showed a `still running` line. A pytest run with the quiet time set to 10 seconds showed two, at `0:11` and `0:21`, each with pytest's own progress line and its percent.
+  - `uv run pytest` gave `1971 passed in 29.63s`, 47 more than before, all in `tests/test_release_progress.py`. The tests of `cut` and of a successful `publish` also hold what each prints. `uv run ruff check .` and `uv run ty check` printed `All checks passed!`, and `uv run ruff format --check .` printed `98 files already formatted`. `python3 scripts/build_docs.py` found 0 broken links, and `check --gate` exited 0.
+  - 54 deliberate faults, one at a time, each restored: all 54 failed a test. Among them: the time's form, colors and the 100-character limit, each kind of stage line left out or one too many let in, the 30 seconds, a `still running` line too early, too late, or without the last line, output held back by a pipe, standard error dropped, Python's own buffering, a command that is not stopped when the script is interrupted, and each new line of `cut`, the suite, and `publish` left out.
+  - Choices the request left open:
+    - Plain lines, and no bar and no dots. A line reads the same in a terminal and in a log, and names the step. A bar would need a known total.
+    - Not the whole output: an install test prints about 970 lines. The steps are about 30.
+    - A watched command runs with `PYTHONUNBUFFERED=1`. Python holds its output back from a pipe otherwise, and the lines would come at the end.
+    - Ctrl+C, or any error while a watched command runs, stops the command.
+    - Sunstone's and vakr's release tools were looked at: neither has progress output.
+  - Files of other work that changed: `scripts/release_proc.py`, `release_upgrade.py`, and `release_publish.py`, `tests/conftest.py` (the fake runner hands on a canned command's lines), and `tests/test_release_publish.py`. `docs/RELEASING.md` and `CHANGELOG.md` say it. The changelog's `Unreleased` has a summary again, of one sentence.
+  - Not exercised:
+    - A real `cut`, `upgrade`, or `publish` with it. The next release is the first.
+    - The browser tests through it. They need a browser, and none was started for this change.
