@@ -1144,3 +1144,10 @@ This file is the source of truth for what is done and what to do next. Update it
     - The dev container: `docker build -f deploy/Containerfile` built it with `openssh-client`, and the update, publish, and package tests ran in it: 316 passed. Its own command, `scripts/testplan.py`, was not run.
     - The browser tests were not run on the host for this change. No file of `web/` changed. CI ran them.
   - Next action remains T13.
+- 2026-11-13: The release key exists, and `deploy/release-signers` lists it. The user made it with the commands in `docs/RELEASING.md` and appended its public half. Evidence:
+  - The line in `deploy/release-signers` and `~/.config/segl-release/release_ed25519.pub` are one key: `ssh-keygen -lf` gave `SHA256:xdTzuCf5YQcG6uJe65s3QYZVQdqf3Np1PbFoS5u+kvo` (ED25519) for both. The two files differ in form, which is expected: the signers line starts with the principal and the namespace, and leaves the comment off.
+  - The key's folder is mode `700` and the private key `600`. The private key was not read, and it is not in the repository.
+  - The file's comment had still said that no key is listed. It now has the key's date and fingerprint, and `docs/RELEASING.md` names the fingerprint.
+  - `scripts/release_sign.py` counts 1 key in the file. `uv run pytest tests/test_update_verify.py tests/test_release_publish.py tests/test_package.py` gave 106 passed: the line is in the form the server's check expects.
+  - Not done: nothing was signed with the key. Signing asks for the passphrase, which is the user's. The first `publish` signs and then checks the signature against this file before it tags.
+  - Next action remains T13.

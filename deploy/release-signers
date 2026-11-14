@@ -9,5 +9,6 @@
 # To change the key: add the new one here, publish that release signed with
 # the old key, and take the old key out in a later release.
 #
-# No key is listed yet. `scripts/release.py publish` refuses to publish until
-# one is (docs/RELEASING.md, the release key).
+# Release key added 2026-11-13.
+# Fingerprint: SHA256:xdTzuCf5YQcG6uJe65s3QYZVQdqf3Np1PbFoS5u+kvo (ED25519)
+segl-release namespaces="segl-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIADexN5RZYM2QZ8x0XFY2sZU9J0BF2enaQhkSca/wpBe

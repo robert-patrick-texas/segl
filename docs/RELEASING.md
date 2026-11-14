@@ -68,7 +68,7 @@ ssh-keygen -lf ~/.config/segl-release/release_ed25519.pub   # the fingerprint, f
 
 Commit `deploy/release-signers` with the key's date and fingerprint in a comment. Keep a copy of the private key somewhere safe: a server that runs a release signed with it installs no release signed with another.
 
-Until the file lists a key, `publish` stops at `deploy/release-signers lists a key`, and a package built from the tree refuses every update.
+The file lists the key made on 2026-11-13. Its fingerprint is `SHA256:xdTzuCf5YQcG6uJe65s3QYZVQdqf3Np1PbFoS5u+kvo` (ED25519). A file with no key stops `publish` at `deploy/release-signers lists a key`, and a package built from such a tree refuses every update.
 
 To change the key, add the new one to `deploy/release-signers` and publish that release signed with the old key. Servers that install it trust both. Sign later releases with the new key, and take the old key out in a release after that. A server that skipped the release with both keys must be upgraded by hand, with `apt install`.
 
