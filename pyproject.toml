@@ -7,7 +7,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "segl"
-version = "0.0.0"
+version = "0.1.0"
 description = "Shared network drawing boards: nine collaborative Excalidraw slots behind one Python service."
 readme = "README.md"
 license = "Apache-2.0"

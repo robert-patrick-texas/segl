@@ -4,6 +4,8 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
+## 0.1.0 — 2026-11-13
+
 segl is nine shared Excalidraw boards on one server: people on a board draw together live, and their work is saved, with a history to restore from and export and import as Excalidraw files. Access codes can limit who edits, and a list of internal networks can limit who reaches it. A `.deb` installs it on Ubuntu 26.04, with a Python of its own and a systemd unit, behind nginx at a host root or under a path such as `/board/`, and `segl update` moves it to each newer signed release, by hand or every night.
 
 ### New
