@@ -4,7 +4,7 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
-The project is specified, licensed, and public on GitHub. A Python service reads its settings, keeps nine slots in SQLite, and serves them, and a browser application shows each slot as an Excalidraw canvas under the segl bar, where each browser has a display name. People on the same slot draw together live, and what they draw, images included, is saved and survives a restart. A slot's earlier versions are listed in the bar and can be restored, and a slot can be exported to an Excalidraw file and imported from one. With access codes set, a browser watches and cannot change anything until a person enters a code on the access page, and a list of internal networks can close segl to every other address. CI and a dev container check both, including through nginx at `/board/`, and a `.deb` installs it on Ubuntu 26.04 with a Python of its own and a systemd unit.
+segl is nine shared Excalidraw boards on one server: people on a board draw together live, and their work is saved, with a history to restore from and export and import as Excalidraw files. Access codes can limit who edits, and a list of internal networks can limit who reaches it. A `.deb` installs it on Ubuntu 26.04, with a Python of its own and a systemd unit, behind nginx at a host root or under a path such as `/board/`.
 
 ### New
 
