@@ -1151,3 +1151,32 @@ This file is the source of truth for what is done and what to do next. Update it
   - `scripts/release_sign.py` counts 1 key in the file. `uv run pytest tests/test_update_verify.py tests/test_release_publish.py tests/test_package.py` gave 106 passed: the line is in the form the server's check expects.
   - Not done: nothing was signed with the key. Signing asks for the passphrase, which is the user's. The first `publish` signs and then checks the signature against this file before it tags.
   - Next action remains T13.
+- 2026-11-13: pytest runs in several processes, and the install test is shorter. Both wait for a machine that is busy with other work. The user asked, outside the task queue: "optimize tests, run concurrent where feasible, wait to start a test until server load is reasonable ... or continue if 10 minutes pass and server remains busy." Evidence, on commit `090955a`:
+  - What was there already, from the entry "Tests take less time" above: the browser tests in groups (`scripts/e2e.py`), sized by `scripts/capacity.py`, which waits on a busy machine and goes ahead after ten minutes. pytest, the package build, and the install test did not look at the machine. The update work earlier this day added tests and cut no time.
+  - What changed:
+    - `uv run pytest` runs the suite in worker processes (pytest-xdist 3.8.0, pinned in `versions.toml`, `-n auto` in `pyproject.toml`). `conftest.py` at the root asks `scripts/capacity.py` for the number: the idle cores less one, 8 at most, 512 MiB a worker. With no room it waits, looks every 15 seconds, and after ten minutes runs in one process. A run of up to three named files stays in one process and does not wait.
+    - Each worker takes its ports from a range of its own, 1,000 from 20000 (`free_port` in `tests/harness.py`).
+    - `python3 scripts/capacity.py --wait` waits for room for one job. `deploy/debian/build-deb.sh` and `deploy/debian/package-test.sh` call it first.
+    - The install test builds the image it boots while the package builds, and packs its five test releases with `-z1` and side by side. It prints each section's time.
+    - `segl update` goes back from a new version once systemd has started it again twice with no answer. It waited for the start limit, five starts, before.
+  - Times, before and after:
+    - `uv run pytest` here, idle: 79 to 92 seconds in one process for 1898 tests. Now 34 seconds for 1924, in three workers, twice. The slowest 25 tests took 33 of the 79 seconds, so no one test was the cost.
+    - `deploy/debian/package-test.sh` here: 334 seconds. Now 191, twice, with `all 218 checks passed`: about a minute for the build and the test releases, and 130 seconds in the container. The section on the release that does not start took 29 seconds. It took 41 on CI before.
+    - CI run 43552574011 on `090955a` succeeded in 4 minutes 18 seconds. The run on `c6c4f62` took 5 minutes 15. `checks` took 4 minutes 15: its pytest step 33 seconds, where it was 68, and the browser tests 178. `package` took 3 minutes 7, where it was 5 minutes 8. Pages succeeded.
+  - A busy machine, for real: with four busy loops on the four cores and `SEGL_TEST_WAIT=20`, a pytest run of four files printed `capacity: no room now (4.0 of 4 cores busy, 7.4 GiB of memory free); waiting up to 20 seconds`, then `still busy after 20 seconds ...; running 1 pytest worker`, and gave 261 passed. `tests/test_capacity.py` holds the ten minutes and the 15 seconds with a machine and a clock the test supplies.
+  - `uv run pytest` gave 1924 passed, 26 more: 19 in `tests/test_capacity.py`, 5 in `tests/test_update_updater.py`, and 2 in `tests/test_package.py`. The suite passed in workers eight times: six here, once on CI, and once in the dev container's build, `1924 passed in 43.60s`. No test failed in any of them.
+  - 22 deliberate faults each failed a test: the small-run rule, the worker count, the memory a worker is counted at, the one-job wait, the port ranges, the count of restarts, the waits and the background build in the two scripts, a failed pack that passes, and the pin.
+  - `scripts/testplan.py` reads the report that workers write: 252 outcomes from a run of four files. `python3 scripts/release.py check --gate` passed with `pytest-xdist 3.8.0: current`.
+  - Choices the request left open:
+    - One core stays free, as for the browser groups. On this host that is three workers.
+    - `SEGL_TEST_GROUPS` and `SEGL_TEST_WAIT` are read by pytest as `scripts/e2e.py` reads them.
+    - A worker is counted at 512 MiB. That is not measured.
+    - Two restarts, not one, mark a version as broken: one can be chance.
+  - Files of other tasks that changed: `tests/harness.py` (T02), `scripts/capacity.py` and its test, `scripts/release_upgrade.py`, `deploy/debian/build-deb.sh`, `package-test.sh`, `test-releases.sh`, and `testlib.sh` (T12), and `src/segl/update/updater.py`.
+  - Not done or not exercised:
+    - A real wait of ten minutes. The wait was seen with a limit of 20 seconds.
+    - pytest and the browser tests still run one after the other, here and on CI. Side by side they would share the same cores.
+    - CI builds the package's builder image anew on every run, about 70 seconds of the `package` job. A cache for it needs another action.
+    - A machine with more than four cores.
+    - The whole test plan in the dev container. Its image was built, which runs pytest.
+  - Next action remains T13.
