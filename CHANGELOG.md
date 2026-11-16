@@ -15,6 +15,7 @@ Summarized history of changes to source and documents. Newest release first. The
 - `publish` builds the package and compares it with the one CI built, installed, and tested for `HEAD`. When they are the same bytes it does not run the install test again. The step took 3 minutes 40 seconds for 0.2.0, and the build alone takes about a minute. Otherwise it runs it as before (`docs/RELEASING.md`).
 - A pytest run of named files with at most a quarter of the suite's tests, as `scripts/suite.py --changed` runs, takes the workers there is room for and does not wait for a busy machine. The whole suite still waits, up to ten minutes (`conftest.py`, `docs/DEVELOPMENT.md`).
 - The package build says that the paths it prints, `/opt/segl` among them, are inside its container.
+- httpx2 2.16.2, a test dependency, moved by `scripts/release.py upgrade` after pytest passed with it.
 
 ## 0.2.0 — 2026-11-15
 
