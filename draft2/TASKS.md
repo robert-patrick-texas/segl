@@ -448,7 +448,7 @@ As built, where the text above left a choice open or the build went past it (D2-
 
 ## T15 — Network devices and typed links
 
-- Status: next
+- Status: done
 - Requires: T14
 - Requirements: L-001 (draft1 N-001 to N-005). N-006, named interfaces, waits.
 - Read: `docs/ROADMAP.md` (P1, and what is carried forward from draft1), `draft1/REQUIREMENTS.md` (N-001 to N-006, the initial symbol types), `draft1/ARCHITECTURE.md` (semantic-to-visual mapping, typed links), `draft1/DATA-MODEL.md` (enumerations, modeling rules), `docs/ARCHITECTURE.md` (the canvas adapter, collaboration), `web/src/canvas/`, `web/src/collab/session.ts`, and the STATUS entry of 2026-11-16 that queued this task
