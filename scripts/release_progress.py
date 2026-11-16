@@ -41,6 +41,9 @@ SUITE_STAGES = re.compile(r"^(capacity:|e2e:|\s*Tests\s|=* ?\d+ (passed|failed))
 # deploy/debian/package-test.sh: the build's steps, the test's sections, a
 # failed check, a wait for a busy machine, and the last line.
 PACKAGE_STAGES = re.compile(r"^(==> |== |FAIL|capacity:|systemd-test:)")
+# deploy/debian/real-update-test.sh: its sections, a failed check, a wait,
+# what `segl update` said it did, and the last line.
+UPDATE_STAGES = re.compile(r"^(== |FAIL|capacity:|real-update:|\s+\| segl update: )")
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 

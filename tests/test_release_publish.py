@@ -29,10 +29,12 @@ from release_proc import CommandError, Result
 from release_publish import (
     BUILD,
     PACKAGE_TEST,
+    REAL_UPDATE,
     Preflight,
     bump_version,
     check_runs_pass,
     cut,
+    previous_release,
     publish,
 )
 from release_sign import (
@@ -740,3 +742,155 @@ def test_a_package_that_does_not_build_stops_the_preflight(
 
     assert Preflight(repo, runner, fake_sources(runner)).package() == (False, f"`{BUILD}` failed")
     assert not runner.called(PACKAGE_TEST)
+
+
+def add_real_update(repo: Path, run_git) -> None:
+    """Give the tree the check of the update from an earlier release."""
+    (repo / REAL_UPDATE).write_text("#!/bin/bash\n")
+    run_git(repo, "add", REAL_UPDATE)
+    run_git(repo, "commit", "-q", "-m", "the update check")
+    run_git(repo, "push", "-q", "origin", "main")
+
+
+def releases(*tags: str) -> Result:
+    """What `gh release list` answers: the newest first."""
+    rows = [
+        {"tagName": tag, "publishedAt": f"2026-11-0{9 - n}T00:00:00Z"} for n, tag in enumerate(tags)
+    ]
+    return Result(0, json.dumps(rows))
+
+
+def publishable(repo: Path, fake_runner, fake_sources, run_git, replies: dict):
+    """Cut 0.1.0 in ``repo``, with the install test and the update check, ready to publish."""
+
+    def package_test(_argv: Sequence[str]) -> Result:
+        (repo / "dist").mkdir(exist_ok=True)
+        (repo / "dist" / "segl_0.1.0_amd64.deb").write_bytes(b"deb")
+        return Result(0, "systemd-test: all checks passed\n")
+
+    runner = fake_runner(
+        repo, {("gh", "api"): json.dumps(GREEN), (PACKAGE_TEST,): package_test, **replies}
+    )
+    cut_and_commit(repo, runner, fake_sources(runner), run_git)
+    add_package_test(repo, run_git)
+    add_real_update(repo, run_git)
+    return runner
+
+
+PASSED = Result(0, "== the site\nPASS  it works\n== summary\nreal-update: all 39 checks passed\n")
+
+
+def test_publish_checks_the_update_from_the_last_release_before_the_tag_and_from_github_after(
+    repo: Path, fake_runner, fake_sources, run_git, release_key: Path, capsys
+) -> None:
+    runner = publishable(
+        repo,
+        fake_runner,
+        fake_sources,
+        run_git,
+        {("gh", "release", "list"): releases("v0.0.9", "v0.0.8"), (REAL_UPDATE,): PASSED},
+    )
+
+    assert publish(repo, runner, fake_sources(runner)) == 0
+
+    assert [call[1:] for call in runner.called(REAL_UPDATE)] == [["v0.0.9", "dist"], ["v0.0.9"]]
+
+    # Signed, then checked with the signed files, then tagged and released,
+    # then checked from GitHub.
+    def at(*prefix: str) -> int:
+        return next(n for n, call in enumerate(runner.calls) if call[: len(prefix)] == [*prefix])
+
+    first, last = [n for n, call in enumerate(runner.calls) if call[0] == REAL_UPDATE]
+    verify = at("ssh-keygen", "-Y", "verify")
+    assert verify < first < at("git", "tag") < at("gh", "release", "create") < last
+    out = capsys.readouterr().out.splitlines()
+    assert f"     v0.0.9 updates to 0.1.0: running `{REAL_UPDATE} v0.0.9 dist`" in out
+    assert "    0:00  real-update: all 39 checks passed" in out
+    assert "ok   v0.0.9 updates to 0.1.0, from the signed files: all 39 checks passed" in out
+    assert out[-1] == "ok   a server on v0.0.9 takes 0.1.0 from GitHub: all 39 checks passed"
+
+
+def test_a_release_the_last_one_does_not_update_to_is_not_published(
+    repo: Path, fake_runner, fake_sources, run_git, release_key: Path, capsys
+) -> None:
+    failed = Result(1, "FAIL  it says what it did\nreal-update: 1 of 39 checks FAILED\n")
+    runner = publishable(
+        repo,
+        fake_runner,
+        fake_sources,
+        run_git,
+        {("gh", "release", "list"): releases("v0.0.9"), (REAL_UPDATE,): failed},
+    )
+
+    assert publish(repo, runner, fake_sources(runner)) == 1
+
+    assert not runner.called("git", "tag")
+    assert not runner.called("gh", "release", "create")
+    assert capsys.readouterr().out.splitlines()[-1] == (
+        "not published: v0.0.9 does not update to 0.1.0 (real-update: 1 of 39 checks FAILED)"
+    )
+
+
+def test_the_first_release_has_no_update_to_check(
+    repo: Path, fake_runner, fake_sources, run_git, release_key: Path, capsys
+) -> None:
+    runner = publishable(
+        repo, fake_runner, fake_sources, run_git, {("gh", "release", "list"): releases()}
+    )
+
+    assert publish(repo, runner, fake_sources(runner)) == 0
+
+    assert not runner.called(REAL_UPDATE)
+    assert "ok   no earlier release is on GitHub: no update from one to check" in (
+        capsys.readouterr().out.splitlines()
+    )
+
+
+def test_a_release_a_server_cannot_take_from_github_is_said_and_fails(
+    repo: Path, fake_runner, fake_sources, run_git, release_key: Path, capsys
+) -> None:
+    def from_github_fails(argv: Sequence[str]) -> Result:
+        return PASSED if "dist" in argv else Result(1, "real-update: 2 of 45 checks FAILED\n")
+
+    runner = publishable(
+        repo,
+        fake_runner,
+        fake_sources,
+        run_git,
+        {("gh", "release", "list"): releases("v0.0.9"), (REAL_UPDATE,): from_github_fails},
+    )
+
+    assert publish(repo, runner, fake_sources(runner)) == 1
+
+    assert runner.called("gh", "release", "create"), "it was published"
+    assert capsys.readouterr().out.splitlines()[-1] == (
+        "FAIL a server on v0.0.9 takes 0.1.0 from GitHub: real-update: 2 of 45 checks FAILED. "
+        "v0.1.0 is published: read the output above."
+    )
+
+
+def test_releases_that_cannot_be_listed_stop_publish_before_the_tag(
+    repo: Path, fake_runner, fake_sources, run_git, release_key: Path, capsys
+) -> None:
+    runner = publishable(
+        repo, fake_runner, fake_sources, run_git, {("gh", "release", "list"): "not json"}
+    )
+
+    assert publish(repo, runner, fake_sources(runner)) == 1
+
+    assert not runner.called("git", "tag")
+    assert (
+        capsys.readouterr()
+        .out.splitlines()[-1]
+        .startswith("not published: the releases on GitHub cannot be listed")
+    )
+
+
+def test_the_last_release_is_the_newest_other_than_this_one(repo: Path, fake_runner) -> None:
+    newest_first = releases("v0.1.0", "v0.0.9", "v0.0.8")
+    runner = fake_runner(repo, {("gh", "release", "list"): newest_first})
+
+    assert previous_release(runner, "example/segl", "v0.1.0") == "v0.0.9"
+    assert previous_release(runner, "example/segl", "v0.2.0") == "v0.1.0"
+    (listed, _) = runner.called("gh", "release", "list")
+    assert "--exclude-drafts" in listed and "--exclude-pre-releases" in listed

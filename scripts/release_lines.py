@@ -61,6 +61,8 @@ TEST_FILES = frozenset(
         "deploy/debian/connect_proxy.py",
         "deploy/debian/fake_github.py",
         "deploy/debian/package-test.sh",
+        "deploy/debian/real-update-test.sh",
+        "deploy/debian/real-update.sh",
         "deploy/debian/socket_check.py",
         "deploy/debian/systemd-test.sh",
         "deploy/debian/test-releases.sh",

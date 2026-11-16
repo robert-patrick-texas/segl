@@ -35,7 +35,7 @@ import release_notes as notes
 import release_sign as signing
 from release_components import Sources, gate_passes, load_versions, report
 from release_proc import CommandError, Runner
-from release_progress import PACKAGE_STAGES, Progress, say
+from release_progress import PACKAGE_STAGES, UPDATE_STAGES, Progress, say
 from suite import run_changed, work_tree
 
 UNPUBLISHED = "0.0.0"
@@ -50,11 +50,54 @@ BUILD = "deploy/debian/build-deb.sh"
 # The package CI's `package` job keeps from each run, for seven days, after it
 # installed and tested it (.github/workflows/ci.yml).
 CI_PACKAGE = "segl-deb"
+# Installs an earlier GitHub release in a container, and updates it to this
+# version with its own `segl update`: from the signed files given, or from
+# GitHub. CI cannot run it: only the release key signs what a release takes.
+REAL_UPDATE = "deploy/debian/real-update-test.sh"
 
 
 def has_package(root: Path) -> bool:
     """Report whether the tree at ``root`` can build the Debian package."""
     return (root / PACKAGE_TEST).is_file()
+
+
+def has_real_update(root: Path) -> bool:
+    """Report whether the tree can check the update from an earlier release."""
+    return (root / REAL_UPDATE).is_file()
+
+
+def previous_release(runner: Runner, repo: str, tag: str) -> str | None:
+    """Return the newest published release on GitHub other than ``tag``, or None.
+
+    Raises:
+        CommandError: When GitHub cannot be asked, or its answer cannot be read.
+    """
+    published = ["--exclude-drafts", "--exclude-pre-releases", "--limit", "50"]
+    listed = runner.run(
+        ["gh", "release", "list", "--repo", repo, *published, "--json", "tagName,publishedAt"]
+    )
+    try:
+        releases = json.loads(listed.stdout)
+        found = [(str(r["publishedAt"]), str(r["tagName"])) for r in releases]
+    except (ValueError, LookupError, TypeError) as exc:
+        raise CommandError(f"gh release list gave no list of releases: {exc}") from exc
+    earlier = sorted((when, name) for when, name in found if name != tag)
+    return earlier[-1][1] if earlier else None
+
+
+def real_update(runner: Runner, previous: str, folder: str | None) -> tuple[bool, str]:
+    """Run the update from ``previous`` to this version, and say its steps as they come."""
+    argv = [REAL_UPDATE, previous, *([folder] if folder else [])]
+    result = runner.run(argv, check=False, progress=Progress(UPDATE_STAGES))
+    last = next(
+        (line for line in reversed(result.output.splitlines()) if line.startswith("real-update:")),
+        "",
+    )
+    if result.returncode != 0:
+        tail = "\n".join(result.output.strip().splitlines()[-15:])
+        print(f"  `{' '.join(argv)}` failed:\n{tail}")
+        return False, last or f"`{REAL_UPDATE}` failed"
+    return True, last.removeprefix("real-update: ")
 
 
 def package_path(root: Path, version: str) -> Path:
@@ -361,6 +404,24 @@ def publish(root: Path, runner: Runner, sources: Sources) -> int:
             return 1
         print(f"ok   {sums.name} is signed: {said}")
         packages = [str(package), str(sums), str(signature)]
+    previous = None
+    if has_package(root) and has_real_update(root):
+        # The newest release a server can have now, and so the one this
+        # version must update. Checked before the tag, with the signed files.
+        try:
+            previous = previous_release(runner, preflight.repo, tag)
+        except CommandError as exc:
+            print(f"not published: the releases on GitHub cannot be listed ({exc})")
+            return 1
+        if previous is None:
+            print("ok   no earlier release is on GitHub: no update from one to check")
+        else:
+            say(f"     {previous} updates to {version}: running `{REAL_UPDATE} {previous} dist`")
+            good, said = real_update(runner, previous, "dist")
+            if not good:
+                print(f"not published: {previous} does not update to {version} ({said})")
+                return 1
+            print(f"ok   {previous} updates to {version}, from the signed files: {said}")
     runner.run(["git", "tag", "-a", tag, "-m", f"segl {version}"])
     runner.run(["git", "push", REMOTE, tag])
     if destinations.get("github"):
@@ -371,6 +432,15 @@ def publish(root: Path, runner: Runner, sources: Sources) -> int:
             create += ["--title", f"segl {version}", "--notes-file", str(notes_file)]
             runner.run(create + packages)
         print(f"published {tag} to {preflight.repo}")
+        if previous is not None:
+            # As a server sees the release: from GitHub, with its own files.
+            server = f"a server on {previous} takes {version} from GitHub"
+            say(f"     {server}: running `{REAL_UPDATE} {previous}`")
+            good, said = real_update(runner, previous, None)
+            if not good:
+                print(f"FAIL {server}: {said}. {tag} is published: read the output above.")
+                return 1
+            print(f"ok   {server}: {said}")
     if destinations.get("pypi"):
         with tempfile.TemporaryDirectory() as folder:
             runner.run(["uv", "build", "--out-dir", folder])

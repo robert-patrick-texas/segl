@@ -311,6 +311,15 @@ The container is privileged, because systemd as PID 1 needs a cgroup tree of its
 
 `deploy/debian/image.sh` makes both images: the builder and the one the test boots. It builds an image only when the image's label does not hold its Containerfile's hash, so a kept image is used as it is. CI keeps both between runs, and makes them again each week, for the base images' fixes, and when a Containerfile changes.
 
+The update from a real release is `deploy/debian/real-update-test.sh`:
+
+```bash
+deploy/debian/real-update-test.sh v0.1.0 dist   # v0.1.0 from GitHub, then this version's signed files in dist/
+deploy/debian/real-update-test.sh v0.1.0        # v0.1.0 from GitHub, then this version from GitHub
+```
+
+It downloads the earlier release's three files from GitHub and checks them against `deploy/release-signers`, then boots the image the install test boots, with `deploy/` and a folder of its own mounted read-only, and runs `deploy/debian/real-update.sh` in it. That installs the earlier release with apt, sets up nginx as that release's `deploy/OPERATOR.md` says, edits a setting and an nginx file as a site would, and draws on a board with the earlier release's own `socket_check.py`. Then it runs the earlier release's `segl update`, and checks the version, the unit, nginx, both boards, and that every line of the site's files is still there in order. From GitHub it also runs `--check` before and after, and the nightly timer. `publish` runs both (`RELEASING.md`). Without a signed `dist/` the first form fails at the signature: the earlier release trusts only the release key. On the development host on 2026-11-16, v0.1.0 to 0.2.0 took 35 seconds from the signed files, 39 checks, and 39 seconds from GitHub, 45 checks. `SEGL_KEEP_CONTAINER=1` leaves the container running.
+
 `tests/test_package.py` reads the same files without building anything: the units, the nfpm spec, the maintainer scripts, the copyright file, and the operator notes. The update's own logic has pytest tests that need no container (`tests/test_update_*.py`): the merge of settings, the merge of nginx files with the real `diff3`, the signature check with the real `ssh-keygen`, the HTTPS client against a local server and a local proxy, and the update's order with apt, systemctl, and nginx played by a stand-in. It also runs `web/scripts/collect-licenses.ts` against the real web build, when there is one, so a bundled package or a font without a license text fails pytest.
 
 ## Dev loop

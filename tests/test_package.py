@@ -786,3 +786,61 @@ def test_both_images_are_made_through_the_label_check() -> None:
     )
     for script in ("build-deb.sh", "package-test.sh"):
         assert "docker build" not in read(DEBIAN / script), script
+
+
+def test_the_update_check_scripts_parse() -> None:
+    for name in ("real-update-test.sh", "real-update.sh"):
+        done = subprocess.run(["bash", "-n", str(DEBIAN / name)], capture_output=True, text=True)
+        assert done.returncode == 0, done.stderr
+
+
+def test_the_update_check_changes_nothing_on_the_host() -> None:
+    """Its container mounts two folders, read-only, and has no port or network of the host's."""
+    script = read(DEBIAN / "real-update-test.sh")
+    (run,) = re.findall(r"docker run (?:[^\n]*\\\n)*[^\n]*", script)
+    assert re.findall(r"--volume \S+", run) == [
+        '--volume "$PWD/deploy:/deploy:ro"',
+        '--volume "$work:/t:ro"',
+    ]
+    for option in ("--network", "--publish", " -p ", "--net="):
+        assert option not in run, option
+    # The earlier release is checked before the container is given it.
+    assert script.index("sha256sum --quiet -c SHA256SUMS") < script.index("docker run")
+    assert script.index("ssh-keygen -Y verify") < script.index("docker run")
+
+
+def test_the_update_check_runs_the_earlier_release_s_own_update() -> None:
+    inside = read(DEBIAN / "real-update.sh")
+    # From the signed files before the tag, and from GitHub after.
+    assert 'update --yes --from "$SEGL_FROM"' in inside
+    assert "\n    update --yes\n" in inside
+    assert "kept /tmp/segl.toml.before $TOML" in inside
+
+
+@pytest.mark.parametrize(
+    ("before", "after", "kept"),
+    [
+        ("a\n\nb\nc\n", "a\n\nb\nc\n", True),
+        ("a\n\nb\nc\n", "a\n\nnew = 1\n\nb\nx\nc\n", True),
+        ("a\nb\n", "a\n\nb\nc\n", True),
+        ("a\n\nb\nc\n", "a\nc\nb\n", False),
+        ("a\nb\n", "b\na\n", False),
+        ("a\nb\n", "a\n", False),
+    ],
+    ids=["same", "lines-added", "blank-lines-between", "reordered", "swapped", "a-line-gone"],
+)
+def test_the_update_check_sees_whether_every_line_of_a_site_file_is_kept(
+    tmp_path: Path, before: str, after: str, kept: bool
+) -> None:
+    """kept() in real-update.sh: the site's lines are all there, in order."""
+    script = read(DEBIAN / "real-update.sh")
+    function = re.search(r"^kept\(\) \{\n.*?^\}\n", script, flags=re.MULTILINE | re.DOTALL)
+    assert function, "real-update.sh defines kept()"
+    (tmp_path / "before").write_text(before)
+    (tmp_path / "after").write_text(after)
+    done = subprocess.run(
+        ["bash", "-c", function[0] + 'kept "$1" "$2"', "kept", "before", "after"],
+        cwd=tmp_path,
+        check=False,
+    )
+    assert (done.returncode == 0) is kept

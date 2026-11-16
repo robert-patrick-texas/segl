@@ -4,7 +4,11 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
-`publish` no longer repeats CI's install test, and a pytest run of a part of the suite no longer waits for a busy machine.
+`publish` checks that the last release updates to the new one and no longer repeats CI's install test, and a pytest run of a part of the suite no longer waits for a busy machine.
+
+### New
+
+- `publish` checks the update from the newest earlier release, as a server would have it. In a container that boots systemd, `deploy/debian/real-update-test.sh` installs that release from GitHub, sets it up as its `deploy/OPERATOR.md` says, with a board and edits of the site's own, and runs its own `segl update`: before the tag on the signed files, and after the release from GitHub. A failure before the tag publishes nothing. v0.1.0 to 0.2.0 passed both ways, in 35 and 39 seconds (`docs/RELEASING.md`, D2-035).
 
 ### Changed
 
