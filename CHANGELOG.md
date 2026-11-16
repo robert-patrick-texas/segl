@@ -4,6 +4,8 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
+## 0.5.0 — 2026-11-16
+
 segl's network library puts devices and links on any slot, and a small panel marks each as planned or to remove. `publish` keeps a log of each run and checks the release as GitHub serves it.
 
 ### New
