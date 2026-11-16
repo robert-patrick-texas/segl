@@ -27,7 +27,7 @@ Do not use pip, poetry, pnpm, yarn, a virtualenv made by hand, or a Playwright i
 
 ## Browsers for the tests
 
-`@playwright/test` drives Chromium. In `web/`, `npx playwright install chromium` fetches the browser into the user's cache, and `npx playwright install-deps chromium` installs its system libraries through `sudo`, as CI's `--with-deps` does. The tests then start the browser on the host, headless, with no container. Each Playwright release has its own browser build: run the first command again after the pin moves. Where the libraries cannot be installed, run the browser from the Playwright image and point the tests at it, as Sunstone does:
+`@playwright/test` drives Chromium. In `web/`, `npx playwright install chromium` fetches the browser into the user's cache, and `npx playwright install-deps chromium` installs its system libraries through `sudo`, as CI's `--with-deps` does. The tests then start the browser on the host, headless, with no container. Each Playwright release has its own browser build. `scripts/suite.py` runs the first command before any browser test, so a moved pin gets its build. By hand, run it again after the pin moves. Where the libraries cannot be installed, run the browser from the Playwright image and point the tests at it, as Sunstone does:
 
 ```console
 $ docker run --rm --network host --init mcr.microsoft.com/playwright:v<version>-noble \
@@ -193,7 +193,7 @@ python3 scripts/suite.py --changed --base origin/main   # start from this, taken
 `scripts/suite.py` runs CI's checks in three stages. A stage starts when the one before it has ended.
 
 1. `uv sync` and `npm install`, side by side.
-2. The quick checks, side by side: `ruff check`, `ruff format --check`, ty, tsc, Vitest, Prettier, and the web build. Together they take about ten seconds here.
+2. The quick checks, side by side: `ruff check`, `ruff format --check`, ty, tsc, Vitest, Prettier, and the web build. Together they take about ten seconds here. Before any browser test, the browser of the pinned Playwright joins them (`playwright install chromium`, under a second when the build is there), unless `PW_WS_ENDPOINT` names a browser running elsewhere.
 3. The long ones: the browser tests, the install test when a change reaches it, and pytest. The longest starts first. The next starts beside it when `scripts/capacity.py` finds room for one more on two looks in a row, five seconds apart, or else when it ends. On the development host, with four cores, the browser tests fill the machine, so pytest waits for them. A larger machine runs both at once.
 
 Each command is named as it starts. Each line it prints starts with its short name, such as `pytest:`. A failure stops the commands beside it, and no later stage starts. Ctrl+C stops every command, and what each started. Of two that fail side by side, the one first in the list above is reported.

@@ -22,6 +22,7 @@ import tomllib
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
+import pytest
 from release_proc import Result
 from release_upgrade import NARROW_PYTHON, NARROW_WEB, suite_commands, upgrade
 from suite import step_of
@@ -337,8 +338,9 @@ def test_action_pins_move_by_tag_and_by_commit(
 
 
 def test_web_moves_edit_package_json_and_node_version(
-    tree: Path, fake_runner, fake_sources
+    tree: Path, fake_runner, fake_sources, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.delenv("PW_WS_ENDPOINT", raising=False)
     web = tree / "web"
     web.mkdir()
     (web / "package.json").write_text('{\n  "dependencies": {\n    "@scope/pkg": "1.0.0"\n  }\n}\n')
@@ -356,9 +358,14 @@ def test_web_moves_edit_package_json_and_node_version(
     # made before pytest and the browser tests, and those come last.
     assert suite[:2] == ["uv sync", "npm --prefix web install --no-audit --no-fund"]
     assert suite.index("npm --prefix web run build") < suite.index("uv run pytest")
-    # The browser tests last, through the script that runs them in groups.
-    assert suite[-2:] == ["uv run pytest", f"{sys.executable} scripts/e2e.py"]
-    assert len(suite) == 11
+    # The browser tests last, through the script that runs them in groups,
+    # with the browser of the moved Playwright fetched just before.
+    assert suite[-3:] == [
+        "uv run pytest",
+        "npm --prefix web exec -- playwright install chromium",
+        f"{sys.executable} scripts/e2e.py",
+    ]
+    assert len(suite) == 12
     assert upgrade(tree, runner, sources, TODAY) == 0
 
     doc = versions(tree)

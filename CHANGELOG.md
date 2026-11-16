@@ -14,7 +14,7 @@ segl's network library puts devices and links on any slot, and a small panel mar
 ### Changed
 
 - `publish` writes all it prints to `dist/publish-<version>.log`, each run after the last. After the release it checks that tag `v<version>` on `origin` is `HEAD`, that `releases/latest` is this tag, that GitHub's SHA-256 of each file is that of the file in `dist/`, and that GitHub serves the notes sent. Each check after the release runs even when one before it failed, and the last line counts them (`docs/RELEASING.md`).
-- The browser tests run on the host's own Chromium once its system libraries are installed (`docs/DEVELOPMENT.md`, browsers for the tests). The Playwright image is for a host without them.
+- The browser tests run on the host's own Chromium once its system libraries are installed (`docs/DEVELOPMENT.md`, browsers for the tests), and `scripts/suite.py` fetches the pinned Playwright's browser before them, so a moved pin gets its build. The Playwright image is for a host without the libraries.
 
 ## 0.4.0 — 2026-11-16
 

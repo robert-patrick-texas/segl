@@ -76,6 +76,15 @@ WEB_BUILD: tuple[str, ...] = ("npm", "--prefix", "web", "run", "build")
 WEB_CHECKS: tuple[tuple[str, ...], ...] = (WEB_TYPES, WEB_TESTS, WEB_FORMAT, WEB_BUILD)
 # The browser tests, in as many groups at once as the machine has room for.
 WEB_E2E: tuple[str, ...] = (sys.executable, "scripts/e2e.py")
+# The browser of the pinned Playwright, fetched into the user's cache before
+# the browser tests. Each Playwright release has a browser build of its own,
+# so a moved pin needs a new one, and the command is quick when the build is
+# there. CI fetches its own (`--with-deps`). Not when PW_WS_ENDPOINT names a
+# browser running elsewhere (docs/DEVELOPMENT.md, browsers for the tests).
+BROWSER: tuple[str, ...] = (
+    *("npm", "--prefix", "web", "exec", "--"),
+    *("playwright", "install", "chromium"),
+)
 # Vitest for the files named after it: a test file runs itself, and any other
 # file the tests that import it. The paths are from web/.
 WEB_RELATED: tuple[str, ...] = (
@@ -114,11 +123,34 @@ def has_web(root: Path) -> bool:
     return (root / "web" / "package.json").is_file()
 
 
+def browser_elsewhere() -> bool:
+    """Report whether PW_WS_ENDPOINT names a browser running elsewhere."""
+    return bool(os.environ.get("PW_WS_ENDPOINT"))
+
+
+def with_browser(commands: Sequence[tuple[str, ...]]) -> list[tuple[str, ...]]:
+    """Return the commands with the browser's fetch before the browser tests.
+
+    Nothing is added when no browser test runs, or when the browser runs
+    elsewhere.
+    """
+    fetch = not browser_elsewhere()
+    out: list[tuple[str, ...]] = []
+    for argv in commands:
+        if fetch and argv[1:2] == WEB_E2E[1:2]:
+            out.append(BROWSER)
+            fetch = False
+        out.append(argv)
+    return out
+
+
 def whole_suite(root: Path) -> tuple[tuple[str, ...], ...]:
     """Return the suite for the tree at ``root``, in CI's order."""
     if not has_web(root):
         return (PYTHON_SYNC, *PYTHON_CHECKS, PYTHON_TESTS)
-    return (PYTHON_SYNC, WEB_SYNC, *PYTHON_CHECKS, *WEB_CHECKS, PYTHON_TESTS, WEB_E2E)
+    return tuple(
+        with_browser((PYTHON_SYNC, WEB_SYNC, *PYTHON_CHECKS, *WEB_CHECKS, PYTHON_TESTS, WEB_E2E))
+    )
 
 
 @dataclass(frozen=True)
@@ -144,6 +176,8 @@ def label_of(argv: Sequence[str]) -> str:
         return f"uv {argv[1]}"
     if argv[: len(WEB_RELATED)] == WEB_RELATED:
         return "web test"
+    if argv == BROWSER:
+        return "browser"
     if argv[:3] == ("npm", "--prefix", "web") and len(argv) > 3:
         rest = argv[3:]
         return f"web {rest[1]}" if rest[0] == "run" and len(rest) > 1 else f"web {rest[0]}"
@@ -850,7 +884,7 @@ def _commands(needs: _Needs, graph: Graph, web: bool) -> list[tuple[str, ...]]:
         commands.append((*WEB_E2E, "--", *sorted(needs.e2e)))
     if needs.install_test:
         commands.append(INSTALL_TEST)
-    return commands
+    return with_browser(commands)
 
 
 # --- Running ----------------------------------------------------------------

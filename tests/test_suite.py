@@ -92,7 +92,8 @@ def until_cancelled(cancel: threading.Event | None) -> Result:
 # --- The commands and their stages ------------------------------------------
 
 
-def test_the_whole_suite_is_cis_checks_in_cis_order() -> None:
+def test_the_whole_suite_is_cis_checks_in_cis_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("PW_WS_ENDPOINT", raising=False)
     assert suite.whole_suite(ROOT) == (
         suite.PYTHON_SYNC,
         suite.WEB_SYNC,
@@ -102,11 +103,29 @@ def test_the_whole_suite_is_cis_checks_in_cis_order() -> None:
         suite.WEB_FORMAT,
         suite.WEB_BUILD,
         suite.PYTHON_TESTS,
+        # The pinned Playwright's browser, as CI's browser job fetches it.
+        suite.BROWSER,
         suite.WEB_E2E,
     )
 
 
-def test_the_environments_come_first_and_the_long_steps_last() -> None:
+def test_a_browser_running_elsewhere_is_not_fetched(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("PW_WS_ENDPOINT", "ws://127.0.0.1:3124/")
+    assert suite.BROWSER not in suite.whole_suite(ROOT)
+    assert suite.WEB_E2E in suite.whole_suite(ROOT)
+    files = {"web/package.json": "{}", "web/e2e/pages.ts": "const A = 1;"}
+    root = small_tree(tmp_path, files)
+    chosen = suite.plan(root, ["web/e2e/pages.ts"], sorted(files)).commands
+    assert suite.WEB_E2E in chosen
+    assert suite.BROWSER not in chosen
+
+
+def test_the_environments_come_first_and_the_long_steps_last(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("PW_WS_ENDPOINT", raising=False)
     stages = {suite.label_of(argv): suite.step_of(argv).stage for argv in suite.whole_suite(ROOT)}
     assert stages == {
         "uv sync": suite.SYNC,
@@ -118,6 +137,8 @@ def test_the_environments_come_first_and_the_long_steps_last() -> None:
         "web test": suite.QUICK,
         "web format:check": suite.QUICK,
         "web build": suite.QUICK,
+        # After `npm install` has the new pin, and before the browser tests.
+        "browser": suite.QUICK,
         "pytest": suite.LONG,
         "e2e": suite.LONG,
     }
@@ -144,7 +165,10 @@ def test_the_quick_checks_run_side_by_side() -> None:
     assert suite.run(runner, quick) is None
 
 
-def test_a_stage_starts_when_the_one_before_it_has_ended() -> None:
+def test_a_stage_starts_when_the_one_before_it_has_ended(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("PW_WS_ENDPOINT", raising=False)
     runner = Scripted({})
 
     assert suite.run(runner, suite.whole_suite(ROOT), look=lambda: BUSY, every=0.01) is None
@@ -162,6 +186,9 @@ def test_a_stage_starts_when_the_one_before_it_has_ended() -> None:
             first_start[stage] = min(first_start[stage], index)
     assert last_end[suite.SYNC] < first_start[suite.QUICK]
     assert last_end[suite.QUICK] < first_start[suite.LONG]
+    # The browser is fetched after the install and has ended before the browser tests.
+    assert runner.events.index("start browser") > runner.events.index("end web install")
+    assert runner.events.index("end browser") < runner.events.index("start e2e")
 
 
 def test_the_longest_step_starts_first_and_the_next_waits_while_there_is_no_room() -> None:
@@ -789,8 +816,9 @@ def test_a_test_that_names_a_file_runs_when_it_changes(
 
 
 def test_a_browser_test_that_reads_a_file_runs_alone_and_a_helper_runs_them_all(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.delenv("PW_WS_ENDPOINT", raising=False)
     files = {
         "web/package.json": "{}",
         "web/e2e/a.spec.ts": "readFileSync(new URL('../../tests/cases.json', import.meta.url))",
@@ -802,8 +830,18 @@ def test_a_browser_test_that_reads_a_file_runs_alone_and_a_helper_runs_them_all(
     root = small_tree(tmp_path, files)
     spec = suite.plan(root, ["tests/cases.json"], sorted(files)).commands
     assert (*suite.WEB_E2E, "--", "e2e/a.spec.ts") in spec
+    # The browser is fetched once, just before the browser tests.
+    assert spec.count(suite.BROWSER) == 1
+    assert spec.index(suite.BROWSER) == spec.index((*suite.WEB_E2E, "--", "e2e/a.spec.ts")) - 1
     helper = suite.plan(root, ["deploy/names.txt"], sorted(files)).commands
     assert suite.WEB_E2E in helper
+    assert suite.BROWSER in helper
+    # No browser test, no browser.
+    (root / "docs").mkdir()
+    (root / "docs" / "notes.md").write_text("Notes.\n", encoding="utf-8")
+    quiet = suite.plan(root, ["docs/notes.md"], [*sorted(files), "docs/notes.md"]).commands
+    assert suite.WEB_E2E not in quiet
+    assert suite.BROWSER not in quiet
 
 
 def test_the_tests_of_a_change_under_every_rule_exist() -> None:
