@@ -4,6 +4,8 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
+## 0.3.0 — 2026-11-16
+
 `publish` checks that the last release updates to the new one and no longer repeats CI's install test, and a pytest run of a part of the suite no longer waits for a busy machine.
 
 ### New
