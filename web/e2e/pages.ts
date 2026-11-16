@@ -251,6 +251,80 @@ export async function socketSwitch(
 	};
 }
 
+/** A message on the collaboration socket, as JSON. */
+export interface SocketMessage {
+	type: string;
+	[field: string]: unknown;
+}
+
+/** What `tapSockets` hands a test. */
+export interface SocketTap {
+	/** What the page sent the server, on every socket, in order. */
+	sent: SocketMessage[];
+	/** What the server sent the page. */
+	received: SocketMessage[];
+	/** What the page sent while held, which never reached the server. */
+	dropped: SocketMessage[];
+	/** Drop what the page sends from now on, until the next `kill`. */
+	hold(): void;
+	/** Close every open socket, as a lost network would, and refuse new ones. */
+	kill(): Promise<void>;
+	/** Let the next socket through. */
+	restore(): void;
+}
+
+/**
+ * Stand between the page's collaboration socket and the server, and keep
+ * what goes each way. `hold` makes the network lose what the page sends: the
+ * page believes it went. Call before `goto`.
+ */
+export async function tapSockets(page: Page): Promise<SocketTap> {
+	let down = false;
+	let holding = false;
+	const open: { page: WebSocketRoute; server: WebSocketRoute }[] = [];
+	const tap: SocketTap = {
+		sent: [],
+		received: [],
+		dropped: [],
+		hold() {
+			holding = true;
+		},
+		async kill() {
+			down = true;
+			for (const pair of open.splice(0)) {
+				await pair.server.close();
+				await pair.page.close({ code: 1001, reason: 'the test took the network away' });
+			}
+			holding = false;
+		},
+		restore() {
+			down = false;
+		}
+	};
+	await page.routeWebSocket(/\/collab\?slot=\d$/, (route) => {
+		if (down) {
+			void route.close({ code: 1001, reason: 'the test took the network away' });
+			return;
+		}
+		const server = route.connectToServer();
+		open.push({ page: route, server });
+		route.onMessage((message) => {
+			const parsed = JSON.parse(String(message)) as SocketMessage;
+			if (holding) {
+				tap.dropped.push(parsed);
+				return;
+			}
+			tap.sent.push(parsed);
+			server.send(message);
+		});
+		server.onMessage((message) => {
+			tap.received.push(JSON.parse(String(message)) as SocketMessage);
+			route.send(message);
+		});
+	});
+	return tap;
+}
+
 /** The number in the presence control. */
 export function presenceCount(page: Page): Locator {
 	return page.getByTestId('presence-count');

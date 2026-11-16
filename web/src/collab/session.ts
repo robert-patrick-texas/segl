@@ -26,6 +26,12 @@
  * with the scene the canvas was loaded with, which the server sent, so the
  * loaded scene is never sent back.
  *
+ * It also keeps a base: what the newest scene the server sent says the
+ * server holds, with that scene's mark. `hello` hands the mark back, and the
+ * server's `scene` then holds only what changed since (D2-037). After every
+ * `scene`, `known` starts again from the base, and never from what this page
+ * sent: a batch the socket lost before the server took it is sent again.
+ *
  * It numbers what it sends, and the server answers `saved` with the number of
  * the newest message that is on its disk. Until then the status is `saving`.
  * The files of images go beside the elements: `FileSync` uploads and fetches
@@ -38,6 +44,7 @@ import {
 	type ClientMessage,
 	type Cursor,
 	type Participant,
+	type SceneMessage,
 	type ServerMessage
 } from './protocol.ts';
 
@@ -123,6 +130,8 @@ export interface SessionOptions {
 	transport: FileTransport;
 	/** The file list that came with the scene the canvas was loaded with. */
 	files?: readonly FileRef[];
+	/** The mark that came with that scene, or null. */
+	mark?: string | null;
 	/** Read when a socket opens, so a reconnect sends the label of that moment. */
 	hello(): Hello;
 	onState(state: SessionState): void;
@@ -150,6 +159,24 @@ export const MAX_TIMER_MS = 2 ** 31 - 1;
 
 type Timer = ReturnType<typeof setTimeout>;
 
+/** What the newest scene the server sent says it holds. */
+interface Base {
+	/** That scene's mark, or null when it had none. */
+	mark: string | null;
+	/** The copy of each element. */
+	stamps: Known;
+	/** The slot's file list, by file id. */
+	files: Map<string, FileRef>;
+}
+
+function baseOf(
+	mark: string | null,
+	elements: readonly WireElement[],
+	files: readonly FileRef[]
+): Base {
+	return { mark, stamps: knownFrom(elements), files: new Map(files.map((ref) => [ref.id, ref])) };
+}
+
 function openWebSocket(url: string): SocketLike {
 	// The browser's handlers take an Event, of which the session reads `data`.
 	return new WebSocket(url) as unknown as SocketLike;
@@ -166,6 +193,7 @@ export class CollabSession {
 	private live = false;
 	private failures = 0;
 	private epoch: number;
+	private base: Base;
 	private known: Known;
 	/** The number of the newest message sent that the server answers with `saved`. */
 	private seq = 0;
@@ -187,9 +215,10 @@ export class CollabSession {
 	constructor(options: SessionOptions) {
 		this.options = options;
 		this.epoch = options.epoch;
+		this.base = baseOf(options.mark ?? null, options.elements, options.files ?? []);
 		// The server holds what it served. Without this, a change the canvas
 		// reports before the socket's `scene` arrives would send all of it back.
-		this.known = knownFrom(options.elements);
+		this.known = new Map(this.base.stamps);
 		this.files = new FileSync({
 			editor: options.editor,
 			transport: options.transport,
@@ -323,7 +352,7 @@ export class CollabSession {
 		socket.onopen = () => {
 			if (socket !== this.socket) return;
 			const hello = this.options.hello();
-			this.send({ type: 'hello', ...hello });
+			this.send({ type: 'hello', ...hello, mark: this.base.mark });
 		};
 		socket.onmessage = (event) => {
 			if (socket !== this.socket) return;
@@ -444,7 +473,7 @@ export class CollabSession {
 				this.lockIn(message.editEndsIn);
 				break;
 			case 'scene':
-				if (this.live) this.takeScene(message.epoch, message.elements, message.files);
+				if (this.live) this.takeScene(message);
 				break;
 			case 'files':
 				// The files other browsers added. The canvas fetches what it lacks.
@@ -498,11 +527,23 @@ export class CollabSession {
 		}
 	}
 
-	private takeScene(
-		epoch: number,
-		elements: readonly WireElement[],
-		files: readonly FileRef[]
-	): void {
+	private takeScene({ epoch, elements, files, whole, mark }: SceneMessage): void {
+		if (!whole && epoch !== this.epoch) {
+			// Changes to a scene this page does not hold. It asks for the whole one.
+			this.base.mark = null;
+			this.reconnect();
+			return;
+		}
+		if (whole) {
+			this.base = baseOf(mark, elements, files);
+		} else {
+			// The server's copies of what changed since the base's mark.
+			for (const { id, version, versionNonce } of elements) {
+				this.base.stamps.set(id, { version, versionNonce });
+			}
+			for (const ref of files) this.base.files.set(ref.id, ref);
+			this.base.mark = mark;
+		}
 		if (epoch === this.epoch) {
 			// The same scene, further on. Nothing this browser holds is thrown away.
 			this.options.editor.reconcile(elements);
@@ -513,7 +554,9 @@ export class CollabSession {
 			this.epoch = epoch;
 			this.savedSeq = this.seq;
 		}
-		this.known = knownFrom(elements);
+		// What the server holds, and not what this page sent it: a batch the
+		// last socket lost is sent again.
+		this.known = new Map(this.base.stamps);
 		// Now, not shortly: these are the edits made while the socket was down.
 		clearTimeout(this.sendTimer);
 		this.sendTimer = undefined;
@@ -521,7 +564,7 @@ export class CollabSession {
 		this.sendPending(this.seq > this.savedSeq);
 		// The server's list for this scene. What this browser uploaded and the
 		// list lacks is named again, and what the canvas lacks is fetched.
-		this.files.reset(files);
+		this.files.reset([...this.base.files.values()]);
 		this.announce();
 		// Said only when it moved: an open history list reads it again then.
 		this.setState(this.state.epoch === this.epoch ? {} : { epoch: this.epoch });

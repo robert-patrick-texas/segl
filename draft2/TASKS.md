@@ -436,3 +436,12 @@ Documents: `docs/API.md` (the scene route's `mark`, `hello`'s `mark`, `scene`'s 
 Acceptance: T-001 through T-004, T-007, T-009, and T-011 pass, in the dev container or by `scripts/e2e.py`, and so do the new tests. The size run shows the late browser's socket `scene` for the 1,024-element slot under 1,000 characters, where it was about 431,000. ruff, ty, and the web checks pass.
 
 Out of scope: a browser that keeps a slot's scene between visits (`docs/ROADMAP.md`, not planned).
+
+As built, where the text above left a choice open or the build went past it (D2-037):
+
+- The route's mark names the epoch of the head it returns. When the newest finished write was of another epoch, its count is 0. The text had a mark taken during a restore name the old epoch. Then a page could get a scene that is not whole for an epoch it is not on. Count 0 of the new epoch says no more than the head holds: every element of an epoch has the count of the change that started it. A `hello` with it gets every element of the new epoch once the room has it, and the whole scene before.
+- Each slot has a start of its own, picked when segl starts, so a mark handed to another slot names no scene there.
+- A file named while a restore or an import was being written gets a count after the one that started the epoch, since the head lacks it. An import's own files go with the elements that name them, and get no count of their own.
+- `scene` carries `whole` and `mark` ahead of `elements`. The page takes a `scene` with no `whole` as whole, and a mark that is not text of at most 64 characters as none. The page always sends `mark` in `hello`, `null` when it has none.
+- A `scene` that is not whole and names another epoch than the page's is not taken: the page drops its mark and reconnects for the whole scene. The server does not send one.
+- The tests of the route, the socket, a real process, and nginx are `tests/test_marks.py`. `MarkOf` in `tests/harness.py` matches a mark whose start the test cannot know. The browser tests stand between the page and the server with `tapSockets` in `web/e2e/pages.ts`. The size run fails when the new browser's socket `scene` is 1,000 characters or more.

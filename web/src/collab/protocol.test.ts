@@ -13,7 +13,7 @@
 // limitations under the License.
 
 import { describe, expect, test } from 'vitest';
-import { parseServerMessage } from './protocol.ts';
+import { markOf, MAX_MARK_LENGTH, parseServerMessage } from './protocol.ts';
 
 const parse = (message: unknown) => parseServerMessage(JSON.stringify(message));
 
@@ -68,7 +68,9 @@ describe('parseServerMessage', () => {
 			type: 'scene',
 			epoch: 2,
 			elements: [rectangle],
-			files: []
+			files: [],
+			whole: true,
+			mark: null
 		});
 		expect(parse({ type: 'elements', epoch: 2, elements: [rectangle] })).toEqual({
 			type: 'elements',
@@ -82,16 +84,48 @@ describe('parseServerMessage', () => {
 			type: 'scene',
 			epoch: 1,
 			elements: [],
-			files: [png]
+			files: [png],
+			whole: true,
+			mark: null
 		});
 		// A scene from a segl older than the file list has no such field.
 		expect(parse({ type: 'scene', epoch: 1, elements: [] })).toEqual({
 			type: 'scene',
 			epoch: 1,
 			elements: [],
-			files: []
+			files: [],
+			whole: true,
+			mark: null
 		});
 	});
+
+	test('a scene says whether it is whole, and carries its mark', () => {
+		const changes = { type: 'scene', epoch: 1, elements: [], files: [], whole: false };
+		expect(parse({ ...changes, mark: 'c0ffee.1.7' })).toEqual({ ...changes, mark: 'c0ffee.1.7' });
+		expect(parse({ ...changes, whole: true, mark: 'c0ffee.1.7' })).toMatchObject({
+			whole: true
+		});
+	});
+
+	test.each([undefined, null, 0, 'false', []])(
+		'a scene with %j where whole goes is whole',
+		(whole) => {
+			// Only a scene that says it is not whole is laid over what the page has.
+			expect(parse({ type: 'scene', epoch: 1, elements: [], files: [], whole })).toMatchObject({
+				whole: true
+			});
+		}
+	);
+
+	test.each([undefined, null, 7, ['a'], { mark: 'a' }, 'x'.repeat(MAX_MARK_LENGTH + 1)])(
+		'a scene with %j where the mark goes has none',
+		(mark) => {
+			// The server refuses a hello whose mark is not one, so the page never sends it.
+			expect(parse({ type: 'scene', epoch: 1, elements: [], files: [], mark })).toMatchObject({
+				mark: null
+			});
+		}
+	);
 
 	test('files another browser added', () => {
 		expect(parse({ type: 'files', epoch: 1, files: [png] })).toEqual({
@@ -204,6 +238,21 @@ describe('parseServerMessage', () => {
 		'%j is not a message at all',
 		(data) => {
 			expect(parseServerMessage(data)).toBeNull();
+		}
+	);
+});
+
+describe('markOf', () => {
+	test('a mark is text of at most 64 characters, handed back as it came', () => {
+		expect(markOf('c0ffee.1.7')).toBe('c0ffee.1.7');
+		expect(markOf('')).toBe('');
+		expect(markOf('x'.repeat(MAX_MARK_LENGTH))).toBe('x'.repeat(MAX_MARK_LENGTH));
+	});
+
+	test.each([undefined, null, 7, true, ['a'], 'x'.repeat(MAX_MARK_LENGTH + 1)])(
+		'%j is no mark',
+		(value) => {
+			expect(markOf(value)).toBeNull();
 		}
 	);
 });

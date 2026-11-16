@@ -189,7 +189,8 @@ function start(
 	epoch = 1,
 	files: FileRef[] = [],
 	loaded: WireElement[] = [],
-	early: WireElement[] = []
+	early: WireElement[] = [],
+	mark: string | null = null
 ): Harness {
 	const editor = new FakeEditor();
 	editor.draw(...loaded, ...early);
@@ -204,6 +205,7 @@ function start(
 		editor,
 		transport,
 		files,
+		mark,
 		hello: () => ({ ...hello }),
 		onState: (state) => states.push(state),
 		createSocket: (url) => {
@@ -278,7 +280,7 @@ describe('joining', () => {
 		socket.open();
 
 		expect(socket.sent).toEqual([
-			{ type: 'hello', clientId: 'client-1', displayName: 'Guest1', editToken: '' }
+			{ type: 'hello', clientId: 'client-1', displayName: 'Guest1', editToken: '', mark: null }
 		]);
 	});
 
@@ -806,6 +808,205 @@ describe('a dropped socket', () => {
 	});
 });
 
+describe('the mark', () => {
+	const LOADED = [element('a', 1), element('b', 4)];
+	/** The mark the scene route answered with. */
+	const MARK = 's.1.7';
+
+	/** The server's scene of what changed since the mark the page sent. */
+	function changes(socket: FakeSocket, elements: WireElement[], mark: string): void {
+		socket.receive({ type: 'scene', epoch: 1, elements, files: [], whole: false, mark });
+	}
+
+	/** Open the socket, take it to `welcome`, and send a scene that is not whole. */
+	function live(harness: Harness, elements: WireElement[] = [], mark = MARK): FakeSocket {
+		const socket = harness.socket();
+		socket.open();
+		welcome(socket);
+		changes(socket, elements, mark);
+		return socket;
+	}
+
+	/** Drop the socket, and wait for the next one to be made. */
+	function drop(harness: Harness, socket: FakeSocket): void {
+		socket.drop();
+		vi.advanceTimersByTime(RETRY_DELAYS_MS[0]!);
+	}
+
+	test('hello hands back the mark the page loaded with', () => {
+		const harness = start(1, [], LOADED, [], MARK);
+
+		harness.socket().open();
+
+		expect(harness.socket().sent).toEqual([
+			{ type: 'hello', clientId: 'client-1', displayName: 'Guest1', editToken: '', mark: MARK }
+		]);
+	});
+
+	test('a scene with nothing in it changes nothing, and nothing is sent back', () => {
+		const harness = start(1, [], LOADED, [], MARK);
+		const socket = live(harness);
+
+		harness.session.localChange();
+		vi.advanceTimersByTime(1000);
+
+		expect(socket.take()).toEqual([]);
+		expect(harness.editor.held).toEqual(LOADED);
+		expect(harness.editor.calls).toEqual(['reconcile']);
+		expect(harness.state()).toMatchObject({ status: 'live', epoch: 1 });
+	});
+
+	test('what changed is merged into the canvas, and the rest stays', () => {
+		const harness = start(1, [], LOADED, [], MARK);
+
+		const socket = live(harness, [element('b', 5), element('c', 1)], 's.1.9');
+		vi.advanceTimersByTime(1000);
+
+		expect(harness.editor.held).toEqual([element('a', 1), element('b', 5), element('c', 1)]);
+		expect(socket.take()).toEqual([]);
+	});
+
+	test('after a drop, hello hands back the mark of the newest scene', () => {
+		const harness = start(1, [], LOADED, [], MARK);
+		drop(harness, live(harness, [element('c', 1)], 's.1.9'));
+
+		harness.socket().open();
+
+		expect(harness.socket().sent[0]).toMatchObject({ type: 'hello', mark: 's.1.9' });
+	});
+
+	test("another person's elements and this page's own batches leave the mark where it was", () => {
+		// The next scene holds what came after it, and both are after it.
+		const harness = start(1, [], LOADED, [], MARK);
+		const socket = live(harness);
+		socket.receive({ type: 'elements', epoch: 1, elements: [element('theirs', 1)] });
+		harness.editor.draw(element('mine', 1));
+		harness.session.localChange();
+		vi.advanceTimersByTime(SEND_INTERVAL_MS);
+		drop(harness, socket);
+
+		harness.socket().open();
+
+		expect(harness.socket().sent[0]).toMatchObject({ type: 'hello', mark: MARK });
+	});
+
+	test('a batch the socket lost before the server took it is sent again', () => {
+		// The risk of T14: a scene that is not whole does not say what the server holds.
+		const harness = start(1, [], LOADED, [], MARK);
+		const first = live(harness);
+		harness.editor.draw(element('lost', 1), element('b', 5));
+		harness.session.localChange();
+		vi.advanceTimersByTime(SEND_INTERVAL_MS);
+		const batch = [element('b', 5), element('lost', 1)];
+		expect(first.take()).toEqual([{ type: 'elements', epoch: 1, elements: batch, seq: 1 }]);
+		drop(harness, first);
+
+		// The server never took it, so nothing changed since the mark.
+		const socket = live(harness);
+
+		expect(socket.take()).toEqual([{ type: 'elements', epoch: 1, elements: batch, seq: 2 }]);
+	});
+
+	test('a batch sent before the first scene and lost is sent again too', () => {
+		const harness = start(1, [], LOADED, [], MARK);
+		const first = harness.socket();
+		first.open();
+		welcome(first);
+		harness.editor.draw(element('early', 1));
+		harness.session.localChange();
+		vi.advanceTimersByTime(SEND_INTERVAL_MS);
+		expect(first.take()).toHaveLength(1);
+		drop(harness, first);
+
+		const socket = live(harness);
+
+		expect(socket.take()).toEqual([
+			{ type: 'elements', epoch: 1, elements: [element('early', 1)], seq: 2 }
+		]);
+	});
+
+	test('a batch the server took before the drop is not sent again', () => {
+		const harness = start(1, [], LOADED, [], MARK);
+		const first = live(harness);
+		harness.editor.draw(element('kept', 1));
+		harness.session.localChange();
+		vi.advanceTimersByTime(SEND_INTERVAL_MS);
+		first.take();
+		drop(harness, first);
+
+		// It changed since the mark, so the scene holds the server's copy of it.
+		const socket = live(harness, [element('kept', 1)], 's.1.8');
+
+		// Only the question about the number the last socket never heard saved for.
+		expect(socket.take()).toEqual([{ type: 'elements', epoch: 1, elements: [], seq: 2 }]);
+	});
+
+	test('what was drawn while the socket was down is sent, and a newer server copy is kept', () => {
+		// T-004, with a scene that is not whole.
+		const harness = start(1, [], [element('shared', 1)], [], MARK);
+		drop(harness, live(harness));
+		harness.editor.draw(element('offline', 1), element('shared', 2));
+		harness.session.localChange();
+
+		const socket = live(harness, [element('shared', 5), element('theirs', 1)], 's.1.12');
+
+		expect(socket.take()).toEqual([
+			{ type: 'elements', epoch: 1, elements: [element('offline', 1)], seq: 1 }
+		]);
+		expect(harness.editor.held).toEqual([
+			element('shared', 5),
+			element('offline', 1),
+			element('theirs', 1)
+		]);
+	});
+
+	test('a whole scene puts its copies in place of the base', () => {
+		const harness = start(1, [], LOADED, [], MARK);
+		const first = harness.socket();
+		first.open();
+		welcome(first);
+
+		// After a restart the room came back without b.
+		const restarted = { type: 'scene', epoch: 1, files: [], whole: true, mark: 't.1.0' };
+		first.receive({ ...restarted, elements: [element('a', 1)] });
+		expect(first.take()).toEqual([
+			{ type: 'elements', epoch: 1, elements: [element('b', 4)], seq: 1 }
+		]);
+		drop(harness, first);
+
+		// That batch was lost too. The base is the whole scene's, which lacks b,
+		// and not the loaded one's, which has it: so b goes again.
+		const socket = live(harness, [], 't.1.0');
+		expect(socket.sent[0]).toMatchObject({ type: 'hello', mark: 't.1.0' });
+		expect(socket.take()).toEqual([
+			{ type: 'elements', epoch: 1, elements: [element('b', 4)], seq: 2 }
+		]);
+	});
+
+	test('a scene that is not whole and names another epoch is not taken, and the whole one is asked for', () => {
+		const harness = start(1, [], LOADED, [], MARK);
+		const socket = harness.socket();
+		socket.open();
+		welcome(socket);
+
+		socket.receive({
+			type: 'scene',
+			epoch: 2,
+			elements: [],
+			files: [],
+			whole: false,
+			mark: 's.2.3'
+		});
+
+		expect(socket.closed).toBe(true);
+		expect(harness.editor.held).toEqual(LOADED);
+		expect(harness.editor.calls).toEqual([]);
+		expect(harness.sockets).toHaveLength(2);
+		harness.socket().open();
+		expect(harness.socket().sent[0]).toMatchObject({ type: 'hello', mark: null });
+	});
+});
+
 describe('presence', () => {
 	test('someone who comes is listed, and drawn on the canvas', () => {
 		const harness = start();
@@ -966,7 +1167,7 @@ describe("this browser's name", () => {
 		expect(harness.state()).toMatchObject({ status: 'connecting', participants: [] });
 		harness.socket().open();
 		expect(harness.socket().sent).toEqual([
-			{ type: 'hello', clientId: 'client-1', displayName: 'McKinley7', editToken: '' }
+			{ type: 'hello', clientId: 'client-1', displayName: 'McKinley7', editToken: '', mark: null }
 		]);
 	});
 
@@ -1005,7 +1206,7 @@ describe('the edit gate', () => {
 		harness.socket().open();
 
 		expect(harness.socket().sent).toEqual([
-			{ type: 'hello', clientId: 'client-1', displayName: 'Guest1', editToken: PASS }
+			{ type: 'hello', clientId: 'client-1', displayName: 'Guest1', editToken: PASS, mark: null }
 		]);
 	});
 
@@ -1810,6 +2011,73 @@ describe('images', () => {
 
 		// The element reached the disk. The file list did not.
 		const socket = goLive(harness, [picture()]);
+
+		expect(socket.take()).toEqual([
+			{ type: 'elements', epoch: 1, elements: [], seq: 3 },
+			{ type: 'files', epoch: 1, files: [REF], seq: 4 }
+		]);
+		expect(harness.transport.uploads).toHaveLength(1);
+	});
+
+	test("the file list is the base's, with the files of a scene that is not whole", async () => {
+		const harness = start(1, [REF], [picture()], [], 's.1.7');
+		await settle();
+		expect(harness.transport.downloads).toEqual([REF]);
+		const socket = harness.socket();
+		socket.open();
+		welcome(socket);
+
+		const other = { id: 'e'.repeat(40), hash: hashOf('e'.repeat(40)), mimeType: 'image/png' };
+		const theirs = { ...element('theirs', 1), fileId: other.id };
+		socket.receive({
+			type: 'scene',
+			epoch: 1,
+			elements: [theirs],
+			files: [other],
+			whole: false,
+			mark: 's.1.9'
+		});
+		await settle();
+
+		// The new file is fetched. The loaded one is still on the list, so its
+		// bytes are not uploaded and it is not named.
+		expect(harness.transport.downloads).toEqual([REF, other]);
+		expect(harness.transport.uploads).toEqual([]);
+		expect(socket.take()).toEqual([]);
+	});
+
+	test('a file named on a socket that was lost is named again after a scene that is not whole', async () => {
+		const harness = start(1, [], [], [], 's.1.7');
+		const first = harness.socket();
+		first.open();
+		welcome(first);
+		first.receive({
+			type: 'scene',
+			epoch: 1,
+			elements: [],
+			files: [],
+			whole: false,
+			mark: 's.1.7'
+		});
+		harness.editor.place(picture(), FILE);
+		harness.session.localChange();
+		await vi.advanceTimersByTimeAsync(SEND_INTERVAL_MS);
+		expect(first.take()).toHaveLength(2);
+		first.drop();
+		vi.advanceTimersByTime(RETRY_DELAYS_MS[0]!);
+
+		// The server took the element and not the file.
+		const socket = harness.socket();
+		socket.open();
+		welcome(socket);
+		socket.receive({
+			type: 'scene',
+			epoch: 1,
+			elements: [picture()],
+			files: [],
+			whole: false,
+			mark: 's.1.8'
+		});
 
 		expect(socket.take()).toEqual([
 			{ type: 'elements', epoch: 1, elements: [], seq: 3 },

@@ -27,7 +27,9 @@ write of the same slot, and it starts a new epoch, so it takes its turn with
 the flushes: one lock, and one of them at a time.
 
 Everything here runs on the event loop but the write itself, which a worker
-thread does, turning the scene into JSON on the way.
+thread does, turning the scene into JSON on the way. Once a write has finished,
+the room hears which of its changes the head holds (``Room.wrote``), and the
+scene route's mark moves on (D2-037).
 """
 
 import asyncio
@@ -221,6 +223,8 @@ class Saver:
         try:
             if snapshot is not None:
                 flush = await run_in_threadpool(self._write, snapshot, record)
+                # From now the scene route hands out this snapshot's mark.
+                room.wrote(snapshot)
                 self._saved_at = flush.saved_at
                 # A flush that was told to record has done what can be done, so
                 # a leave or a stop never asks twice for the same history row.

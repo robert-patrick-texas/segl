@@ -36,6 +36,7 @@ from harness import (
     GATED_TOML,
     PASS_HEADER,
     ROOT_SITE,
+    MarkOf,
     NginxTools,
     assert_no_secrets,
     issue_pass,
@@ -117,7 +118,14 @@ def test_hello_is_answered_with_a_welcome_and_the_scene(client: TestClient) -> N
         "connectionId": me["connectionId"],
     }
     assert me["displayName"] == "Guest1"
-    assert scene == {"type": "scene", "epoch": 1, "elements": [], "files": []}
+    assert scene == {
+        "type": "scene",
+        "epoch": 1,
+        "whole": True,
+        "mark": MarkOf(1),
+        "elements": [],
+        "files": [],
+    }
 
 
 def test_the_room_starts_from_the_slots_stored_head(

@@ -37,6 +37,7 @@ from harness import (
     EMPTY_SCENE,
     GATED,
     PASS_HEADER,
+    MarkOf,
     NginxTools,
     SeglServer,
     issue_pass,
@@ -458,7 +459,9 @@ def test_a_killed_process_comes_back_with_the_scene_it_called_saved(tmp_path: Pa
     assert (tmp_path / "segl.sqlite-wal").exists()
     with running_segl(tmp_path) as again:
         after = slot_scene(again, 2)
-        assert after == before
+        # The same head. Its mark is the new process's own, at count 0.
+        assert {**after, "mark": before["mark"]} == before
+        assert after["mark"] == MarkOf(1, 0) and before["mark"] == MarkOf(1, 2)
         assert after["editorLabel"] == "Bravo2"
         # Slot 1 is as it was made.
         assert slot_scene(again, 1)["scene"] == EMPTY_SCENE

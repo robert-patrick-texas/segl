@@ -35,10 +35,13 @@ import {
 	openPeople,
 	openSlot,
 	presenceCount,
+	sceneDocument,
 	SLOTS,
 	socketSwitch,
 	switchSlot,
-	test
+	tapSockets,
+	test,
+	type SocketMessage
 } from './pages.ts';
 
 /** Wait until an element this test knows by id is on a page's canvas. */
@@ -48,6 +51,19 @@ async function expectElement(page: Page, id: string): Promise<void> {
 
 async function expectNoElement(page: Page, id: string): Promise<void> {
 	await expect.poll(() => elementIds(page), { message: `element ${id} goes` }).not.toContain(id);
+}
+
+/** Each element on a page's canvas, as its id and version, in id order. */
+async function stamps(page: Page): Promise<string[]> {
+	return (await sceneDocument(page)).elements
+		.map((element) => `${element.id} v${element.version}`)
+		.sort();
+}
+
+/** The ids of the elements a socket message carries. */
+function idsOf(message: SocketMessage | undefined): string[] {
+	const elements = (message?.['elements'] ?? []) as { id: string }[];
+	return elements.map((element) => element.id);
 }
 
 /** Put the keyboard on the canvas without drawing: a click with the selection tool. */
@@ -400,4 +416,94 @@ test('a browser that opens a slot sends none of the drawing it loaded back', asy
 	await expectElement(other, mine);
 	const ids = edits().flatMap((message) => (message.elements ?? []).map((each) => each.id));
 	expect([...new Set(ids)]).toEqual([mine]);
+});
+
+test('a page that reloads a quiet slot is sent a socket scene with no element', async ({
+	page
+}) => {
+	// D2-037: the scene comes once, over HTTP.
+	const tap = await tapSockets(page);
+	await joinSlot(page, SLOTS.reconnect);
+	const drawn = await drawRectangle(page, 150, -200);
+	await expectSaved(page);
+
+	tap.received.length = 0;
+	tap.sent.length = 0;
+	await page.reload();
+	await expectLive(page);
+	await expectElement(page, drawn);
+
+	const scenes = tap.received.filter((message) => message.type === 'scene');
+	expect(scenes).toHaveLength(1);
+	expect(scenes[0]).toMatchObject({ whole: false, elements: [], files: [] });
+	// The page handed back the mark that came with the scene route's answer.
+	const hello = tap.sent.find((message) => message.type === 'hello');
+	expect(hello?.['mark']).toBe(scenes[0]!['mark']);
+});
+
+test('a socket that drops while another browser edits comes back, and both end with the same scene', async ({
+	page,
+	person
+}) => {
+	const tap = await tapSockets(page);
+	const other = await person('Bea');
+	await joinSlot(other, SLOTS.reconnect);
+	const before = await drawRectangle(other, -300, 250);
+	await joinSlot(page, SLOTS.reconnect);
+	await expectElement(page, before);
+	const shared = await drawRectangle(page, -150, 250);
+	await expectElement(other, shared);
+
+	await tap.kill();
+	await expect(connectionStatus(page)).toHaveAttribute('data-state', 'disconnected');
+	const theirs = await drawRectangle(other, 150, 250);
+	const mine = await drawRectangle(page, 300, 250);
+	const heard = tap.received.length;
+
+	tap.restore();
+	await expectLive(page);
+	await expectElement(page, theirs);
+	await expectElement(other, mine);
+	await expect
+		.poll(async () => (await stamps(page)).join('\n'))
+		.toBe((await stamps(other)).join('\n'));
+
+	// The scene after the reconnect held what changed while this page was
+	// away, and not what it already had.
+	const scene = tap.received.slice(heard).find((message) => message.type === 'scene');
+	expect(scene?.['whole']).toBe(false);
+	expect(idsOf(scene)).toContain(theirs);
+	expect(idsOf(scene)).not.toContain(before);
+});
+
+test('a batch lost with its socket reaches the other browser after the reconnect', async ({
+	page,
+	person
+}) => {
+	// T-004: the network loses what the page sent, and the page believes it went.
+	const tap = await tapSockets(page);
+	const other = await person('Bea');
+	await joinSlot(page, SLOTS.reconnect);
+	await joinSlot(other, SLOTS.reconnect);
+
+	tap.hold();
+	const lost = await drawRectangle(page, 250, -250);
+	await expect.poll(() => tap.dropped.some((message) => idsOf(message).includes(lost))).toBe(true);
+	expect(await elementIds(other)).not.toContain(lost);
+	await tap.kill();
+	const heard = tap.received.length;
+	const said = tap.sent.length;
+
+	tap.restore();
+	await expectLive(page);
+	await expectElement(other, lost);
+	await expectSaved(page);
+
+	// The server's scene had nothing new, since it never got the batch. The
+	// page sent it again from what it knew the server held.
+	const scene = tap.received.slice(heard).find((message) => message.type === 'scene');
+	expect(scene).toMatchObject({ whole: false });
+	expect(idsOf(scene)).not.toContain(lost);
+	const again = tap.sent.slice(said).filter((message) => message.type === 'elements');
+	expect(again.flatMap(idsOf)).toContain(lost);
 });

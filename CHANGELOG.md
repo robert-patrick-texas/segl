@@ -4,6 +4,13 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
+A page that opens a slot gets its scene once: the socket sends only what changed since the copy the page loaded.
+
+### Changed
+
+- The scene route's answer carries a mark of its head, `hello` hands it back, and the socket's `scene` after `welcome` holds only what changed since. For a quiet slot that is nothing. `scene` says whether it is `whole` and carries the room's `mark`. A mark from before a restart, a restore, or an import gets the whole scene. A new browser on a slot of 1,024 elements got a socket `scene` of 92 characters, where the stored scene had 464,739 (`docs/API.md`, D2-037).
+- A page that reconnects hands back the mark of its last `scene`, so it too gets only what changed. A batch its last socket lost before the server took it is sent again (`web/src/collab/session.ts`).
+
 ## 0.3.0 — 2026-11-16
 
 `publish` checks that the last release updates to the new one and no longer repeats CI's install test, and a pytest run of a part of the suite no longer waits for a busy machine.

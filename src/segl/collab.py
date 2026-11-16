@@ -23,7 +23,7 @@ message to ``Room.receive`` until the browser goes.
 What the room has for a browser goes into that connection's outbox, and one
 task per connection writes it to the socket. A broadcast therefore never waits
 for a slow browser. A browser that falls too far behind is disconnected, and
-gets the whole scene again when it reconnects.
+gets what changed since its last scene when it reconnects.
 """
 
 import asyncio
@@ -43,7 +43,16 @@ from segl.config import Settings
 from segl.origin import refuse_websocket
 from segl.reconcile import Element
 from segl.repository import SLOT_NUMBERS, Replacement, Repository, Slot
-from segl.room import Connection, FileEntry, Room, encode, parse_files, parse_hello
+from segl.room import (
+    Connection,
+    FileEntry,
+    Room,
+    encode,
+    make_mark,
+    new_start,
+    parse_files,
+    parse_hello,
+)
 from segl.saver import Saver
 
 # How long a new connection has to say hello.
@@ -69,6 +78,8 @@ class Rooms:
 
     A room stays for the life of the process, so the nine of them are all
     there will ever be. Each has a saver, which writes its scene to the head.
+    Each slot's marks begin with a value picked when segl starts, so a mark
+    from before a restart names no scene of this process (D2-037).
     """
 
     def __init__(self, repository: Repository, settings: Settings, assets: AssetStore) -> None:
@@ -78,6 +89,29 @@ class Rooms:
         self._rooms: dict[int, Room] = {}
         self._savers: dict[int, Saver] = {}
         self._locks = {number: asyncio.Lock() for number in SLOT_NUMBERS}
+        self._starts = {number: new_start() for number in SLOT_NUMBERS}
+
+    def written(self, slot: int) -> tuple[int, int] | None:
+        """Return the epoch and count of a slot's newest head write that finished.
+
+        None when the slot has no room yet. The scene route calls this from a
+        worker thread, before it reads the head: the head is then at least as
+        new as what this says.
+        """
+        room = self._rooms.get(slot)
+        return None if room is None else room.written
+
+    def head_mark(self, slot: int, epoch: int, written: tuple[int, int] | None) -> str:
+        """Return the mark of a head of this epoch, read after ``written`` was.
+
+        With no room, the room will start from this head at count 0. A write
+        of another epoch is a restore or an import that the room has still to
+        take, or one that came after ``written``. Either way count 0 of the
+        head's epoch says no more than the head holds: every element of a new
+        epoch has the count of the change that started it.
+        """
+        count = written[1] if written is not None and written[0] == epoch else 0
+        return make_mark(self._starts[slot], epoch, count)
 
     async def room(self, slot: int) -> Room:
         """Return the room of slot 1 to 9."""
@@ -165,6 +199,7 @@ class Rooms:
             head.scene_json,
             files=files,
             max_scene_bytes=self._settings.max_scene_bytes,
+            start=self._starts[slot],
         )
         return room, head.saved_at
 
@@ -323,7 +358,7 @@ async def serve(websocket: WebSocket, rooms: Rooms, access: Access) -> None:
         edit_until=admission.until,
         clock=access.clock,
     )
-    room.join(connection)
+    room.join(connection, hello.mark)
     # Two tasks, so that a browser that stops reading does not stop segl
     # hearing that it left. The first to end ends the connection.
     tasks = {

@@ -97,7 +97,7 @@ class Setup:
         self.repository = Repository(folder / "segl.sqlite", clock=self.clock)
         self.repository.bootstrap()
         head = self.repository.get_head(SLOT)
-        self.room = Room.from_head(SLOT, "Workspace 2", head.epoch, head.scene_json)
+        self.room = Room.from_head(SLOT, "Workspace 2", head.epoch, head.scene_json, start="s")
         self.saver = Saver(
             self.room,
             self.repository,
@@ -535,11 +535,15 @@ def test_a_replacement_writes_the_new_scene_and_sends_it_to_the_room(tmp_path: P
         expected = {
             "type": "scene",
             "epoch": 2,
+            "whole": True,
+            "mark": "s.2.2",
             "elements": [element("z", 3, index="a0")],
             "files": [],
         }
         assert one.scenes() == [expected] and two.scenes() == [expected]
         assert not setup.room.dirty
+        # The head holds every change up to the replacement's.
+        assert setup.room.written == (2, 2)
         # Row 1 is the first drawing, which the newest row already held, and
         # row 2 is the replacement.
         assert [(row.revision, row.epoch) for row in setup.repository.list_revisions(SLOT)] == [
@@ -915,8 +919,16 @@ def test_an_import_writes_its_scene_and_its_files_and_sends_them_to_the_room(
         assert json.loads(head.scene_json) == {**json.loads(before), "elements": imported}
         assert setup.repository.get_revision(SLOT, 2).scene_json == head.scene_json
         assert setup.repository.list_files(SLOT) == [STORED_FILE]
-        expected = {"type": "scene", "epoch": 2, "elements": imported, "files": [FILE]}
+        expected = {
+            "type": "scene",
+            "epoch": 2,
+            "whole": True,
+            "mark": "s.2.2",
+            "elements": imported,
+            "files": [FILE],
+        }
         assert one.scenes() == [expected] and two.scenes() == [expected]
+        assert setup.room.written == (2, 2)
         assert (setup.room.epoch, list(setup.room.elements)) == (2, ["z", "picture"])
         assert not setup.room.unsettled
         # What the room would write next is the text the head holds.

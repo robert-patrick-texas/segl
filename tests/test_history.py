@@ -41,6 +41,7 @@ from harness import (
     GATED_TOML,
     PASS_HEADER,
     ROOT_SITE,
+    MarkOf,
     NginxTools,
     assert_no_secrets,
     issue_pass,
@@ -342,6 +343,8 @@ def test_restoring_an_older_revision_switches_every_connection_and_can_be_undone
                 assert received(socket) == {
                     "type": "scene",
                     "epoch": 2,
+                    "whole": True,
+                    "mark": MarkOf(2),
                     "elements": [A],
                     "files": [],
                 }
@@ -362,6 +365,8 @@ def test_restoring_an_older_revision_switches_every_connection_and_can_be_undone
                 assert received(socket) == {
                     "type": "scene",
                     "epoch": 3,
+                    "whole": True,
+                    "mark": MarkOf(3),
                     "elements": [A, B],
                     "files": [],
                 }
@@ -399,7 +404,14 @@ def test_a_restore_first_records_the_scene_it_replaces(
             assert response.json()["epoch"] == 2
             # The new epoch is the answer to what was sent for the old scene:
             # no `saved` comes before the scene, or after it.
-            assert received(two) == {"type": "scene", "epoch": 2, "elements": [A], "files": []}
+            assert received(two) == {
+                "type": "scene",
+                "epoch": 2,
+                "whole": True,
+                "mark": MarkOf(2),
+                "elements": [A],
+                "files": [],
+            }
             # Row 2 is the scene that was replaced, by whoever drew it last.
             assert rows(client) == [(3, 2, "Guest3"), (2, 1, "Staff2"), (1, 1, "Guest1")]
             assert client.get(f"{REVISIONS}/2").json()["scene"]["elements"] == [A, B]
@@ -441,7 +453,14 @@ def test_drawing_goes_on_at_the_new_epoch(
         # is sent the scene again, and nobody else hears of it.
         stale = {"type": "elements", "epoch": 1, "elements": [element("b", 2)], "seq": 3}
         one.send_json(stale)
-        assert received(one) == {"type": "scene", "epoch": 2, "elements": [A], "files": []}
+        assert received(one) == {
+            "type": "scene",
+            "epoch": 2,
+            "whole": True,
+            "mark": MarkOf(2),
+            "elements": [A],
+            "files": [],
+        }
 
         # One for the new scene is, and is saved at the new epoch.
         moved = element("a", 2, type="rectangle", index="a0", x=40)
@@ -476,7 +495,14 @@ def test_a_restore_brings_an_image_back_with_its_file(
         client.post(RESTORE, json={"revision": 1})
 
         # The scene from before the image names no file.
-        assert received(socket) == {"type": "scene", "epoch": 2, "elements": [A], "files": []}
+        assert received(socket) == {
+            "type": "scene",
+            "epoch": 2,
+            "whole": True,
+            "mark": MarkOf(2),
+            "elements": [A],
+            "files": [],
+        }
         assert head(client)["files"] == []
 
         client.post(RESTORE, json={"revision": with_picture})
@@ -497,7 +523,14 @@ def test_a_slot_nobody_has_open_can_be_restored(stored: TestClient) -> None:
     with stored.websocket_connect(f"/collab?slot={SLOT}") as socket:
         welcome, scene = hello(socket)
         assert welcome["epoch"] == 2
-        assert scene == {"type": "scene", "epoch": 2, "elements": [A, B], "files": []}
+        assert scene == {
+            "type": "scene",
+            "epoch": 2,
+            "whole": True,
+            "mark": MarkOf(2),
+            "elements": [A, B],
+            "files": [],
+        }
 
 
 def test_a_viewer_is_sent_the_restored_scene_too(written: Repository, tmp_path: Path) -> None:
@@ -509,7 +542,14 @@ def test_a_viewer_is_sent_the_restored_scene_too(written: Repository, tmp_path: 
 
         client.post(RESTORE, json={"revision": 1}, headers={PASS_HEADER: PASS})
 
-        assert received(viewer) == {"type": "scene", "epoch": 2, "elements": [A], "files": []}
+        assert received(viewer) == {
+            "type": "scene",
+            "epoch": 2,
+            "whole": True,
+            "mark": MarkOf(2),
+            "elements": [A],
+            "files": [],
+        }
 
 
 @pytest.mark.parametrize(
@@ -798,7 +838,14 @@ def test_a_restore_survives_a_kill_and_so_does_the_scene_it_replaced(tmp_path: P
             assert reply.status == 200
             assert "Set-Cookie" not in reply.headers
             assert (reply.json()["revision"], reply.json()["epoch"]) == (3, 2)
-            assert next_message(two) == {"type": "scene", "epoch": 2, "elements": [A], "files": []}
+            assert next_message(two) == {
+                "type": "scene",
+                "epoch": 2,
+                "whole": True,
+                "mark": MarkOf(2),
+                "elements": [A],
+                "files": [],
+            }
             listed = server.get(REVISIONS).json()["revisions"]
             # Row 2 is the head the crash left, under the name that saved it.
             assert [(row["revision"], row["epoch"], row["authorLabel"]) for row in listed] == [
@@ -812,7 +859,10 @@ def test_a_restore_survives_a_kill_and_so_does_the_scene_it_replaced(tmp_path: P
             server.kill()
 
     with running_segl(tmp_path, config) as server:
-        assert server.get(scene_path).json() == before
+        after = server.get(scene_path).json()
+        # The same head. Its mark is the new process's own, at count 0.
+        assert {**after, "mark": before["mark"]} == before
+        assert after["mark"] == MarkOf(before["epoch"], 0) and after["mark"] != before["mark"]
         assert server.get(f"/api/v1/slots/{SLOT}").json()["epoch"] == 2
         with server.socket(f"/collab?slot={SLOT}") as three:
             welcome, scene = say_hello(three, "Guest3")
@@ -856,6 +906,8 @@ def test_with_a_token_a_running_server_gates_the_restore(tmp_path: Path) -> None
                 assert next_message(socket) == {
                     "type": "scene",
                     "epoch": 2,
+                    "whole": True,
+                    "mark": MarkOf(2),
                     "elements": [A],
                     "files": [],
                 }
@@ -910,6 +962,8 @@ def test_the_history_and_a_restore_through_nginx_at_board_and_at_a_host_root(
                     assert next_message(socket) == {
                         "type": "scene",
                         "epoch": 2,
+                        "whole": True,
+                        "mark": MarkOf(2),
                         "elements": [A],
                         "files": [],
                     }

@@ -28,12 +28,8 @@ SSO, encryption at rest, audit retention, and the other deferred controls listed
 
 ## After the gate — send a scene once
 
-Not part of P0. It changes the WebSocket protocol, so it waited for the gate. It is T14 in `draft2/TASKS.md`, queued on 2026-11-16.
+Built in T14 (2026-11-16, D2-037). The scene route's answer carries a mark, `hello` hands it back, and the socket's `scene` holds only what changed since. A late browser on a slot of 1,024 elements got a socket `scene` of 92 characters, where the stored scene had 464,739.
 
-- **Today.** A page that opens a slot gets the scene twice: the stored head over HTTP, then the room's scene over the socket, after `welcome`. Both are the same element records in the same form. They differ only when someone edited in between: the stored head is at most `head_flush_seconds` behind the room. A page that comes back hours later gets both again. For a slot of 1,024 elements each copy was about 431,000 bytes, and about 12,000 compressed.
-- **The change.** The scene route's answer carries a mark of the scene it returns. `hello` carries that mark back. The server then sends only the elements that changed since the mark. For a quiet slot that is none. A mark the server does not know gets the whole scene, as today: after a restart, a restore, or an import.
-- **One way to make the mark.** The room counts every change it takes, and notes for each element the count at its last change. The mark is that count, the epoch, and a value the server picks when it starts. It lives in memory. Nothing joins the database.
-- **What stays.** The HTTP copy stays: it paints the canvas when the socket is slow or never opens. The page still reconciles what it is sent (D2-025). A page that sends no mark gets the whole scene.
 - **Not planned.** A browser that keeps a slot's scene between visits, so that a return visit downloads only what changed. That needs storage in the browser, and a mark that outlives a restart of the server.
 
 ## Held until a dependency moves

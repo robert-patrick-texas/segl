@@ -58,10 +58,16 @@ interface StoredScene {
 	files: { id: string; hash: string; mimeType: string }[];
 }
 
+/**
+ * A slot's stored head, without its mark. The mark is the process's own
+ * (D2-037), so a restarted server hands out another for the same head.
+ */
 async function storedScene(request: APIRequestContext, slot: number): Promise<StoredScene> {
 	const response = await request.get(`api/v1/slots/${slot}/scene`);
 	expect(response.status()).toBe(200);
-	return (await response.json()) as StoredScene;
+	const { mark, ...stored } = (await response.json()) as StoredScene & { mark: string };
+	expect(typeof mark).toBe('string');
+	return stored;
 }
 
 test('after the bar says saved, a killed and restarted server has the scene', async ({

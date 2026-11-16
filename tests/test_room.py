@@ -44,15 +44,22 @@ def element(identifier: str, version: int, nonce: int = 1, **more: object) -> di
 class Browser:
     """A connection in a room, and everything the room has sent it."""
 
-    def __init__(self, room: Room, name: str | None = "Guest1", *, view_only: bool = False) -> None:
+    def __init__(
+        self,
+        room: Room,
+        name: str | None = "Guest1",
+        *,
+        view_only: bool = False,
+        mark: str | None = None,
+    ) -> None:
         self.room = room
         self.received: list[dict[str, Any]] = []
         self.connection = Connection(
             lambda text: self.received.append(json.loads(text)),
-            Hello("client-1", name, ""),
+            Hello("client-1", name, "", mark),
             view_only=view_only,
         )
-        room.join(self.connection)
+        room.join(self.connection, mark)
 
     @property
     def id(self) -> str:
@@ -81,9 +88,13 @@ class Browser:
         self.room.leave(self.connection)
 
 
+# The start of every mark of the rooms the fixture makes.
+START = "s"
+
+
 @pytest.fixture
 def room() -> Room:
-    return Room(3, "Workspace 3", 1, [])
+    return Room(3, "Workspace 3", 1, [], start=START)
 
 
 def scene_of(room: Room) -> list[dict[str, Any]]:
@@ -110,6 +121,8 @@ def test_a_connection_is_welcomed_and_then_sent_the_scene(room: Room) -> None:
     assert scene == {
         "type": "scene",
         "epoch": 1,
+        "whole": True,
+        "mark": "s.1.0",
         "elements": [element("a", 2, index="a0")],
         "files": [],
     }
@@ -255,7 +268,14 @@ def test_elements_from_another_epoch_get_the_scene_back_and_are_not_applied(room
     two.draw(element("b", 1), epoch=2)
     two.draw(element("c", 1), epoch=0)
 
-    scene = {"type": "scene", "epoch": 1, "elements": [element("a", 1)], "files": []}
+    scene = {
+        "type": "scene",
+        "epoch": 1,
+        "whole": True,
+        "mark": "s.1.1",
+        "elements": [element("a", 1)],
+        "files": [],
+    }
     assert two.take() == [scene, scene]
     assert one.take() == []
     assert list(room.elements) == ["a"]
@@ -1103,6 +1123,8 @@ def test_a_replacement_is_sent_to_every_connection_viewers_too(room: Room) -> No
     expected = {
         "type": "scene",
         "epoch": 2,
+        "whole": True,
+        "mark": "s.2.2",
         "elements": [element("z", 1, index="a0")],
         "files": [],
     }
@@ -1132,7 +1154,14 @@ def test_an_edit_for_the_scene_that_went_is_answered_with_the_new_one(room: Room
     browser.draw(element("a", 1), epoch=1, seq=6)
 
     assert browser.take() == [
-        {"type": "scene", "epoch": 2, "elements": [element("z", 1)], "files": []}
+        {
+            "type": "scene",
+            "epoch": 2,
+            "whole": True,
+            "mark": "s.2.1",
+            "elements": [element("z", 1)],
+            "files": [],
+        }
     ]
     assert other.take() == []
     assert list(room.elements) == ["z"]
@@ -1230,6 +1259,8 @@ def test_an_import_puts_its_elements_and_its_files_in_place(room: Room) -> None:
     scene = {
         "type": "scene",
         "epoch": 2,
+        "whole": True,
+        "mark": "s.2.2",
         "elements": [element("z", 3, index="a0"), picture],
         "files": [FILE],
     }
@@ -1299,3 +1330,258 @@ def test_a_stored_scene_is_read_as_a_document_and_its_elements(
     assert parsed == document
     assert [each["id"] for each in elements] == identifiers
     assert all(isinstance(each["version"], int) for each in elements)
+
+
+# Marks (D2-037): the room's count of changes, and a scene of what changed since.
+
+
+def joined(room: Room, mark: str | None) -> dict[str, Any]:
+    """Return the scene a browser that hands back ``mark`` in its hello is sent."""
+    return Browser(room, mark=mark).take()[1]
+
+
+def changes(mark: str, elements: list[Any], files: list[Any], epoch: int = 1) -> dict[str, Any]:
+    """Return a scene that holds only what changed since a mark."""
+    return {
+        "type": "scene",
+        "epoch": epoch,
+        "whole": False,
+        "mark": mark,
+        "elements": elements,
+        "files": files,
+    }
+
+
+PICTURE = element("picture", 1, type="image", fileId=FILE["id"], index="a5")
+
+
+def test_the_count_goes_up_once_for_each_change_the_room_takes(room: Room) -> None:
+    browser = Browser(room)
+    assert (room.count, room.mark()) == (0, "s.1.0")
+
+    # One batch is one change, whatever it holds.
+    browser.draw(element("a", 1), element("b", 1))
+    assert room.count == 1
+    browser.draw(element("a", 2))
+    browser.name_files(FILE, OTHER_FILE)
+    assert room.count == 3
+    # As the saver does: what the room holds is written first.
+    room.snapshot()
+    room.put(2, {}, [element("z", 1)])
+
+    assert (room.count, room.mark()) == (4, "s.2.4")
+
+
+def test_what_the_room_does_not_take_is_not_counted() -> None:
+    room = Room(3, "Workspace 3", 1, [], start=START, max_scene_bytes=200)
+    browser, viewer = Browser(room), Browser(room, view_only=True)
+    browser.draw(element("a", 2))
+    browser.name_files(FILE)
+    assert room.count == 2
+
+    browser.draw(element("a", 1))
+    browser.draw(element("a", 2))
+    browser.draw(seq=4)
+    browser.draw(element("b", 1), epoch=7)
+    browser.draw(element("b", 1), {"id": "c"})
+    browser.draw(element("big", 1, text="x" * 300))
+    browser.name_files(FILE)
+    browser.name_files(OTHER_FILE, stored=False)
+    viewer.draw(element("v", 1))
+    browser.send({"type": "presence", "cursor": {"x": 1, "y": 2}})
+    browser.send({"type": "rename", "displayName": "kim"})
+    room.retitle("Lab")
+
+    assert room.count == 2
+    assert list(room.elements) == ["a"]
+
+
+def test_the_changes_since_a_mark_are_the_elements_changed_after_it_in_drawing_order(
+    room: Room,
+) -> None:
+    browser = Browser(room)
+    browser.draw(
+        element("a", 1, index="a0"), element("b", 1, index="a1"), element("c", 1, index="a2")
+    )
+    mark = room.mark()
+    browser.draw(element("c", 2, index="a2"), element("a", 2, index="a0", isDeleted=True))
+    browser.draw(element("d", 1, index="Zz"))
+
+    # Deleted ones too: a browser with the old copy must hear of the deletion.
+    assert mark == "s.1.1"
+    assert joined(room, mark) == changes(
+        "s.1.3",
+        [
+            element("d", 1, index="Zz"),
+            element("a", 2, index="a0", isDeleted=True),
+            element("c", 2, index="a2"),
+        ],
+        [],
+    )
+
+
+def test_with_them_go_the_files_they_name_and_every_file_the_slot_took_since(room: Room) -> None:
+    browser = Browser(room)
+    browser.name_files(FILE)
+    browser.draw(element("old", 1, type="image", fileId=FILE["id"], index="a0"))
+    mark = room.mark()
+    # Named before the mark, by an element that changed after it.
+    browser.draw(PICTURE)
+    # Taken after the mark, and named by nothing yet: its element may come next.
+    browser.name_files(OTHER_FILE)
+
+    assert joined(room, mark) == changes("s.1.4", [PICTURE], [FILE, OTHER_FILE])
+    # An element that did not change, and the file it names, do not go again.
+    assert joined(room, "s.1.3") == changes("s.1.4", [], [OTHER_FILE])
+
+
+def test_a_quiet_slot_is_sent_no_element_and_no_file(room: Room) -> None:
+    browser = Browser(room)
+    browser.draw(element("a", 1))
+    browser.name_files(FILE)
+    browser.draw(PICTURE)
+
+    assert joined(room, room.mark()) == changes("s.1.3", [], [])
+
+
+def test_a_room_nobody_changed_is_quiet_for_a_mark_of_its_head() -> None:
+    room = Room.from_head(2, "Workspace 2", 4, stored_scene(PICTURE), files=[FILE], start="t")
+
+    assert room.written == (4, 0)
+    assert joined(room, "t.4.0") == changes("t.4.0", [], [], epoch=4)
+
+
+@pytest.mark.parametrize(
+    "mark",
+    [
+        None,
+        "",
+        "t.1.0",
+        "S.1.0",
+        "s.2.0",
+        "s.0.0",
+        "s.01.0",
+        "s.1.2",
+        "s.1." + "9" * 21,
+        "s.1",
+        "s.1.",
+        "s.1.x",
+        "s.1.-1",
+        "s.1.+1",
+        "s.1. 1",
+        "s.1.1.1",
+        " s.1.0",
+        "s.1.0 ",
+        "s.1.\u0661",
+    ],
+)
+def test_a_mark_that_does_not_name_this_scene_gets_the_whole_scene(
+    room: Room, mark: str | None
+) -> None:
+    # No mark, one from another process, or another epoch, or a count the
+    # room has not reached, or no mark the room writes.
+    Browser(room).draw(element("a", 1))
+
+    assert joined(room, mark) == {
+        "type": "scene",
+        "epoch": 1,
+        "whole": True,
+        "mark": "s.1.1",
+        "elements": [element("a", 1)],
+        "files": [],
+    }
+
+
+def test_after_a_restore_or_an_import_a_mark_from_before_gets_the_whole_scene(room: Room) -> None:
+    Browser(room).draw(element("a", 1))
+    before = room.mark()
+
+    room.put(2, {}, [element("z", 1)])
+
+    assert joined(room, before)["whole"] is True
+    assert joined(room, before)["elements"] == [element("z", 1)]
+    assert joined(room, room.mark()) == changes("s.2.2", [], [], epoch=2)
+
+
+def test_count_0_of_a_new_epoch_gets_every_element_of_it(room: Room) -> None:
+    # The scene route's mark for a head the room has not taken yet.
+    Browser(room).draw(element("a", 1))
+
+    room.put(2, {}, [element("z", 1, index="a0"), PICTURE], [FILE])
+
+    assert joined(room, "s.2.0") == changes(
+        "s.2.2", [element("z", 1, index="a0"), PICTURE], [FILE], epoch=2
+    )
+
+
+def test_every_other_scene_is_whole(room: Room) -> None:
+    browser = Browser(room)
+    browser.draw(element("a", 1))
+    late = Browser(room, mark=room.mark())
+    late.take()
+
+    late.draw(element("b", 1), epoch=5)
+    assert late.take() == [
+        {
+            "type": "scene",
+            "epoch": 1,
+            "whole": True,
+            "mark": "s.1.1",
+            "elements": [element("a", 1)],
+            "files": [],
+        }
+    ]
+
+    room.put(2, {}, [element("z", 1)])
+    assert late.take() == [
+        {
+            "type": "scene",
+            "epoch": 2,
+            "whole": True,
+            "mark": "s.2.2",
+            "elements": [element("z", 1)],
+            "files": [],
+        }
+    ]
+
+
+def test_the_head_holds_count_0_until_a_flush_says_it_holds_more(room: Room) -> None:
+    browser = Browser(room)
+    assert room.written == (1, 0)
+    browser.draw(element("a", 1))
+    snapshot = room.snapshot()
+    browser.draw(element("b", 1))
+
+    # Not when the snapshot is taken: only once it is written.
+    assert (snapshot.count, room.written) == (1, (1, 0))
+    room.wrote(snapshot)
+    assert room.written == (1, 1)
+
+
+def test_a_restore_is_in_the_head_and_a_file_named_while_it_was_written_is_not(
+    room: Room,
+) -> None:
+    browser = Browser(room)
+    browser.draw(element("a", 1))
+    # Named while the restore was being written, so the head lacks it.
+    browser.name_files(FILE)
+
+    room.put(2, {}, [element("z", 1)])
+
+    assert (room.written, room.count) == ((2, 3), 4)
+    assert joined(room, "s.2.3") == changes("s.2.4", [], [FILE], epoch=2)
+
+
+def test_hello_hands_back_a_mark_or_none() -> None:
+    hello = {"type": "hello", "clientId": "c"}
+
+    assert parse_hello(hello) == Hello("c", None, "", None)
+    assert parse_hello({**hello, "mark": None}) == Hello("c", None, "", None)
+    assert parse_hello({**hello, "mark": "s.1.0"}) == Hello("c", None, "", "s.1.0")
+    # The page does not read it, so any text that short is taken.
+    assert parse_hello({**hello, "mark": "x" * 64}) == Hello("c", None, "", "x" * 64)
+
+
+@pytest.mark.parametrize("mark", [7, 1.5, True, False, [], {}, ["s.1.0"], "x" * 65])
+def test_a_hello_whose_mark_is_not_one_is_not_a_hello(mark: object) -> None:
+    assert parse_hello({"type": "hello", "clientId": "c", "mark": mark}) is None

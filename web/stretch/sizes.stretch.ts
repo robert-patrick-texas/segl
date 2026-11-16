@@ -19,8 +19,9 @@
  * that start with `stretch:`. The times are of this machine and its browser,
  * which draws without a GPU.
  *
- * A test fails when the browsers do not end with the same scene. It holds no
- * time to a limit.
+ * A test fails when the browsers do not end with the same scene, and when the
+ * new browser's socket `scene` is not small: it holds only what changed since
+ * the scene came over HTTP (D2-037). It holds no time to a limit.
  */
 import { expect, type Page } from '@playwright/test';
 import {
@@ -126,6 +127,18 @@ function watchSent(page: Page): Sent {
 	return sent;
 }
 
+/** The size of each `scene` the server sends a page, in characters. Call before `goto`. */
+function watchScenes(page: Page): number[] {
+	const sizes: number[] = [];
+	page.on('websocket', (socket) => {
+		socket.on('framereceived', (frame) => {
+			const text = String(frame.payload);
+			if (text.startsWith('{"type":"scene"')) sizes.push(text.length);
+		});
+	});
+	return sizes;
+}
+
 /** Read a count, and start it again from nothing. */
 function taken(sent: Sent): Sent {
 	const was = { ...sent };
@@ -202,6 +215,7 @@ test(`a slot of ${ELEMENTS} elements loads in a new browser, and an edit still r
 	const watcher = await person('Watcher');
 	const late = await person('Late');
 	const sent = { page: watchSent(page), watcher: watchSent(watcher), late: watchSent(late) };
+	const lateScenes = watchScenes(late);
 	await joinSlot(page, slot);
 	await joinSlot(watcher, slot);
 
@@ -243,6 +257,13 @@ test(`a slot of ${ELEMENTS} elements loads in a new browser, and an edit still r
 		`a new browser had all ${ELEMENTS} elements ${loaded} ms after it opened the slot, ` +
 			`and sent ${back.messages} elements messages of at most ${back.largest} characters about them`
 	);
+	// D2-037: the scene came over HTTP, and the socket sent only what changed since.
+	note(
+		`the new browser's socket scene held ${lateScenes.join(', ')} characters, ` +
+			`where the stored scene has ${stored.bytes}`
+	);
+	expect(lateScenes).toHaveLength(1);
+	expect(lateScenes[0]).toBeLessThan(1000);
 
 	// One more rectangle, drawn in the late browser, reaches the other two.
 	await drawRectangle(late, 250, 150);

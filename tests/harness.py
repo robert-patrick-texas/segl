@@ -124,6 +124,34 @@ SECRETS = (ACCESS_CODE, normalize(ACCESS_CODE), ACCESS_SECRET)
 # The header a pass travels in. Its name is from when it carried a token.
 PASS_HEADER = "X-Segl-Edit-Token"
 
+# A mark as a segl process writes one (D2-037): the slot's start, the epoch,
+# and the room's count of changes.
+_MARK = re.compile(r"[0-9a-f]{12}\.([0-9]+)\.([0-9]+)")
+
+
+class MarkOf:
+    """Equal to a mark of this epoch, and of this count when one is given.
+
+    Each slot's marks begin with a value the process picked when it started,
+    which a test cannot know.
+    """
+
+    def __init__(self, epoch: int, count: int | None = None) -> None:
+        self.epoch = epoch
+        self.count = count
+
+    def __eq__(self, other: object) -> bool:
+        found = _MARK.fullmatch(other) if isinstance(other, str) else None
+        if found is None or int(found[1]) != self.epoch:
+            return False
+        return self.count is None or int(found[2]) == self.count
+
+    __hash__ = None
+
+    def __repr__(self) -> str:
+        count = "any count" if self.count is None else f"count {self.count}"
+        return f"<a mark of epoch {self.epoch}, {count}>"
+
 
 def issue_pass(
     code: str = ACCESS_CODE, *, secret: str = ACCESS_SECRET, at: float | None = None
@@ -333,12 +361,16 @@ def say_hello(
     *,
     edit_pass: str = "",
     client_id: str = "client-1",
+    mark: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Send ``hello`` on a new socket, and return the ``welcome`` and the ``scene``.
 
     ``edit_pass`` goes in the field the protocol still calls ``editToken``.
+    ``mark`` is the one the page would hand back (D2-037).
     """
     hello = {"type": "hello", "clientId": client_id, "displayName": name, "editToken": edit_pass}
+    if mark is not None:
+        hello["mark"] = mark
     connection.send(json.dumps(hello))
     return next_message(connection), next_message(connection)
 

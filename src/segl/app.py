@@ -457,6 +457,9 @@ def create_app(
     @app.get("/api/v1/slots/{n}/scene")
     def scene(n: str) -> Response:
         number = _slot_number(n)
+        # Before the head is read: a write that finishes in between leaves the
+        # head holding more than the mark says, and never less (D2-037).
+        written = rooms.written(number)
         head = repository.get_head(number)
         stored = _scene_json(repository, number, head.scene_json)
         return _ascii_json(
@@ -466,6 +469,7 @@ def create_app(
                 "savedAt": head.saved_at,
                 "editorLabel": head.editor_label,
                 "files": stored["files"],
+                "mark": rooms.head_mark(number, head.epoch, written),
             }
         )
 

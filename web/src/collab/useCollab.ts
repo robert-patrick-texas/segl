@@ -32,6 +32,8 @@ export interface CollabOptions {
 	elements: readonly WireElement[];
 	/** The file list that came with that scene. Kept the same until the next load. */
 	files: readonly FileRef[];
+	/** The mark that came with that scene, or null. */
+	mark: string | null;
 	/** This browser's display name, or null while it has none. */
 	name: string | null;
 	/** This browser's pass, or `''`. */
@@ -58,6 +60,7 @@ export function useCollab({
 	epoch,
 	elements,
 	files,
+	mark,
 	name,
 	pass
 }: CollabOptions): Collab {
@@ -89,6 +92,7 @@ export function useCollab({
 			// Read at each upload: a pass may arrive after the session began.
 			transport: httpTransport(config, slot, () => latestPass.current),
 			files,
+			mark,
 			hello: () => {
 				sentName.current = latestName.current;
 				sentPass.current = latestPass.current;
@@ -108,7 +112,7 @@ export function useCollab({
 			session.current = null;
 			setHeld(null);
 		};
-	}, [config, slot, epoch, elements, files, editor]);
+	}, [config, slot, epoch, elements, files, mark, editor]);
 
 	// The label changed after `hello` was sent with another, or with none.
 	useEffect(() => {

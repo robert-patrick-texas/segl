@@ -54,7 +54,7 @@ export type ServerMessage =
 			connectionId: string;
 			participants: Participant[];
 	  }
-	| { type: 'scene'; epoch: number; elements: WireElement[]; files: FileRef[] }
+	| SceneMessage
 	| { type: 'elements'; epoch: number; elements: WireElement[] }
 	| { type: 'files'; epoch: number; files: FileRef[] }
 	| { type: 'saved'; epoch: number; savedAt: string; seq: number }
@@ -64,11 +64,43 @@ export type ServerMessage =
 	| { type: 'error'; error: string; message: string };
 
 /**
+ * The room's scene. A whole one holds every element and the files they name.
+ * One that is not whole holds only what changed since the mark the page sent
+ * in `hello`. `mark` names what the server held when it sent this one.
+ */
+export interface SceneMessage {
+	type: 'scene';
+	epoch: number;
+	elements: WireElement[];
+	files: FileRef[];
+	whole: boolean;
+	mark: string | null;
+}
+
+/** The longest mark the server takes back in `hello`. */
+export const MAX_MARK_LENGTH = 64;
+
+/**
+ * Return a mark the server sent, or null when it is not one. The page does
+ * not read a mark. It hands it back.
+ */
+export function markOf(value: unknown): string | null {
+	return typeof value === 'string' && value.length <= MAX_MARK_LENGTH ? value : null;
+}
+
+/**
  * `seq` numbers the messages that change what is stored. The server answers
  * with `saved` and the number of the newest one that is on the disk.
  */
 export type ClientMessage =
-	| { type: 'hello'; clientId: string; displayName: string | null; editToken: string }
+	| {
+			type: 'hello';
+			clientId: string;
+			displayName: string | null;
+			editToken: string;
+			/** The mark of the newest scene the server sent this page, or null. */
+			mark: string | null;
+	  }
 	| { type: 'elements'; epoch: number; elements: WireElement[]; seq: number }
 	| { type: 'files'; epoch: number; files: FileRef[]; seq: number }
 	| { type: 'presence'; cursor: Cursor | null }
@@ -148,7 +180,15 @@ export function parseServerMessage(text: unknown): ServerMessage | null {
 			const files = parseFileRefs(message['files'] ?? []);
 			const { epoch } = message;
 			if (list === null || files === null || !Number.isInteger(epoch)) return null;
-			return { type: 'scene', epoch: epoch as number, elements: list, files };
+			return {
+				type: 'scene',
+				epoch: epoch as number,
+				elements: list,
+				files,
+				// Whole unless it says otherwise: a segl older than marks sends only whole ones.
+				whole: message['whole'] !== false,
+				mark: markOf(message['mark'])
+			};
 		}
 		case 'elements': {
 			const list = elements(message['elements']);

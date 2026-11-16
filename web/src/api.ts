@@ -16,6 +16,7 @@
 
 import { sceneElements, type WireElement } from './collab/elements.ts';
 import { isHash, parseFileRefs, type FileRef } from './collab/files.ts';
+import { markOf } from './collab/protocol.ts';
 import { apiUrl, type AppConfig } from './config.ts';
 import { parseRevisions, type RevisionInfo } from './history.ts';
 import { nameHeader } from './importing.ts';
@@ -37,6 +38,8 @@ export interface SlotScene {
 	editorLabel: string;
 	/** Which bytes the file ids of the scene's images mean. */
 	files: FileRef[];
+	/** What the room had when this head was written, for `hello` to hand back. Null without one. */
+	mark: string | null;
 }
 
 /** A response segl sent with an error status, or one that is not what docs/API.md says. */
@@ -180,7 +183,8 @@ export async function fetchScene(
 		editorLabel: String(body.editorLabel ?? ''),
 		// A list this page cannot read leaves the images without their files,
 		// and the rest of the scene still loads.
-		files: parseFileRefs(body.files) ?? []
+		files: parseFileRefs(body.files) ?? [],
+		mark: markOf(body.mark)
 	};
 }
 

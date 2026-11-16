@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from harness import DISPLAY_NAMES_FILE, EMPTY_SCENE, make_settings, running_segl
+from harness import DISPLAY_NAMES_FILE, EMPTY_SCENE, MarkOf, make_settings, running_segl
 
 from segl import cli
 from segl.app import create_app
@@ -112,6 +112,8 @@ def test_the_scene_route_returns_the_head(client: TestClient, repository: Reposi
         "savedAt": saved_at,
         "editorLabel": "Echo5",
         "files": [],
+        # A slot nobody opened: its room will start from this head (D2-037).
+        "mark": MarkOf(1, 0),
     }
     assert client.get("/api/v1/slots/5").json()["savedAt"] == saved_at
 

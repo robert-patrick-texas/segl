@@ -42,7 +42,10 @@ browser = [
 ]
 
 [rows.T-004]
-browser = ["collab.spec.ts > a killed socket shows disconnected, and edits made meanwhile reconcile"]
+browser = [
+    "collab.spec.ts > a killed socket shows disconnected, and edits made meanwhile reconcile",
+    "collab.spec.ts > a batch lost with its socket reaches the other browser after the reconnect",
+]
 
 [rows.T-005]
 pytest = ["tests/test_durability.py::test_a_drawing_is_there_after_everyone_left_and_came_back"]

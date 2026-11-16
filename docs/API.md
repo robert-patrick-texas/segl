@@ -19,7 +19,7 @@ A mutation, or a WebSocket upgrade, whose `Origin` header is present and does no
 | GET | `/api/v1/slots` | `{ "slots": [ ... ] }` with nine entries in number order: number, title, epoch, savedAt. |
 | GET | `/api/v1/slots/{n}` | One slot's metadata, the same object as its entry in the list. |
 | PATCH | `/api/v1/slots/{n}` | Body `{ "title" }`, a JSON object of at most 4096 bytes. The title is trimmed, and is 1–80 characters on one line. Returns the slot's metadata with the title as stored. A pass when codes are set. Sends a `slot` message to the slot's room. |
-| GET | `/api/v1/slots/{n}/scene` | Head scene, epoch, savedAt, editorLabel, and the head's file list (`id`, `hash`, `mimeType`): the files its images name. |
+| GET | `/api/v1/slots/{n}/scene` | Head scene, epoch, savedAt, editorLabel, the head's file list (`id`, `hash`, `mimeType`): the files its images name, and the head's mark, which `hello` hands back. |
 | GET | `/api/v1/slots/{n}/revisions` | `{ "revisions": [ ... ] }`, the slot's history, newest first, at most `history_limit` entries (50): revision, epoch, authorLabel, createdAt. Scene bodies stay on the single-revision route. No pass. |
 | GET | `/api/v1/slots/{n}/revisions/{revision}` | One revision: the same four fields, its stored scene, and the scene's file list. No pass. |
 | POST | `/api/v1/slots/{n}/restore` | Body `{ "revision", "displayName" }`, a JSON object of at most 4096 bytes. Records the scene being replaced, puts the revision's scene in the head at the next epoch, appends a revision for it, and sends `scene` to the slot's room. Returns `{ "revision", "epoch", "savedAt" }`. A pass when codes are set. |
@@ -65,7 +65,8 @@ A slot's scene, from `/api/v1/slots/4/scene`:
   "epoch": 1,
   "savedAt": "2026-11-12T09:00:00.000Z",
   "editorLabel": "System",
-  "files": []
+  "files": [],
+  "mark": "3f9a07c1d2e4.1.0"
 }
 ```
 
@@ -76,6 +77,10 @@ A slot's scene, from `/api/v1/slots/4/scene`:
 ```
 
 `id` is the editor's file id, which an image element names in `fileId`. `hash` is the 64 hex digits the bytes are fetched by. The head is the room's scene as of the last flush, at most `head_flush_seconds` behind what the browsers on the slot see (`DATA-MODEL.md`, flush rules). The response is ASCII: a character outside it is a `\u` escape.
+
+`mark` names what the room had when this head was written (D2-037). The page does not read it. It hands it back in `hello`, and the socket's `scene` then holds only what changed since. A mark is ASCII text of at most 64 characters: a value segl picks for each slot when it starts, the epoch, and the room's count of changes, joined by dots. It lives in memory, so a restart makes every earlier mark unknown.
+
+The rule: a mark never says that a copy holds more than it does. A copy that holds more costs a few elements sent twice. A mark that says more would lose a drawing. So the route takes the mark of the newest finished head write before it reads the head. The mark names the epoch of the head it comes with. While a restore or an import is being written, the newest finished write can be of the old epoch. The count is then 0, and every element of the new epoch goes over the socket. A slot nobody has opened since segl started has count 0 too: its room will start from this head.
 
 A slot's history, from `/api/v1/slots/4/revisions`:
 
@@ -184,7 +189,7 @@ The first message must be `hello`, within 10 seconds. Until then the connection 
 
 Client → server:
 
-- `hello` — `{ "type": "hello", "clientId", "displayName", "editToken": "" }`. `clientId` is this browser's own id, 1–64 letters, digits, `_`, and `-`, which it keeps in `localStorage`. `displayName` is the stored label, taken as written and not title-cased, or `null` for a browser that has none yet. `editToken` is this browser's pass, or `""` (`ARCHITECTURE.md`, edit gate). The field's name is from an earlier build, in which it carried a token. The server reads the pass here and nowhere else on the socket: it decides `viewOnly`, and the server keeps the time the pass ends for the life of the connection. A page whose pass changes says `hello` again on a new socket.
+- `hello` — `{ "type": "hello", "clientId", "displayName", "editToken": "", "mark" }`. `clientId` is this browser's own id, 1–64 letters, digits, `_`, and `-`, which it keeps in `localStorage`. `displayName` is the stored label, taken as written and not title-cased, or `null` for a browser that has none yet. `editToken` is this browser's pass, or `""` (`ARCHITECTURE.md`, edit gate). The field's name is from an earlier build, in which it carried a token. The server reads the pass here and nowhere else on the socket: it decides `viewOnly`, and the server keeps the time the pass ends for the life of the connection. A page whose pass changes says `hello` again on a new socket. `mark` is the mark of the newest scene the server sent this page: at first the scene route's, then that of each socket `scene`. It is optional: left out, or `null`, it asks for the whole scene. Anything but text of at most 64 characters, or `null`, is `bad_message`.
 - `elements` — `{ "type": "elements", "epoch", "elements": [ ... ], "seq" }`. Each element is the editor's record, with a text `id` and whole-number `version` and `versionNonce`. The batch is taken whole or refused whole. `seq` is optional: the number this browser gives the message, which the server answers with `saved`. The list may be empty, which with a `seq` asks whether everything the server holds is saved.
 - `presence` — `{ "type": "presence", "cursor": { "x", "y" } }`, in the canvas's own coordinates, or `"cursor": null`.
 - `rename` — `{ "type": "rename", "displayName" }`, a name the person typed.
@@ -193,7 +198,7 @@ Client → server:
 Server → client:
 
 - `welcome` — `{ "type": "welcome", "slot", "title", "epoch", "viewOnly", "editEndsIn", "connectionId", "participants": [ { "connectionId", "displayName" } ] }`. `editEndsIn` is the seconds until this connection's pass ends, to the millisecond, or `null` when nothing ends: the connection is a viewer, this segl has no access codes, or its passes have no limit. It is a length and not a time of day, so that a browser whose clock is wrong still counts it right. The page stops taking edits a second before it runs out (`ARCHITECTURE.md`, edit gate). `connectionId` is this connection's own. `participants` is every connection on the slot, this one included, in the order they joined. A `displayName` is `null` for a connection without a label.
-- `scene` — `{ "type": "scene", "epoch", "elements": [ ... ], "files": [ ... ] }`: every element the room holds, deleted ones included, in drawing order, and the files those elements name. Sent after `welcome`, to a connection whose `elements` or `files` named another epoch, and to every connection on the slot after a restore or an import. A `scene` of the epoch the browser is on is merged into its canvas. One of another epoch replaces the canvas.
+- `scene` — `{ "type": "scene", "epoch", "whole", "mark", "elements": [ ... ], "files": [ ... ] }`. A whole one, `whole` true, holds every element the room holds, deleted ones included, in drawing order, and the files those elements name. One that is not whole holds only what changed since the mark `hello` handed back: the elements whose last change came after it, deleted ones included, in drawing order, with the files they name and every file the slot took after it. For a quiet slot that is no element and no file. `mark` is the room's mark when it sent this one. Sent after `welcome`: not whole when `hello`'s mark has this process's value for the slot, the room's epoch, and a count the room has reached, and whole for no mark or any other, as after a restart, a restore, or an import. Every other `scene` is whole: to a connection whose `elements` or `files` named another epoch, and to every connection on the slot after a restore or an import. A `scene` of the epoch the browser is on is merged into its canvas. One of another epoch replaces the canvas. The browser keeps a base, what the newest `scene` says the server holds, with its mark: a whole one replaces the base, and one that is not whole is laid over it (`ARCHITECTURE.md`, collaboration).
 - `elements` — `{ "type": "elements", "epoch", "elements": [ ... ] }`: the elements of another connection's batch that the server kept. Not sent to the connection they came from.
 - `slot` — `{ "type": "slot", "slot", "title" }` after a title change.
 - `presence` — `{ "type": "presence", "connectionId", "displayName", "cursor" }`: a connection that joined (`cursor` is `null`), moved its cursor, or was renamed. A cursor goes to the other connections. A rename goes to every connection, the renamed one included.
@@ -228,7 +233,7 @@ Limits:
 - A message may be up to `max_scene_bytes`. A longer one closes the connection with code 1009.
 - The elements of one slot, as JSON, may come to `max_scene_bytes` together. A batch that would go over is `scene_too_large`. One that makes the scene smaller is always taken.
 - The server pings every connection every 20 seconds (uvicorn's default) and closes one that does not answer.
-- A browser that stops reading is not waited for. When 1024 messages, or 16 MiB, are waiting for it, the server closes its connection with code 1013. It reconnects and is sent the whole scene.
+- A browser that stops reading is not waited for. When 1024 messages, or 16 MiB, are waiting for it, the server closes its connection with code 1013. It reconnects and is sent what changed since its last `scene`.
 - The server answers nothing but JSON: a message with `NaN` or `Infinity` in it is `bad_message`. So is one with a number too large for the server to hold, such as `1e999`: it is JSON, and Python would read it as infinity and write `Infinity` to the other browsers and into the stored scene.
 
 ## Pages and the build's files

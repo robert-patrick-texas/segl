@@ -23,6 +23,12 @@ so nothing here takes a lock. The messages are the ones in docs/API.md.
 The room does not write its scene anywhere either. It says when there is
 something to write (``on_change``, ``on_empty``), and ``segl.saver`` takes a
 ``Snapshot`` of it and writes the slot's head.
+
+The room counts the changes it takes, and notes the count at each element's
+and each file's last change. A mark names one point in that count (D2-037).
+The scene route hands out the mark of the head it returns, ``hello`` hands it
+back, and the room then sends only what changed since. The rule: a mark never
+says that a copy holds more than it does.
 """
 
 import json
@@ -56,6 +62,22 @@ NEEDS_CODE = "Editing needs an access code."
 
 # One of a slot's files, as the messages carry it: `id`, `hash`, `mimeType`.
 FileEntry = dict[str, str]
+
+# The longest mark `hello` may hand back.
+MAX_MARK_LENGTH = 64
+
+# The count at the end of a mark, as the room writes one.
+_COUNT = re.compile(r"[0-9]{1,20}")
+
+
+def new_start() -> str:
+    """Return a value for one slot's marks that no earlier process used."""
+    return secrets.token_hex(6)
+
+
+def make_mark(start: str, epoch: int, count: int) -> str:
+    """Return the mark of a slot's scene: its start, its epoch, and its count of changes."""
+    return f"{start}.{epoch}.{count}"
 
 
 def encode(message: dict[str, Any]) -> str:
@@ -114,6 +136,8 @@ class Snapshot:
     editor_label: str | None
     # The files named since the last flush, which the slot's file list lacks.
     files: list[FileEntry]
+    # The room's count of changes: the snapshot holds every change up to it.
+    count: int = 0
 
     def scene_json(self) -> str:
         """Return the scene document as it is stored: the head's own, with these elements."""
@@ -129,6 +153,8 @@ class Hello:
     # The pass this browser has, or "". The field's name on the wire is
     # `editToken`, from when it carried a token.
     edit_pass: str
+    # The mark of the newest scene this browser was sent, or None.
+    mark: str | None = None
 
 
 def parse_hello(message: object) -> Hello | None:
@@ -141,7 +167,10 @@ def parse_hello(message: object) -> Hello | None:
     edit_pass = message.get("editToken", "")
     if not isinstance(edit_pass, str):
         return None
-    return Hello(client_id, stored_name(message.get("displayName")), edit_pass)
+    mark = message.get("mark")
+    if mark is not None and (not isinstance(mark, str) or len(mark) > MAX_MARK_LENGTH):
+        return None
+    return Hello(client_id, stored_name(message.get("displayName")), edit_pass, mark)
 
 
 class Connection:
@@ -277,6 +306,10 @@ class Room:
     memory. The room is ``dirty`` from an edit until a head flush has taken a
     ``snapshot`` of it. It stays for the life of the process, so a drawing
     outlasts every browser leaving the slot.
+
+    ``count`` is the changes the room has taken: an ``elements`` batch with a
+    winner, a ``files`` message with a new file, and a restore or an import.
+    It starts at 0, from the head, and only goes up.
     """
 
     def __init__(
@@ -289,12 +322,24 @@ class Room:
         document: dict[str, Any] | None = None,
         files: Iterable[FileEntry] = (),
         max_scene_bytes: int | None = None,
+        start: str | None = None,
     ) -> None:
         """``document`` is the stored scene document, with its element list emptied.
 
         ``files`` is the slot's file list. ``max_scene_bytes`` is the most the
-        elements may come to, as JSON, or None for no limit.
+        elements may come to, as JSON, or None for no limit. ``start`` begins
+        each of the room's marks, so that no other process's mark is one of
+        them. It is picked here when it is not given.
         """
+        self.start = start if start is not None else new_start()
+        self.count = 0
+        # The count at each element's and each file's last change, by id. One
+        # the room started with has none: it is in the head, at count 0.
+        self._element_counts: dict[str, int] = {}
+        self._file_counts: dict[str, int] = {}
+        # The epoch and count of the newest head write that finished. Its
+        # scene holds every change up to that count, and may hold more.
+        self.written = (epoch, 0)
         self.slot = slot
         self.title = title
         self.epoch = epoch
@@ -329,6 +374,7 @@ class Room:
         *,
         files: Iterable[FileEntry] = (),
         max_scene_bytes: int | None = None,
+        start: str | None = None,
     ) -> Room:
         """Build the room from the stored scene document of the slot's head."""
         document, elements = parse_scene(scene_json)
@@ -340,7 +386,16 @@ class Room:
             document=document,
             files=files,
             max_scene_bytes=max_scene_bytes,
+            start=start,
         )
+
+    def mark(self) -> str:
+        """Return the mark of the scene the room holds now."""
+        return make_mark(self.start, self.epoch, self.count)
+
+    def wrote(self, snapshot: Snapshot) -> None:
+        """A head flush wrote this snapshot: the head holds every change up to its count."""
+        self.written = (snapshot.epoch, snapshot.count)
 
     @property
     def unsettled(self) -> bool:
@@ -358,6 +413,7 @@ class Room:
             elements=ordered(self.elements.values()),
             editor_label=self.editor_label,
             files=self._new_files,
+            count=self.count,
         )
         self.dirty = False
         self._new_files = []
@@ -390,8 +446,12 @@ class Room:
                 message = {"type": "saved", "epoch": self.epoch, "savedAt": saved_at, "seq": seq}
                 connection.send(message)
 
-    def join(self, connection: Connection) -> None:
-        """Add a connection, tell it where it is, and tell the others it came."""
+    def join(self, connection: Connection, mark: str | None = None) -> None:
+        """Add a connection, tell it where it is, and tell the others it came.
+
+        ``mark`` is the one its ``hello`` handed back. When it names this
+        room's scene, the connection is sent only what changed since.
+        """
         connection.id = self._new_id()
         self.connections[connection.id] = connection
         connection.send(
@@ -406,7 +466,7 @@ class Room:
                 "participants": [other.participant() for other in self.connections.values()],
             }
         )
-        connection.send(self._scene())
+        connection.send(self._scene(self._since(mark)))
         self._broadcast(connection.presence(), skip=connection)
 
     def leave(self, connection: Connection) -> None:
@@ -449,6 +509,16 @@ class Room:
         self._sizes = {identifier: len(encode(each)) for identifier, each in self.elements.items()}
         self.size = sum(self._sizes.values())
         self.editor_label = None
+        # One change, and every element of the new scene has its count. The
+        # head holds all of it. An import's files go with the elements that
+        # name them.
+        put_at = self._next_count()
+        self._element_counts = dict.fromkeys(self.elements, put_at)
+        self.written = (epoch, put_at)
+        if self._new_files:
+            # Named while this was written, and not in the head: after the mark.
+            named_at = self._next_count()
+            self._file_counts.update((entry["id"], named_at) for entry in self._new_files)
         # A file that was named and is not yet in the slot's stored list still
         # has to be written: its id keeps those bytes whatever the scene.
         self.dirty = bool(self._new_files)
@@ -524,6 +594,7 @@ class Room:
             self.elements.update(won)
             self._sizes.update({identifier: len(text) for identifier, text in texts.items()})
             self.size += grown
+            self._element_counts.update(dict.fromkeys(won, self._next_count()))
             self._changed(connection)
             # The message, from the texts the sizes were taken from.
             head = encode({"type": "elements", "epoch": self.epoch})
@@ -550,8 +621,10 @@ class Room:
         # A file id the slot already has keeps the bytes it had.
         new = [entry for entry in files if entry["id"] not in self.files]
         if new:
+            named_at = self._next_count()
             for entry in new:
                 self.files[entry["id"]] = entry
+                self._file_counts[entry["id"]] = named_at
             self._new_files.extend(new)
             self._changed(connection)
             self._broadcast({"type": "files", "epoch": self.epoch, "files": new}, skip=connection)
@@ -589,13 +662,56 @@ class Room:
         # The sender too: its own entry in the list is the server's spelling.
         self._broadcast(connection.presence())
 
-    def _scene(self) -> dict[str, Any]:
-        elements = ordered(self.elements.values())
+    def _next_count(self) -> int:
+        """Count one more change, and return its number."""
+        self.count += 1
+        return self.count
+
+    def _since(self, mark: str | None) -> int | None:
+        """Return the count a mark names, or None when it is not a mark of this scene.
+
+        A mark of this scene has this room's start and epoch, and a count the
+        room has reached. Any other is from before a restart, a restore, or an
+        import, or is no mark at all.
+        """
+        prefix = f"{self.start}.{self.epoch}."
+        if mark is None or not mark.startswith(prefix):
+            return None
+        count = mark[len(prefix) :]
+        if _COUNT.fullmatch(count) is None or int(count) > self.count:
+            return None
+        return int(count)
+
+    def _scene(self, since: int | None = None) -> dict[str, Any]:
+        """Return the room's scene, or only what changed after count ``since``.
+
+        What changed is the elements whose last change came after it, deleted
+        ones included, with the files they name and every file the slot took
+        after it.
+        """
+        if since is None:
+            elements = ordered(self.elements.values())
+            files = named_files(self.files.values(), elements)
+        else:
+            counts, file_counts = self._element_counts, self._file_counts
+            elements = ordered(
+                each
+                for identifier, each in self.elements.items()
+                if counts.get(identifier, 0) > since
+            )
+            named = {entry["id"] for entry in named_files(self.files.values(), elements)}
+            files = [
+                entry
+                for identifier, entry in self.files.items()
+                if identifier in named or file_counts.get(identifier, 0) > since
+            ]
         return {
             "type": "scene",
             "epoch": self.epoch,
+            "whole": since is None,
+            "mark": self.mark(),
             "elements": elements,
-            "files": named_files(self.files.values(), elements),
+            "files": files,
         }
 
     def _broadcast(self, message: dict[str, Any], skip: Connection | None = None) -> None:

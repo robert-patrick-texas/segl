@@ -67,6 +67,7 @@ export function SlotPage({ config, slot, displayName, editPass }: SlotPageProps)
 		epoch: scene === null ? null : scene.epoch,
 		elements: scene === null ? NO_ELEMENTS : scene.elements,
 		files: scene === null ? NO_FILES : scene.files,
+		mark: scene === null ? null : scene.mark,
 		name: displayName.name,
 		pass
 	});

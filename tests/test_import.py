@@ -43,6 +43,7 @@ from harness import (
     GATED_TOML,
     PASS_HEADER,
     ROOT_SITE,
+    MarkOf,
     NginxTools,
     assert_no_secrets,
     issue_pass,
@@ -514,6 +515,8 @@ def test_a_drawing_is_exported_cleared_and_imported_back(
                 assert received(socket) == {
                     "type": "scene",
                     "epoch": 2,
+                    "whole": True,
+                    "mark": MarkOf(2),
                     "elements": [],
                     "files": [],
                 }
@@ -529,6 +532,8 @@ def test_a_drawing_is_exported_cleared_and_imported_back(
                 assert received(socket) == {
                     "type": "scene",
                     "epoch": 3,
+                    "whole": True,
+                    "mark": MarkOf(3),
                     "elements": [A, B],
                     "files": [],
                 }
@@ -568,7 +573,14 @@ def test_an_import_first_records_the_scene_it_replaces(
 
         assert (response.json()["revision"], response.json()["epoch"]) == (3, 2)
         # The scene, and no `saved`: the new epoch is the answer.
-        assert received(socket) == {"type": "scene", "epoch": 2, "elements": [C], "files": []}
+        assert received(socket) == {
+            "type": "scene",
+            "epoch": 2,
+            "whole": True,
+            "mark": MarkOf(2),
+            "elements": [C],
+            "files": [],
+        }
         assert rows(client) == [(3, 2, "Guest3"), (2, 1, "Staff2"), (1, 1, "Guest1")]
         assert client.get(f"{REVISIONS}/2").json()["scene"]["elements"] == [A, B]
         # So the import can be undone: the scene it replaced is a restore away.
@@ -699,7 +711,14 @@ def test_drawing_goes_on_at_the_epoch_of_the_import(repository: Repository, tmp_
 
         # Sent for the scene that went: answered with the scene, and applied nowhere.
         one.send_json({"type": "elements", "epoch": 1, "elements": [C], "seq": 1})
-        assert received(one) == {"type": "scene", "epoch": 2, "elements": [A], "files": []}
+        assert received(one) == {
+            "type": "scene",
+            "epoch": 2,
+            "whole": True,
+            "mark": MarkOf(2),
+            "elements": [A],
+            "files": [],
+        }
 
         saved = draw(one, 2, B, epoch=2)
         assert saved["epoch"] == 2
@@ -889,7 +908,14 @@ def test_with_a_token_a_client_without_it_cannot_import(
         assert (allowed.status_code, allowed.json()["epoch"]) == (200, 2)
         # The viewer is sent the imported scene too.
         for socket in (editor, viewer):
-            assert received(socket) == {"type": "scene", "epoch": 2, "elements": [C], "files": []}
+            assert received(socket) == {
+                "type": "scene",
+                "epoch": 2,
+                "whole": True,
+                "mark": MarkOf(2),
+                "elements": [C],
+                "files": [],
+            }
 
 
 def test_without_a_token_configured_anyone_imports(drawn: TestClient) -> None:
@@ -978,7 +1004,14 @@ def test_an_import_survives_a_kill_and_so_do_its_files(tmp_path: Path) -> None:
 
         assert (cleared.status, cleared.json()["epoch"]) == (200, 2)
         assert "Set-Cookie" not in cleared.headers
-        assert next_message(one) == {"type": "scene", "epoch": 2, "elements": [], "files": []}
+        assert next_message(one) == {
+            "type": "scene",
+            "epoch": 2,
+            "whole": True,
+            "mark": MarkOf(2),
+            "elements": [],
+            "files": [],
+        }
 
         back = server.post(IMPORT, headers_for("José"), body_of(exported))
 
@@ -1003,7 +1036,10 @@ def test_an_import_survives_a_kill_and_so_do_its_files(tmp_path: Path) -> None:
         server.kill()
 
     with running_segl(tmp_path, config) as server:
-        assert server.get(scene_path).json() == before
+        after = server.get(scene_path).json()
+        # The same head. Its mark is the new process's own, at count 0.
+        assert {**after, "mark": before["mark"]} == before
+        assert after["mark"] == MarkOf(before["epoch"], 0) and after["mark"] != before["mark"]
         assert server.get(f"/api/v1/assets/{PNG_HASH}").body == PNG
         with server.socket(f"/collab?slot={SLOT}") as two:
             welcome, scene = say_hello(two, "Staff2")
@@ -1045,6 +1081,8 @@ def test_with_a_token_a_running_server_gates_the_import(tmp_path: Path) -> None:
                 assert next_message(socket) == {
                     "type": "scene",
                     "epoch": 2,
+                    "whole": True,
+                    "mark": MarkOf(2),
                     "elements": [C],
                     "files": [],
                 }
@@ -1096,6 +1134,8 @@ def test_an_import_through_nginx_at_board_and_at_a_host_root(
                     assert next_message(socket) == {
                         "type": "scene",
                         "epoch": 2,
+                        "whole": True,
+                        "mark": MarkOf(2),
                         "elements": [A, B, PICTURE],
                         "files": [file],
                     }
