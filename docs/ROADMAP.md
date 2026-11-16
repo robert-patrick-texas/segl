@@ -28,7 +28,7 @@ SSO, encryption at rest, audit retention, and the other deferred controls listed
 
 ## After the gate — send a scene once
 
-Not part of P0. It changes the WebSocket protocol, so it waits for the gate.
+Not part of P0. It changes the WebSocket protocol, so it waited for the gate. It is T14 in `draft2/TASKS.md`, queued on 2026-11-16.
 
 - **Today.** A page that opens a slot gets the scene twice: the stored head over HTTP, then the room's scene over the socket, after `welcome`. Both are the same element records in the same form. They differ only when someone edited in between: the stored head is at most `head_flush_seconds` behind the room. A page that comes back hours later gets both again. For a slot of 1,024 elements each copy was about 431,000 bytes, and about 12,000 compressed.
 - **The change.** The scene route's answer carries a mark of the scene it returns. `hello` carries that mark back. The server then sends only the elements that changed since the mark. For a quiet slot that is none. A mark the server does not know gets the whole scene, as today: after a restart, a restore, or an import.

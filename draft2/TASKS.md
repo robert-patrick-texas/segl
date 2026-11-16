@@ -392,3 +392,47 @@ As run, on 2026-11-13 and on commit `00ea07f`:
 - The dev container ran T-001 through T-016, T-018, T-019, and T-020, once under rootful Docker and once under rootless Docker. `deploy/debian/package-test.sh` ran T-017 and T-021.
 - Every row passed. `STATUS.md` has the evidence.
 - The gate changed no code and no test. It corrected the gate line of `docs/ROADMAP.md`, which still said T-020.
+
+## T14 — Send a scene once
+
+- Status: next
+- Requires: T13
+- Requirements: S-002, S-013
+- Read: `docs/ROADMAP.md` (after the gate, send a scene once), `docs/API.md` (the scene route and the WebSocket), `docs/ARCHITECTURE.md` (collaboration), `docs/DECISIONS.md` D2-025, `src/segl/room.py`, `src/segl/saver.py`, `web/src/collab/session.ts`, and the STATUS entries of T11 and of 2026-11-13 on the roadmap entry
+
+Added on 2026-11-16 at the user's request, after release 0.3.0. It is the roadmap entry "send a scene once". It is not part of P0. Today a page that opens a slot gets the scene twice: the stored head over HTTP, then the room's scene over the socket, after `welcome`. After this task the socket sends only what changed since the HTTP copy. For a quiet slot that is nothing. For a slot of 1,024 elements each copy was about 431,000 bytes (STATUS, the roadmap entry of 2026-11-13). Keep this task small.
+
+The mark:
+
+- A mark names a point in one room's changes: a value the server picks when it starts, the epoch, and the room's count of changes. One way to write it: `<start>.<epoch>.<count>`, as one ASCII string. The page does not read it. It hands it back.
+- The room counts every change it takes: an `elements` batch with a winner, a `files` message with a new file, and a restore or an import. It notes the count at each element's and each file's last change. The count only goes up while the process runs. All of it lives in memory. Nothing joins the database.
+- The changes since a mark are the elements whose count is higher than the mark's, deleted ones included, in drawing order. With them go the files they name, and every file the slot took since the mark.
+
+The rule: a mark never says that a copy holds more than it does. A copy that holds more than its mark says costs a few elements sent twice. A mark that says more than its copy holds loses a drawing.
+
+The server:
+
+- The scene route's answer carries `mark`, the mark of the head it returns. A flush writes the head in a worker thread, so the head can be one flush behind the room. The mark is therefore that of the last head write that finished, taken before the head is read. A slot with no room yet has count 0, and its room starts from the head at count 0. A restore or an import writes the head, then gives the room its scene. A mark taken between the two names the old epoch, so it gets a whole scene.
+- `hello` takes an optional `mark`: a string of at most 64 characters, or `null`. Anything else is `bad_message`.
+- After `welcome`, the server sends `scene` as today. It gains two fields: `whole`, and `mark`, the room's count when it was sent. With a mark of this start, this epoch, and a count the room has reached, `scene` holds only the changes since the mark, with `whole` false. For a quiet slot that is no element. With no mark, or any other mark, it holds the whole scene, with `whole` true. That happens after a restart, a restore, or an import.
+- Every other `scene` is whole, as today: after an epoch mismatch, and to every connection after a restore or an import.
+
+The page:
+
+- The HTTP copy stays. It paints the canvas when the socket is slow or never opens. The page still reconciles what it is sent (D2-025).
+- The page keeps a base: the stamps (`id`, `version`, `versionNonce`) and files of the newest scene the server sent, with its mark. At first that is the HTTP copy. `hello` carries the base's mark, so a page that reconnects asks only for what changed since its last `scene`. A whole `scene` replaces the base. One that is not whole is laid over it.
+- After each `scene`, `known`, the list of what the server holds, becomes the base, and never what the page itself sent. Today `sendPending` notes a batch as known when it sends it, and the whole scene a reconnect brings puts that right. A batch the socket lost before the server took it must still go again after a `scene` that is not whole. This is the task's risk: try it first.
+- The file list works the same way: the base's files, with a partial `scene`'s files added to them.
+
+Tests:
+
+- pytest: in `tests/test_room.py`, the count, the changes since a mark, each reason for a whole scene, a mark of the wrong type, and a quiet slot. The scene route's mark while a flush's write is held open in its worker thread, as `tests/test_saver.py` holds one, and between a restore's head write and the room's new epoch. A real process: a mark from before a restart gets the whole scene. Once through nginx.
+- Vitest: the base, `known` after each kind of `scene`, and a lost batch sent again after a `scene` that is not whole.
+- The browser: a page that reloads a quiet slot gets a socket `scene` with no element. A page whose socket drops while another edits comes back, and both end with the same scene. A batch held back with `routeWebSocket` and lost with its socket reaches the other page after the reconnect. The last test joins T-004's row in `tests/testplan.toml`.
+- The size run's slot of 1,024 elements prints how many characters the late browser's socket `scene` held.
+
+Documents: `docs/API.md` (the scene route's `mark`, `hello`'s `mark`, `scene`'s `whole` and `mark`, and the rule), `docs/ARCHITECTURE.md` (collaboration), `docs/DEVELOPMENT.md` (the tests), a new decision D2-037, `docs/ROADMAP.md` (the entry becomes a line saying it was built, and keeps "Not planned"), and `CHANGELOG.md`.
+
+Acceptance: T-001 through T-004, T-007, T-009, and T-011 pass, in the dev container or by `scripts/e2e.py`, and so do the new tests. The size run shows the late browser's socket `scene` for the 1,024-element slot under 1,000 characters, where it was about 431,000. ruff, ty, and the web checks pass.
+
+Out of scope: a browser that keeps a slot's scene between visits (`docs/ROADMAP.md`, not planned).
