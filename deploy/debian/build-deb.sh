@@ -55,6 +55,9 @@ cp deploy/debian/build.sh "$stage/build.sh"
 rm -f "$out_dir/segl_${version}_amd64.deb"
 deploy/debian/image.sh "$image" deploy/debian/Containerfile
 
+# Every path the build prints is inside the container. Its /opt/segl is the
+# container's own: nothing on this host is installed or changed.
+echo "==> building in a clean ubuntu:26.04 container: the paths below are inside it"
 mounts=()
 if [ -n "$uv_cache" ]; then mounts+=(--volume "$uv_cache:/root/.cache/uv"); fi
 if [ -n "$npm_cache" ]; then mounts+=(--volume "$npm_cache:/root/.npm"); fi

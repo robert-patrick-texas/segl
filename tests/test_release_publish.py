@@ -26,7 +26,15 @@ import pytest
 import release
 import release_notes
 from release_proc import CommandError, Result
-from release_publish import PACKAGE_TEST, bump_version, check_runs_pass, cut, publish
+from release_publish import (
+    BUILD,
+    PACKAGE_TEST,
+    Preflight,
+    bump_version,
+    check_runs_pass,
+    cut,
+    publish,
+)
 from release_sign import (
     KEY_VARIABLE,
     SIG_NAME,
@@ -432,7 +440,11 @@ def test_a_successful_publish_tags_and_creates_the_release_with_the_notes(
     # The install test takes minutes: its steps are said as they come, between
     # the line that it started and the line that it passed.
     said = capsys.readouterr().out.splitlines()
-    start = said.index(f"     the package builds and installs: running `{PACKAGE_TEST}`")
+    # No CI run is known here, so the install test runs here.
+    start = said.index(
+        "     the package builds and installs: no passed CI run for HEAD was found; "
+        f"running `{PACKAGE_TEST}`"
+    )
     assert said[start - 1].startswith("ok   the release key is there: ")
     assert said[start + 1 : start + 5] == [
         "    0:00  ==> lintian",
@@ -633,3 +645,98 @@ def test_a_version_change_that_fails_its_checks_is_put_back(
         "not cut: the version change fails the suite "
         "(tests/test_versions.py::test_version); files put back"
     )
+
+
+def ci_runs(*ids: int) -> Result:
+    return Result(0, json.dumps([{"databaseId": run} for run in ids]))
+
+
+@pytest.mark.parametrize(
+    ("runs", "ci_bytes", "install_test", "detail"),
+    [
+        (ci_runs(77), b"deb", None, "is the package CI installed and tested (run 77)"),
+        (ci_runs(77), b"other", ["dist/{name}"], "passed the install test"),
+        (ci_runs(77), None, [], "passed the install test"),
+        (ci_runs(), None, [], "passed the install test"),
+        (Result(1, "", "gh: not logged in"), None, [], "passed the install test"),
+    ],
+    ids=["same-bytes", "other-bytes", "no-download", "no-run", "gh-fails"],
+)
+def test_the_install_test_runs_here_unless_ci_tested_the_same_bytes(
+    repo: Path,
+    fake_runner,
+    fake_sources,
+    run_git,
+    release_key: Path,
+    runs: Result,
+    ci_bytes: bytes | None,
+    install_test: list[str] | None,
+    detail: str,
+) -> None:
+    add_package_test(repo, run_git)
+    name = f"segl_{release.load_versions(repo)['project']['version']}_amd64.deb"
+
+    def download(argv: Sequence[str]) -> Result:
+        if ci_bytes is None:
+            return Result(1, "", "no valid artifacts found to download")
+        (Path(argv[argv.index("--dir") + 1]) / name).write_bytes(ci_bytes)
+        return Result(0)
+
+    def build(_argv: Sequence[str]) -> Result:
+        (repo / "dist").mkdir(exist_ok=True)
+        (repo / "dist" / name).write_bytes(b"deb")
+        return Result(0, "==> lintian\n")
+
+    def package_test(argv: Sequence[str]) -> Result:
+        if len(argv) == 1:  # with no package given, it builds one
+            build(argv)
+        return Result(0, "== install\nsystemd-test: all checks passed\n")
+
+    runner = fake_runner(
+        repo,
+        {
+            ("gh", "run", "list"): runs,
+            ("gh", "run", "download"): download,
+            (BUILD,): build,
+            (PACKAGE_TEST,): package_test,
+        },
+    )
+
+    ok, said = Preflight(repo, runner, fake_sources(runner)).package()
+
+    assert ok, said
+    assert said == f"dist/{name} {detail}"
+    tests = [call[1:] for call in runner.called(PACKAGE_TEST)]
+    if install_test is None:
+        assert tests == [], "CI's test of the same bytes stands"
+    else:
+        assert tests == [[arg.format(name=name) for arg in install_test]]
+    if runs.returncode == 0 and json.loads(runs.stdout):
+        (listed,) = runner.called("gh", "run", "list")
+        assert listed[listed.index("--commit") + 1] == run_git(repo, "rev-parse", "HEAD").strip()
+        assert "--status" in listed and "success" in listed
+    if ci_bytes is None:
+        assert not runner.called(BUILD), "the install test builds it"
+
+
+def test_a_package_that_does_not_build_stops_the_preflight(
+    repo: Path, fake_runner, fake_sources, run_git, release_key: Path
+) -> None:
+    add_package_test(repo, run_git)
+    name = f"segl_{release.load_versions(repo)['project']['version']}_amd64.deb"
+
+    def download(argv: Sequence[str]) -> Result:
+        (Path(argv[argv.index("--dir") + 1]) / name).write_bytes(b"deb")
+        return Result(0)
+
+    runner = fake_runner(
+        repo,
+        {
+            ("gh", "run", "list"): ci_runs(77),
+            ("gh", "run", "download"): download,
+            (BUILD,): Result(1, "lintian: E: bad\n"),
+        },
+    )
+
+    assert Preflight(repo, runner, fake_sources(runner)).package() == (False, f"`{BUILD}` failed")
+    assert not runner.called(PACKAGE_TEST)

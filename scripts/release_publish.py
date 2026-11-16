@@ -43,8 +43,13 @@ BRANCH = "main"
 REMOTE = "origin"
 PASSING = frozenset({"success", "neutral", "skipped"})
 # Builds the .deb into dist/ and installs it in a container that booted with
-# systemd (docs/TEST-PLAN.md T-017).
+# systemd (docs/TEST-PLAN.md T-017). Given a .deb, it installs that one.
 PACKAGE_TEST = "deploy/debian/package-test.sh"
+# Builds the .deb into dist/ alone.
+BUILD = "deploy/debian/build-deb.sh"
+# The package CI's `package` job keeps from each run, for seven days, after it
+# installed and tested it (.github/workflows/ci.yml).
+CI_PACKAGE = "segl-deb"
 
 
 def has_package(root: Path) -> bool:
@@ -244,10 +249,66 @@ class Preflight:
         return True, str(key)
 
     def package(self) -> tuple[bool, str]:
-        # Minutes of work: say each of its steps, and not only its end.
-        say(f"     the package builds and installs: running `{PACKAGE_TEST}`")
-        result = self.runner.run([PACKAGE_TEST], check=False, progress=Progress(PACKAGE_STAGES))
+        """Build the package, and see that it installs.
+
+        The package build repeats: the same tree gives the same bytes. When CI
+        built, installed, and tested the same bytes for HEAD, that test is this
+        package's, and the install test does not run again here. Otherwise it
+        runs here, as it did before.
+        """
         built = package_path(self.root, self.version)
+        with tempfile.TemporaryDirectory(prefix="segl-ci-package-") as folder:
+            tested, which = self.ci_package(Path(folder))
+            if tested is None:
+                say(f"     the package builds and installs: {which}; running `{PACKAGE_TEST}`")
+                return self.install_test([PACKAGE_TEST], built)
+            say(
+                f"     the package builds and installs: CI tested its package for HEAD "
+                f"({which}); building it here to compare"
+            )
+            # Minutes of work: say each of its steps, and not only its end.
+            result = self.runner.run(
+                [BUILD, "dist"], check=False, progress=Progress(PACKAGE_STAGES)
+            )
+            if result.returncode != 0:
+                tail = "\n".join(result.output.strip().splitlines()[-15:])
+                print(f"  `{BUILD}` failed:\n{tail}")
+                return False, f"`{BUILD}` failed"
+            if not built.is_file():
+                return False, f"dist/{built.name} was not built"
+            if built.read_bytes() == tested.read_bytes():
+                return True, f"dist/{built.name} is the package CI installed and tested ({which})"
+        say(f"     dist/{built.name} is not the package CI tested: installing it here")
+        return self.install_test([PACKAGE_TEST, f"dist/{built.name}"], built)
+
+    def ci_package(self, folder: Path) -> tuple[Path | None, str]:
+        """Download the package CI tested for HEAD into ``folder``.
+
+        Returns its path and the run, or None and why there is none.
+        """
+        sha = self.runner.run(["git", "rev-parse", "HEAD"]).stdout.strip()
+        repo = ["--repo", self.repo] if self.repo else []
+        query = ["--commit", sha, "--workflow", "ci.yml", "--status", "success", "--limit", "1"]
+        listed = self.runner.run(
+            ["gh", "run", "list", *repo, *query, "--json", "databaseId"], check=False
+        )
+        try:
+            runs = json.loads(listed.stdout) if listed.returncode == 0 else []
+            run = str(int(runs[0]["databaseId"]))
+        except (ValueError, LookupError, TypeError):
+            return None, "no passed CI run for HEAD was found"
+        got = self.runner.run(
+            ["gh", "run", "download", run, *repo, "--name", CI_PACKAGE, "--dir", str(folder)],
+            check=False,
+        )
+        package = folder / package_path(self.root, self.version).name
+        if got.returncode != 0 or not package.is_file():
+            return None, f"CI's package of run {run} could not be downloaded (it is kept 7 days)"
+        return package, f"run {run}"
+
+    def install_test(self, argv: list[str], built: Path) -> tuple[bool, str]:
+        """Run the install test, and say each of its steps as it comes."""
+        result = self.runner.run(argv, check=False, progress=Progress(PACKAGE_STAGES))
         if result.returncode != 0:
             tail = "\n".join(result.output.strip().splitlines()[-15:])
             print(f"  `{PACKAGE_TEST}` failed:\n{tail}")
