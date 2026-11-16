@@ -124,6 +124,16 @@ The control waits while the page is not in the slot's room, where it would not s
 
 One of the editor's ways in is still open. The editor can export an image, a PNG or an SVG, with the scene embedded in it, and it opens that scene when such an image is dropped on the canvas, in that browser alone. Telling such an image from any other takes reading the file, and a drop has to be decided before that.
 
+## Network objects
+
+P1's devices and links are elements of the scene with a record in `customData` (`DATA-MODEL.md`, network objects; D2-038). segl adds no process, table, route, or message for them. Live sync, saving, history, restore, export, and import carry a record as they carry a color.
+
+- `web/src/network/` describes the symbols as plain shapes and holds the rules: reading a record, the tags, which copies get a new id, and which object a selection is. It imports nothing from the editor. `web/src/canvas/network.ts` turns the symbols into the editor's elements, and makes each change the panel asks for as one edit of this browser's, which the session sends and undo takes back.
+- The canvas adapter hands the editor segl's library at load, through `initialData.libraryItems`, and the editor merges it with the person's own. A device is its card, with its name as the label, a glyph drawn with lines, and its tag, in one group. The editor binds a link's end to a shape near the shape's outline, and never to a line, so a link drawn to a device ends on its card. When the group moves, the link's end follows.
+- The editor keeps `customData` on every copy it makes. It hands each copy this browser places to the page before the copy reaches the canvas (`onDuplicate`): from the library, a paste, its duplicate, and Alt-drag. A copy that came from the library, or whose source is still on the canvas, gets a new object id there, in the same undo step. A cut and a paste keeps the id. An element from the socket never passes through it, so it keeps the id it came with.
+- segl's panel shows for one selected object: its kind, its name, and its state, which it sets, and a link's kind. A state change touches only the record and the tag. A kind change sets the line's style, width, and ends. Neither touches a color: the team colors links by speed and devices by owner or vendor, and red means trouble to them. A device's tag is drawn under its card, so a link's end near the corner still finds the card. A viewer selects nothing, so the panel never shows for one.
+- The panel floats over the canvas, clear of the editor's tools: at the top right on a wide page, left of the library while it is open, and under the editor's top row, on the left, in its narrow layout.
+
 ## Edit gate
 
 Viewing, cursors, and receiving elements need nothing: a browser that can open the page watches live.

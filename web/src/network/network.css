@@ -1,0 +1,98 @@
+/*
+ * Copyright 2026 segl contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/*
+ * The panel floats over the canvas, clear of the editor's tools. On a wide
+ * page it sits under the editor's top right row, beside the Library button,
+ * and moves left while the library is open. The editor's style menu is on
+ * the left while anything is selected.
+ */
+.segl-network {
+	position: absolute;
+	top: 64px;
+	right: calc(16px + var(--segl-sidebar, 0px));
+	z-index: 3;
+	box-sizing: border-box;
+	width: 15rem;
+	max-width: calc(100% - 32px);
+	padding: 0.5rem 0.625rem;
+	border-radius: 8px;
+	background: #fff;
+	color: #1b1b1f;
+	box-shadow:
+		0 0 0 1px rgb(0 0 0 / 8%),
+		0 2px 6px rgb(0 0 0 / 14%);
+	font-family:
+		system-ui,
+		-apple-system,
+		'Segoe UI',
+		Roboto,
+		sans-serif;
+	font-size: 0.8125rem;
+}
+
+/*
+ * In the editor's narrow layout its tools are a row at the top, a column at
+ * the right edge, and a bar at the bottom. The panel goes under the top row,
+ * on the left, clear of the column.
+ */
+.segl__canvas:has(.excalidraw--mobile) .segl-network {
+	right: auto;
+	left: 9px;
+	max-width: calc(100% - 64px);
+}
+
+.segl-network__what {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.375rem;
+	margin: 0 0 0.375rem;
+	overflow-wrap: anywhere;
+}
+
+.segl-network__kind {
+	font-weight: 600;
+}
+
+.segl-network__states {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.25rem;
+}
+
+.segl-network button,
+.segl-network select {
+	font: inherit;
+	padding: 0.1875rem 0.5rem;
+	border: 1px solid #c5cad3;
+	border-radius: 6px;
+	background: #f6f7f9;
+	color: inherit;
+	cursor: pointer;
+}
+
+.segl-network button[aria-pressed='true'] {
+	border-color: #4a4f9e;
+	background: #e3e2fe;
+	font-weight: 600;
+}
+
+.segl-network__link {
+	display: flex;
+	align-items: center;
+	gap: 0.375rem;
+	margin-top: 0.375rem;
+}

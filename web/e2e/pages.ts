@@ -92,6 +92,12 @@ export const SLOTS = {
 	images: 4,
 	drawing: 5,
 	deleting: 6,
+	/**
+	 * The deleting tests draw and delete their own shapes, so the network
+	 * tests share the canvas and draw far from the middle (T-022). A restore
+	 * here takes nothing the deleting tests wait for.
+	 */
+	network: 6,
 	reconnect: 7,
 	names: 8,
 	/**
@@ -271,6 +277,8 @@ export interface SocketTap {
 	kill(): Promise<void>;
 	/** Let the next socket through. */
 	restore(): void;
+	/** Send the page a message on every open socket, as if the server had sent it. */
+	tell(message: SocketMessage): void;
 }
 
 /**
@@ -299,6 +307,9 @@ export async function tapSockets(page: Page): Promise<SocketTap> {
 		},
 		restore() {
 			down = false;
+		},
+		tell(message) {
+			for (const pair of open) pair.page.send(JSON.stringify(message));
 		}
 	};
 	await page.routeWebSocket(/\/collab\?slot=\d$/, (route) => {

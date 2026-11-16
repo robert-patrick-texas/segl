@@ -18,14 +18,27 @@
  */
 import { Excalidraw } from '@excalidraw/excalidraw';
 import '@excalidraw/excalidraw/index.css';
-import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import type { OrderedExcalidrawElement } from '@excalidraw/excalidraw/element/types';
+import type { AppState, ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
+import {
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+	type CSSProperties,
+	type DragEvent
+} from 'react';
 import type { Cursor } from '../collab/protocol.ts';
 import type { SceneEditor } from '../collab/session.ts';
 import { dropGoesTo } from '../importing.ts';
+import type { LinkKind, State } from '../network/kinds.ts';
+import { NetworkPanel } from '../network/NetworkPanel.tsx';
+import { selectedObject, type NetworkObject } from '../network/selection.ts';
 import './canvas.css';
 import { makeEditor } from './editor.ts';
 import { clearHandle, publishHandle } from './handle.ts';
+import { networkLibrary, renewCopies, setLinkKind, setObjectState } from './network.ts';
 import { initialDataFrom } from './scene.ts';
 
 export interface CanvasProps {
@@ -57,6 +70,11 @@ type PointerUpdate = { pointer: { x: number; y: number } };
  */
 const UI_OPTIONS = { canvasActions: { loadScene: false } };
 
+/** Whether the panel would show the same thing for both. */
+function sameObject(a: NetworkObject | null, b: NetworkObject | null): boolean {
+	return JSON.stringify(a) === JSON.stringify(b);
+}
+
 export default function Canvas({
 	document,
 	exportName,
@@ -66,7 +84,14 @@ export default function Canvas({
 	onChange,
 	onCursor
 }: CanvasProps) {
-	const initialData = useMemo(() => initialDataFrom(document), [document]);
+	// segl's network library, which the editor merges with the person's own.
+	const initialData = useMemo(
+		() => ({ ...initialDataFrom(document), libraryItems: networkLibrary() }),
+		[document]
+	);
+	const wrapper = useRef<HTMLDivElement>(null);
+	const [picked, setPicked] = useState<NetworkObject | null>(null);
+	const [sidebar, setSidebar] = useState(0);
 	// The editor hands out its API from its constructor: during a render, and
 	// before it has mounted or loaded the scene. In development React constructs
 	// the editor twice and mounts one of the two. So the APIs are only kept
@@ -77,16 +102,41 @@ export default function Canvas({
 	const keepApi = useCallback((given: ExcalidrawImperativeAPI) => {
 		offered.current.push(given);
 	}, []);
-	const changed = useCallback(() => {
-		if (offered.current.length > 0) {
-			const mounted = offered.current.find((each) => !each.getAppState().isLoading);
-			if (mounted !== undefined) {
-				offered.current = [];
-				setApi(mounted);
+	const changed = useCallback(
+		(elements: readonly OrderedExcalidrawElement[], appState: AppState) => {
+			if (offered.current.length > 0) {
+				const mounted = offered.current.find((each) => !each.getAppState().isLoading);
+				if (mounted !== undefined) {
+					offered.current = [];
+					setApi(mounted);
+				}
 			}
-		}
-		onChange?.();
-	}, [onChange]);
+			const next = selectedObject(elements, new Set(Object.keys(appState.selectedElementIds)));
+			setPicked((before) => (sameObject(before, next) ? before : next));
+			// The panel moves left of the library while it is open.
+			const open = appState.openSidebar !== null;
+			const width = open
+				? (wrapper.current?.querySelector('.excalidraw .sidebar')?.getBoundingClientRect().width ??
+					0)
+				: 0;
+			setSidebar((before) => (before === width ? before : width));
+			onChange?.();
+		},
+		[onChange]
+	);
+
+	const setState = useCallback(
+		(state: State) => {
+			if (api !== null && picked !== null) setObjectState(api, picked.objectId, state);
+		},
+		[api, picked]
+	);
+	const setKind = useCallback(
+		(kind: LinkKind) => {
+			if (api !== null && picked !== null) setLinkKind(api, picked.objectId, kind);
+		},
+		[api, picked]
+	);
 
 	useEffect(() => {
 		if (api === null) return;
@@ -119,7 +169,12 @@ export default function Canvas({
 	);
 
 	return (
-		<div className="segl-canvas" onDropCapture={dropped}>
+		<div
+			className="segl-canvas"
+			ref={wrapper}
+			onDropCapture={dropped}
+			style={{ '--segl-sidebar': `${sidebar}px` } as CSSProperties}
+		>
 			<Excalidraw
 				initialData={initialData}
 				excalidrawAPI={keepApi}
@@ -128,7 +183,11 @@ export default function Canvas({
 				viewModeEnabled={viewOnly}
 				onChange={changed}
 				onPointerUpdate={pointerMoved}
+				onDuplicate={renewCopies}
 			/>
+			{picked !== null && api !== null && (
+				<NetworkPanel object={picked} onState={setState} onKind={setKind} />
+			)}
 		</div>
 	);
 }

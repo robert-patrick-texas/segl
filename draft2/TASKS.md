@@ -522,3 +522,15 @@ Documents: `docs/REQUIREMENTS.md` (L-001 becomes N-001 to N-005 under P1, with "
 Acceptance: T-022 passes, and T-001 through T-011 still pass by `scripts/e2e.py`. ruff, ty, and the web checks pass. The screenshot shows all 12 devices, all 5 links, and a tag of each state.
 
 Out of scope: a named interface at a link's end (N-006); inventory, device import, and search (P2); a device that changes kind once placed (place another); a server check of the record; scenarios; a symbol manifest file; and keeping a person's own library between visits.
+
+As built (2026-11-16):
+
+- The risk did not happen. The pinned editor keeps `customData` on every copy: from the library, a paste, its duplicate, Alt-drag, a cut and a paste, and the socket. So each copy kept its source's `objectId`. The editor's own `onDuplicate`, which it calls for the library, a paste, its duplicate, and Alt-drag, gives each copy its new id before the copy reaches the canvas, in the same undo step. An element from the socket never passes through it. A link's binding held when a device's group moved, in both browsers.
+- A device is a card: a rounded rectangle with the name as its label, at the bottom, and a glyph above it. The editor binds a link's end to a shape with no fill only near its outline, and never to a line, so the glyph is all lines. The label makes the card's inside a place to click.
+- The tag is drawn under the card. The editor binds a link's end to the topmost shape near it, and a text outside a container is one.
+- Cable is the editor's width 1, and circuit its widest, 4. The editor draws every line at 2 unless told, so "bold" at 2 would be every freeform arrow.
+- The library draws with the editor's Architect lines and its Normal font. Neither is a color.
+- The items are in the library panel's "Personal library", as the person's own. Published items would show under "Excalidraw library".
+- The panel sits at the top right of a wide page, left of the library while it is open, and on the left under the editor's top row in its narrow layout. A test measures it at 1280, 800, and 390 pixels.
+- A click on the empty middle of a device that is already selected clears the selection. The editor treats a click inside a selected group that misses its lines as a click on nothing. A second click selects it again. The pinned editor is not changed (rule 6).
+- T-022 uses slot 6, with the deleting tests. The viewer's test is in `web/e2e/access.spec.ts`, the only spec that runs against the server with a code.

@@ -59,6 +59,17 @@ import {
 	test,
 	type Rgb
 } from './pages.ts';
+import {
+	holder,
+	lookAt,
+	objectIdOf,
+	panel,
+	place,
+	scene,
+	seen,
+	select,
+	setState
+} from './network.ts';
 import { ACCESS_CODE, ACCESS_SECRET, PASS_SHAPE } from './sites.ts';
 
 /** The header a pass travels in. Its name is from when it carried a token. */
@@ -626,6 +637,51 @@ test('a browser without a pass cannot upload, and paints the image of one that h
 	await expectPainted(editor, image.id, color);
 	expect(uploads).toEqual([]);
 	await expect(connectionStatus(page)).toHaveAttribute('data-state', 'live');
+});
+
+test('a browser without a pass sees the tags of network objects and changes nothing', async ({
+	page,
+	person
+}) => {
+	// T-022, the viewer.
+	const slot = SLOTS.network;
+	const editor = await person('Edna', { editor: true });
+	await joinSlot(page, slot);
+	await joinSlot(editor, slot);
+	await expectLocked(page);
+	await expectUnlocked(editor);
+	const at = { x: 4000 + row() * 6000, y: 30000 };
+	await lookAt(editor, at.x + 200, at.y + 150);
+	const router = await place(editor, 0, { x: at.x, y: at.y + 100 });
+	const cable = await place(editor, 12, { x: at.x + 220, y: at.y + 150 });
+	await select(editor, router);
+	await setState(editor, 'Planned');
+	await select(editor, cable);
+	await setState(editor, 'To remove');
+	await expectSaved(editor);
+	const ids = [router, cable].map(objectIdOf);
+	const shown = await seen(editor, ids);
+	expect(shown.map(({ tags, label }) => [tags, label])).toEqual([
+		[['P'], 'Router'],
+		[[], 'R']
+	]);
+
+	// The viewer sees the records and the tags.
+	await expect.poll(() => seen(page, ids)).toEqual(shown);
+
+	// It selects nothing, so segl's panel never shows, and it has no library.
+	const versions = async (browser: Page) =>
+		(await scene(browser)).map((element) => [element.id, element.version]);
+	const before = await versions(page);
+	await lookAt(page, at.x + 200, at.y + 150);
+	for (const objectId of ids) {
+		await select(page, (await holder(page, objectId))!);
+		await expect(panel(page)).toHaveCount(0);
+		await page.keyboard.press('Delete');
+	}
+	await expect(page.locator('.default-sidebar-trigger')).toHaveCount(0);
+	expect(await versions(page)).toEqual(before);
+	expect(await seen(editor, ids)).toEqual(shown);
 });
 
 test('a browser without a pass is still someone on the slot, with a name of its own', async ({

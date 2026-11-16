@@ -14,7 +14,7 @@ The gate passed on 2026-11-13, on commit `00ea07f` (T13).
 
 Symbol palette and typed links from the draft1 baseline: cable, circuit, relationship, neighbor, connector. Drawing stays separate from any future inventory record. This phase still uses the open slots or, if P2's workspaces exist, the same canvas adapter. It does not query live network gear.
 
-The first task is T15 in `draft2/TASKS.md`, queued on 2026-11-16: 12 device kinds and 5 link kinds from the editor's library, a small segl panel, and a letter tag for the state. segl sets no color. Named interfaces (draft1 N-006) come after it.
+T15 built the first part on 2026-11-16 (`REQUIREMENTS.md`, N-001 to N-005; D2-038): 12 device kinds and 5 link kinds in the editor's library, a small segl panel, and a letter tag for the state. segl sets no color. Each record rides in its element's `customData`. Named interfaces at a link's ends (draft1 N-006, L-001) come next.
 
 ## P2 — Inventory files and protected workspaces (L-002, L-004)
 

@@ -129,6 +129,17 @@ A slot's live scene is in its room, in memory, from the first connection to the 
 
 The elements of one slot come to at most `max_scene_bytes` as JSON, each counted as the server writes it. A batch that would take the scene over the limit is refused whole with `scene_too_large`. A batch that makes the scene smaller is always taken, so a slot whose limit was lowered can still be emptied.
 
+## Network objects (P1)
+
+A network object lives in the scene, on its elements, as `customData.segl` (D2-038). No table holds one, and no route or service serves one.
+
+- A device is a group: its card, which is a rectangle with the device's name as its label, the lines of its glyph, and its tag when it has one. The card carries the record `{ "schemaVersion": 1, "objectId", "objectType", "state" }`.
+- A link is an arrow, and carries the same record. Its ends are the editor's bindings to the cards. The record keeps no copy of them, and a link with an end on nothing is legal.
+- A device's tag is a text in its group, with `{ "schemaVersion": 1, "objectId", "part": "tag" }`. A link's tag is the start of its label.
+- `objectId` is a random UUID the page makes when the object is placed. It is not an element id. `objectType` is one of the 12 device kinds or the 5 link kinds (`REQUIREMENTS.md`, N-001 and N-002), with the device kinds `wireless_ap` and `voip_phone` in that spelling. `state` is `existing`, `planned`, or `remove`.
+- The page reads a record strictly: exactly one of the two shapes, at schema version 1, with a lowercase UUID and a known kind and state, on an element of the right type. A device's record is on a rectangle, an ellipse, or a diamond, a link's on an arrow, and a tag's on a text. Anything else is no record, and the element is freeform.
+- The server stores and sends `customData` as it arrived, as it does every field it does not read. It checks nothing in a record.
+
 ## Explicitly not created in P0
 
-No `board`, `workspace`, `user`, `session`, `network_object`, `interface`, `network_link`, `data_source`, or `import_run` tables. Protected workspace storage arrives with L-004, in tables that slot queries do not join.
+No `board`, `workspace`, `user`, `session`, `network_object`, `interface`, `network_link`, `data_source`, or `import_run` tables. Protected workspace storage arrives with L-004, in tables that slot queries do not join. P1 adds none of these tables either: its network objects are in the scene.

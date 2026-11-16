@@ -172,3 +172,10 @@ browser = [
 
 [rows.T-020]
 pytest = ["tests/test_networks.py"]
+
+[rows.T-022]
+pytest = ["tests/test_reconcile.py::test_the_kept_element_is_the_one_that_arrived_whole"]
+browser = [
+    "network.spec.ts",
+    "access.spec.ts > a browser without a pass sees the tags of network objects and changes nothing",
+]

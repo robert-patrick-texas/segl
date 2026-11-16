@@ -20,8 +20,9 @@
  * It is also how the bootstrap fixture, `src/segl/empty_scene.json`, was
  * captured (docs/DEVELOPMENT.md). `reconcile()` is the editor's own rule for
  * which copy of an element is kept. `images()` says which images have their
- * files. The handle exposes nothing the page's own user cannot already see,
- * and changes nothing.
+ * files. `view()` says where the scene is on the canvas, so a test can point
+ * at an element. The handle exposes nothing the page's own user cannot
+ * already see, and changes nothing.
  */
 import { serializeAsJSON } from '@excalidraw/excalidraw';
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
@@ -48,6 +49,12 @@ export interface CanvasHandle {
 	 * file, or null while the canvas does not hold the file.
 	 */
 	images(): string;
+	/**
+	 * Where the scene is on the canvas, as JSON text: `scrollX`, `scrollY`,
+	 * and `zoom`. A scene point is at `(x + scrollX) * zoom` from the
+	 * canvas's left edge, and the same for y.
+	 */
+	view(): string;
 }
 
 declare global {
@@ -93,6 +100,10 @@ export function publishHandle(api: ExcalidrawImperativeAPI): void {
 						mimeType: (fileId && files.get(fileId)?.mimeType) || null
 					}))
 			);
+		},
+		view: () => {
+			const { scrollX, scrollY, zoom } = api.getAppState();
+			return JSON.stringify({ scrollX, scrollY, zoom: zoom.value });
 		}
 	};
 }

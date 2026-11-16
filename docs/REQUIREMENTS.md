@@ -1,6 +1,6 @@
 # Requirements
 
-Priority **M** is required for the MVP gate. **L** is recorded so it is not built early. Draft1 ids are noted where the meaning changed.
+Priority **M** is required for its phase's gate: P0's was the MVP gate. **L** is recorded so it is not built early. Draft1 ids are noted where the meaning changed.
 
 ## P0 — nine-slot collaborative whiteboard
 
@@ -26,11 +26,23 @@ Priority **M** is required for the MVP gate. **L** is recorded so it is not buil
 | S-018 | M | Internal networks | With `internal_networks` set, segl answers no request and no WebSocket handshake from an address outside those networks. Loopback is inside. With the list empty, segl answers every address. |
 | S-019 | M | Updates | `segl update` installs a newer release from GitHub on an installed `.deb`, by hand or from a nightly timer that is off until the site turns it on. It installs only a release whose signature verifies against the keys the installed package ships. It can go through a proxy. It adds a new version's statements to the site's settings and nginx files and keeps every line the site wrote. It checks the settings and `nginx -t` before it starts the new version, and goes back to the previous version when a check fails. |
 
+## P1 — network objects on a canvas
+
+Draft1's N-001 to N-005, built in T15 (D2-038). A record rides in its element's `customData` (`DATA-MODEL.md`, network objects).
+
+| ID | Pri | Requirement | Acceptance |
+|---|---|---|---|
+| N-001 | M | Device library | segl's library, in the editor's library panel, holds 12 device kinds: router, switch, firewall, Wi-Fi AP, server, workstation, printer, VoIP phone, mobile, host, cloud (a provider's transport), and other. Other is a device of none of the other kinds. Draft1's "unknown device" is gone. |
+| N-002 | M | Typed links | The library holds 5 link kinds, each a line style: cable, circuit, neighbor, relationship, and connector. A link's ends are the editor's bindings to devices, and stay on them as they move. segl's panel sets a link's kind. |
+| N-003 | M | Object id and name | Each object has a random UUID the page makes when it is placed. It is not an element id. A copy gets a new one, and a cut and a paste keeps it. A device's name is its label. |
+| N-004 | M | Existing, planned, to remove | segl's panel sets the state. Planned shows `P` and To remove shows `R`, at a device's top right and at the start of a link's label. Existing shows none. segl never sets a color. Every browser on the slot sees the state, and it is kept. |
+| N-005 | M | Drawing and data apart | A record is the drawing's own. Deleting a shape deletes only the drawing: no inventory record exists for it to change. |
+
 ## Later — do not implement in P0
 
 | ID | Requirement |
 |---|---|
-| L-001 | Network symbol palette, typed links, and observed-versus-planned styling (draft1 N-001–N-006). |
+| L-001 | Named interfaces at a link's ends, where the data has them (draft1 N-006). Draft1's N-001 to N-005 are P1, above (T15). |
 | L-002 | CSV, JSON, and TOML inventory import. Slot APIs never read that data. |
 | L-003 | PostgreSQL repository implementation, when a deployment outgrows SQLite. |
 | L-004 | Login with a bearer token in `localStorage`, and protected boards at `/{team}/{project}/{board-slug}`. |
