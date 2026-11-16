@@ -480,8 +480,14 @@ export async function canvasImages(page: Page): Promise<CanvasImage[]> {
 
 /**
  * Place an image by dropping a file on the canvas, `x` and `y` from its top
- * left corner, as a person drags one in from a folder. Returns the image once
- * the editor holds it with its file.
+ * left corner, as a person drags one in from a folder. `file` is a PNG, as
+ * `png` makes. Returns the image once the editor holds it with its file and
+ * has given it the file's own size.
+ *
+ * Until the file is decoded the editor shows a placeholder of 100 by 100,
+ * then sizes the element to the image and centers it where the placeholder
+ * was. On a busy machine the file can already be held while the placeholder
+ * is still there, and its place is not yet the one every browser ends with.
  */
 export async function dropImage(
 	page: Page,
@@ -489,6 +495,8 @@ export async function dropImage(
 	x: number,
 	y: number
 ): Promise<CanvasImage> {
+	// A PNG's width and height are the first fields of its IHDR chunk.
+	const size = `${file.readUInt32BE(16)}x${file.readUInt32BE(20)}`;
 	const before = new Set((await canvasImages(page)).map((image) => image.id));
 	await dropFile(page, { name: 'picture.png', type: 'image/png', bytes: file }, x, y);
 	let placed: CanvasImage | undefined;
@@ -496,11 +504,11 @@ export async function dropImage(
 		.poll(
 			async () => {
 				placed = (await canvasImages(page)).find((image) => !before.has(image.id));
-				return placed?.mimeType ?? null;
+				return placed ? `${placed.mimeType} ${placed.width}x${placed.height}` : null;
 			},
-			{ message: 'the dropped image is on the canvas with its file' }
+			{ message: 'the dropped image is on the canvas with its file, at its own size' }
 		)
-		.toBe('image/png');
+		.toBe(`image/png ${size}`);
 	return placed!;
 }
 
