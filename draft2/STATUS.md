@@ -1321,3 +1321,14 @@ This file is the source of truth for what is done and what to do next. Update it
     - The image cache's first hit. The next CI run is the first that can have one.
     - `upgrade` with the new suite: no component is behind now.
     - A run of more than three pytest files waits for a busy host as the whole suite does, here 3 minutes 45 seconds for a run of 14 seconds. That is the standing rule, and it is unchanged.
+- 2026-11-15: Version 0.2.0 is cut. The user asked for it with the entry above: "cut 0.1.1 that includes the unreleased items". `cut` steps the minor number for `Changed` bullets, and the user chose that rule over 0.1.1. It is not published: `publish` tags and signs, and the signing asks for the key's passphrase at the user's terminal. Evidence:
+  - `python3 scripts/release.py cut` on the clean tree of `97e3eb0`, with Node 26.13.1 first on `PATH` and the browser from the Playwright 1.65.1 image through `PW_WS_ENDPOINT`, printed ``cut 0.2.0. Commit and push, wait for CI, then run `release.py publish`.`` and exited 0 after 4 minutes 11 seconds:
+    - The gate passed. fastapi had moved in `0fa8ef3`.
+    - `known good: the checks of what changed passed here (2026-11-15T20:29:55-05:00). Changed since: 1 file`: `draft2/STATUS.md`, so the documentation site's check and `tests/test_license_headers.py`, `6 passed in 1.43s`. Two seconds.
+    - `checking the version change to 0.2.0`, 4 files: `uv sync`, ruff, ty, the build, and the documentation site side by side, then `e2e/slot.spec.ts`, which reads the version, `39 passed` in 1.4 minutes, and all of pytest, `2125 passed in 117.03s` in one worker after 32 seconds of waiting for another session's load.
+    - The cut of 0.1.0 took 5 minutes. It ran the whole suite on the tree before the version moved, and pytest, Vitest, and the build on the moved tree were run by hand after it.
+  - What it wrote: `version = "0.2.0"` in `versions.toml`, `pyproject.toml`, and `uv.lock`, and in `CHANGELOG.md` the heading `## 0.2.0 — 2026-11-15` over what was `Unreleased`, with an empty `Unreleased` above it.
+  - `python3 scripts/release.py notes` prints the notes of 0.2.0: the summary, New, Changed, and Fixed, then `### Lines of code` with `| **All** | **230** | **36,574** | **9,071** | **7,506** | **24,810** | **4,258** |` and the statement, then `### Versions` with `| segl | 0.2.0 |`. No component is held, so there is no Additional Notes heading. This is the first cut with the two tables and with the progress output.
+  - `README.md` is unchanged: it names only the first release.
+  - Not done: the tag, the signature, and the GitHub Release. They are `uv run scripts/release.py publish`, in the user's own terminal, once CI has passed on this commit. `publish` runs the install test again first.
+  - Not exercised yet: an update from one real release to a newer one. With 0.2.0 published, an installed 0.1.0 can take it with `segl update`.

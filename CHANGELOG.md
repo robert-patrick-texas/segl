@@ -4,6 +4,8 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
+## 0.2.0 — 2026-11-15
+
 Checks wait less, since the suite runs side by side and only for what changed and CI splits the browser tests in two, and the release script says what it is doing and counts segl's own lines of code.
 
 ### New
