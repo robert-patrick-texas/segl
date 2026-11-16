@@ -27,7 +27,7 @@ Do not use pip, poetry, pnpm, yarn, a virtualenv made by hand, or a Playwright i
 
 ## Browsers for the tests
 
-`@playwright/test` drives Chromium. `npx playwright install chromium`, run in `web/`, fetches the browser into the user's cache. Where Chromium's system libraries are missing on the host, run the browser from the Playwright image and point the tests at it, as Sunstone does:
+`@playwright/test` drives Chromium. In `web/`, `npx playwright install chromium` fetches the browser into the user's cache, and `npx playwright install-deps chromium` installs its system libraries through `sudo`, as CI's `--with-deps` does. The tests then start the browser on the host, headless, with no container. Each Playwright release has its own browser build: run the first command again after the pin moves. Where the libraries cannot be installed, run the browser from the Playwright image and point the tests at it, as Sunstone does:
 
 ```console
 $ docker run --rm --network host --init mcr.microsoft.com/playwright:v<version>-noble \
