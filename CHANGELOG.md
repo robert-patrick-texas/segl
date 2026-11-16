@@ -4,6 +4,8 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
+## 0.4.0 — 2026-11-16
+
 A page that opens a slot gets its scene once: the socket sends only what changed since the copy the page loaded.
 
 ### Changed

@@ -1438,3 +1438,14 @@ This file is the source of truth for what is done and what to do next. Update it
   - `README.md` is unchanged: what a visitor reads of segl did not change. `CHANGELOG.md` has a summary and two Changed bullets under `Unreleased`.
   - Not done or not exercised: the dev container; a browser that comes back across a restart with its mark, which pytest holds against a real process; and the page's guard against a `scene` that is not whole for another epoch, which this server never sends and Vitest holds.
   - Next task: NONE.
+- 2026-11-16: Version 0.4.0 is cut. The user asked for it: "cut 0.4.0". `cut` steps the minor number for New and Changed bullets, and 0.4.0 is that step. It is not published: `publish` tags and signs, and the signing asks for the key's passphrase at the user's terminal. Evidence:
+  - `python3 scripts/release.py check --gate` printed `gate: every component is current or held` and exited 0.
+  - `python3 scripts/release.py cut` on the clean tree of `285e9e2`, with Node 26.13.1 first on `PATH` and the browser from the Playwright 1.65.1 image through `PW_WS_ENDPOINT`, printed ``cut 0.4.0. Commit and push, wait for CI, then run `release.py publish`.`` and exited 0 after 1 minute 58 seconds:
+    - `known good: the checks of what changed passed here (2026-11-16T09:04:02-05:00). Changed since: 0 files`, then `nothing to run`.
+    - `checking the version change to 0.4.0`, 4 files: `uv sync`, then ruff, ty, the build, and the documentation site side by side, then `e2e/slot.spec.ts`, `39 passed` in 0.8 minutes, with all of pytest beside it, `2203 passed in 94.42s` in one worker.
+    - 0.3.0's cut took 2 minutes 7 seconds.
+  - What it wrote: `version = "0.4.0"` in `versions.toml`, `pyproject.toml`, and `uv.lock`, and in `CHANGELOG.md` the heading `## 0.4.0 — 2026-11-16` over what was `Unreleased`, with an empty `Unreleased` above it.
+  - `python3 scripts/release.py notes` prints the notes of 0.4.0: the summary and Changed, then `### Lines of code` with `| **All** | **233** | **38,354** | **9,382** | **7,645** | **26,349** | **4,360** |` and the statement, then `### Versions` with `| segl | 0.4.0 |`. No component is held, so there is no Additional Notes heading.
+  - The release changes the socket's protocol (T14, D2-037). By design, a page from 0.3.0 still open during an update sends no mark and gets the whole scene. `publish`'s update check installs 0.3.0 and updates it to 0.4.0, and opens no browser, so that case is not exercised.
+  - `README.md` is unchanged: it names only the first release.
+  - Not done: the tag, the signature, and the GitHub Release. They are `uv run scripts/release.py publish`, in the user's own terminal, once CI has passed on this commit. CI's `segl-deb` artifact, which `publish` compares its package with, is kept 7 days.
