@@ -286,6 +286,8 @@ def tree(tmp_path: Path) -> Path:
     """Create a small project tree with versions.toml and its mirrors. No git."""
     root = tmp_path / "work"
     files = {
+        # As in segl's own tree: what the package build and `publish` write.
+        ".gitignore": "dist/\n",
         "versions.toml": VERSIONS,
         "pyproject.toml": PYPROJECT,
         ".python-version": "3.15.2\n",

@@ -34,6 +34,7 @@ import release_edits as edits
 import release_notes as notes
 import release_sign as signing
 from release_components import Sources, gate_passes, load_versions, report
+from release_log import logged
 from release_proc import CommandError, Runner
 from release_progress import PACKAGE_STAGES, UPDATE_STAGES, Progress, say
 from suite import run_changed, work_tree
@@ -103,6 +104,11 @@ def real_update(runner: Runner, previous: str, folder: str | None) -> tuple[bool
 def package_path(root: Path, version: str) -> Path:
     """Return where the package build writes the .deb of ``version``."""
     return root / "dist" / f"segl_{version}_amd64.deb"
+
+
+def log_path(root: Path, version: str) -> Path:
+    """Return where `publish` keeps all it printed for ``version``."""
+    return root / "dist" / f"publish-{version}.log"
 
 
 def bump_version(current: str, topics: dict[str, list[str]]) -> str:
@@ -373,9 +379,132 @@ class Preflight:
         return True
 
 
-def publish(root: Path, runner: Runner, sources: Sources) -> int:
-    """Tag the release and create the GitHub Release. Return the exit status."""
+def _plain_notes(text: str) -> str:
+    """Return notes as they read: GitHub may end a line or the text otherwise."""
+    return text.replace("\r\n", "\n").rstrip()
+
+
+class Released:
+    """The checks `publish` makes once the release is out, as GitHub serves it.
+
+    They look at what a person or a server gets: the tag on origin, the
+    release GitHub calls the latest, its files, and its notes. Each check
+    runs and says how it went, since a failure cannot take the release back.
+    """
+
+    def __init__(
+        self, runner: Runner, repo: str, tag: str, notes_sent: str, files: list[Path]
+    ) -> None:
+        self.runner, self.repo, self.tag = runner, repo, tag
+        self.notes_sent, self.files = notes_sent, files
+
+    def steps(self) -> list[tuple[str, Callable[[], tuple[bool, str]]]]:
+        """Return each check with its name, in the order they run."""
+        steps = [
+            (f"tag {self.tag} on {REMOTE} is HEAD", self.tag_on_head),
+            (f"releases/latest is {self.tag}", self.latest),
+        ]
+        if self.files:
+            steps.append(("the release has the files from dist/", self.release_files))
+        steps.append(("the notes on GitHub are the notes sent", self.notes))
+        return steps
+
+    def release(self, which: str) -> dict:
+        """Return what GitHub's API says of ``releases/<which>``.
+
+        Raises:
+            CommandError: When GitHub cannot be asked, or its answer cannot be read.
+        """
+        answer = self.runner.run(["gh", "api", f"repos/{self.repo}/releases/{which}"]).stdout
+        try:
+            found = json.loads(answer)
+        except ValueError as exc:
+            raise CommandError(f"releases/{which} gave no JSON: {exc}") from exc
+        if not isinstance(found, dict):
+            raise CommandError(f"releases/{which} gave no release")
+        return found
+
+    def tag_on_head(self) -> tuple[bool, str]:
+        head = self.runner.run(["git", "rev-parse", "HEAD"]).stdout.strip()
+        peeled = f"refs/tags/{self.tag}^{{}}"
+        listed = self.runner.run(["git", "ls-remote", "--tags", REMOTE, peeled]).stdout.split()
+        if not listed:
+            return False, f"{REMOTE} has no tag {self.tag}"
+        if listed[0] != head:
+            return False, f"it is on {listed[0][:7]}, and HEAD is {head[:7]}"
+        return True, head[:7]
+
+    def latest(self) -> tuple[bool, str]:
+        found = self.release("latest")
+        name = found.get("tag_name")
+        if name != self.tag:
+            return False, f"it is {name}"
+        return True, f"published {found.get('published_at')}"
+
+    def release_files(self) -> tuple[bool, str]:
+        assets = self.release(f"tags/{self.tag}").get("assets") or []
+        digests = {str(asset.get("name")): asset.get("digest") for asset in assets}
+        names = [path.name for path in self.files]
+        problems = []
+        missing = [name for name in names if name not in digests]
+        if missing:
+            problems.append(f"missing {', '.join(missing)}")
+        other = [
+            path.name
+            for path in self.files
+            if path.name in digests and digests[path.name] != f"sha256:{signing.sha256_of(path)}"
+        ]
+        if other:
+            problems.append(f"not the bytes in dist/: {', '.join(other)}")
+        extra = sorted(set(digests) - set(names))
+        if extra:
+            problems.append(f"not sent: {', '.join(extra)}")
+        if problems:
+            return False, "; ".join(problems)
+        return True, ", ".join(names)
+
+    def notes(self) -> tuple[bool, str]:
+        shown = _plain_notes(str(self.release(f"tags/{self.tag}").get("body") or ""))
+        sent = _plain_notes(self.notes_sent)
+        if shown == sent:
+            return True, f"{len(sent):,} characters"
+        pairs = zip(shown.splitlines(), sent.splitlines(), strict=False)
+        line = next((n for n, (a, b) in enumerate(pairs, 1) if a != b), None)
+        if line is None:
+            return False, "GitHub's notes are longer or shorter than those sent"
+        return False, f"line {line} differs"
+
+    def run(self) -> tuple[int, int]:
+        """Run every check. Return how many ran and how many failed."""
+        steps = self.steps()
+        failed = 0
+        for name, step in steps:
+            try:
+                ok, detail = step()
+            except CommandError as exc:
+                ok, detail = False, str(exc)
+            print(f"{'ok  ' if ok else 'FAIL'} {name}: {detail}")
+            failed += not ok
+        return len(steps), failed
+
+
+def publish(root: Path, runner: Runner, sources: Sources, now: dt.datetime | None = None) -> int:
+    """Tag the release and create the GitHub Release. Return the exit status.
+
+    All it prints goes to dist/publish-<version>.log as well, so the run can
+    be read afterwards. Each run adds to the log.
+    """
     preflight = Preflight(root, runner, sources)
+    log = log_path(root, preflight.version)
+    head = runner.run(["git", "rev-parse", "--short", "HEAD"], check=False).stdout.strip()
+    when = (now or dt.datetime.now().astimezone()).isoformat(timespec="seconds")
+    with logged(log, f"== publish {preflight.version} at {when}, HEAD {head or 'unknown'}"):
+        say(f"     log: {log.relative_to(root)}")
+        return _publish(root, runner, preflight)
+
+
+def _publish(root: Path, runner: Runner, preflight: Preflight) -> int:
+    """Do the work of `publish`, once its log is open."""
     if not preflight.run():
         print("not published")
         return 1
@@ -424,6 +553,7 @@ def publish(root: Path, runner: Runner, sources: Sources) -> int:
             print(f"ok   {previous} updates to {version}, from the signed files: {said}")
     runner.run(["git", "tag", "-a", tag, "-m", f"segl {version}"])
     runner.run(["git", "push", REMOTE, tag])
+    ran, failed = 0, 0
     if destinations.get("github"):
         with tempfile.TemporaryDirectory() as folder:
             notes_file = Path(folder) / "notes.md"
@@ -432,19 +562,24 @@ def publish(root: Path, runner: Runner, sources: Sources) -> int:
             create += ["--title", f"segl {version}", "--notes-file", str(notes_file)]
             runner.run(create + packages)
         print(f"published {tag} to {preflight.repo}")
+        # As a person sees the release: the tag, the latest, the files, the notes.
+        released = Released(runner, preflight.repo, tag, body, [Path(p) for p in packages])
+        ran, failed = released.run()
         if previous is not None:
             # As a server sees the release: from GitHub, with its own files.
             server = f"a server on {previous} takes {version} from GitHub"
             say(f"     {server}: running `{REAL_UPDATE} {previous}`")
             good, said = real_update(runner, previous, None)
-            if not good:
-                print(f"FAIL {server}: {said}. {tag} is published: read the output above.")
-                return 1
-            print(f"ok   {server}: {said}")
+            print(f"{'ok  ' if good else 'FAIL'} {server}: {said}")
+            ran, failed = ran + 1, failed + (not good)
     if destinations.get("pypi"):
         with tempfile.TemporaryDirectory() as folder:
             runner.run(["uv", "build", "--out-dir", folder])
             built = sorted(str(path) for path in Path(folder).iterdir())
             runner.run(["uv", "publish", *built])
         print(f"published {version} to PyPI")
+    if failed:
+        print(f"done: {tag} is published, but {failed} of {ran} checks after it failed")
+        return 1
+    print(f"done: {tag} is published, and every check passed")
     return 0

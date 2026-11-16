@@ -18,6 +18,7 @@ import datetime as dt
 import hashlib
 import json
 import subprocess
+import sys
 import tomllib
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -73,6 +74,64 @@ def cut_and_commit(root: Path, runner, sources, run_git) -> None:
     run_git(root, "commit", "-q", "-am", "release 0.1.0")
     run_git(root, "push", "-q", "origin", "main")
     runner.calls.clear()
+
+
+def digest_of(path: Path) -> str:
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+class FakeGitHub:
+    """GitHub's side of a release: what `gh release create` made, as the API serves it.
+
+    It answers for origin's copy of the tag too, since the fake runner does
+    not push: origin has the tag `publish` made here. ``latest`` and ``by_tag``
+    change the release as each endpoint gives it, to spoil one of them.
+    """
+
+    TAG = "v0.1.0"
+
+    def __init__(self, repo: Path) -> None:
+        self.repo = repo
+        self.made: dict = {}
+        self.latest: Callable[[dict], dict] = lambda release: release
+        self.by_tag: Callable[[dict], dict] = lambda release: release
+
+    def create(self, argv: Sequence[str]) -> Result:
+        at = list(argv).index("--notes-file")
+        files = [Path(arg) for arg in argv[at + 2 :]]
+        self.made = {
+            "tag_name": argv[3],
+            "draft": False,
+            "prerelease": False,
+            "published_at": "2026-11-12T15:00:00Z",
+            "body": Path(argv[at + 1]).read_text(),
+            "assets": [{"name": path.name, "digest": digest_of(path)} for path in files],
+        }
+        return Result(0)
+
+    def peeled(self, argv: Sequence[str]) -> Result:
+        sha = git(self.repo, "rev-parse", f"{self.TAG}^{{commit}}").strip()
+        return Result(0, f"{sha}\t{argv[-1]}\n")
+
+    def replies(self) -> dict:
+        api = "repos/example/segl/releases"
+        return {
+            ("gh", "release", "create"): self.create,
+            ("gh", "api", f"{api}/latest"): lambda _: Result(
+                0, json.dumps(self.latest(dict(self.made)))
+            ),
+            ("gh", "api", f"{api}/tags/{self.TAG}"): lambda _: Result(
+                0, json.dumps(self.by_tag(dict(self.made)))
+            ),
+            ("git", "ls-remote", "--tags", "origin", f"refs/tags/{self.TAG}^{{}}"): self.peeled,
+        }
+
+
+def git(repo: Path, *args: str) -> str:
+    done = subprocess.run(
+        ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True
+    )
+    return done.stdout
 
 
 def test_version_steps() -> None:
@@ -411,11 +470,7 @@ def test_a_successful_publish_tags_and_creates_the_release_with_the_notes(
     release_key: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    seen: dict[str, str] = {}
-
-    def gh_release(argv: Sequence[str]) -> Result:
-        seen["notes"] = Path(argv[argv.index("--notes-file") + 1]).read_text()
-        return Result(0)
+    github = FakeGitHub(repo)
 
     def package_test(argv: Sequence[str]) -> Result:
         # What the real script does: build this version's package into dist/.
@@ -425,11 +480,7 @@ def test_a_successful_publish_tags_and_creates_the_release_with_the_notes(
 
     runner = fake_runner(
         repo,
-        {
-            ("gh", "api"): json.dumps(GREEN),
-            ("gh", "release"): gh_release,
-            (PACKAGE_TEST,): package_test,
-        },
+        {("gh", "api"): json.dumps(GREEN), (PACKAGE_TEST,): package_test, **github.replies()},
     )
     cut_and_commit(repo, runner, fake_sources(runner), run_git)
     add_package_test(repo, run_git)
@@ -489,13 +540,16 @@ def test_a_successful_publish_tags_and_creates_the_release_with_the_notes(
         check=False,
     )
     assert verified.returncode == 0, verified.stdout + verified.stderr
-    assert seen["notes"].startswith(
+    assert github.made["body"].startswith(
         "The first release. It serves a health route.\n\n### New\n\n- A health route."
     )
-    assert "| **All** | **3** | **1,234** | **56** | **1,034** | **200** | **-** |" in seen["notes"]
+    assert (
+        "| **All** | **3** | **1,234** | **56** | **1,034** | **200** | **-** |"
+        in github.made["body"]
+    )
     assert (
         "### Versions\n\n| Item | Version |\n|---|---|\n| Python | 3.15.2 |\n| segl | 0.1.0 |"
-        in (seen["notes"])
+        in github.made["body"]
     )
     steps = ([PACKAGE_TEST], ["ssh-keygen", "-Y"], ["git", "tag"], ["git", "push"])
     order = [call[:2] for call in runner.calls if call[:2] in (*steps, ["gh", "release"])]
@@ -510,6 +564,16 @@ def test_a_successful_publish_tags_and_creates_the_release_with_the_notes(
     ]
     assert [call[2] for call in runner.called("ssh-keygen", "-Y")] == ["sign", "verify"]
     assert not runner.called("uv", "publish"), "PyPI is off"
+    # Then the release as GitHub serves it, and one line that says how it all went.
+    sent = github.made["body"].rstrip()
+    assert said[said.index("published v0.1.0 to example/segl") + 1 :] == [
+        f"ok   tag v0.1.0 on origin is HEAD: {head[:7]}",
+        "ok   releases/latest is v0.1.0: published 2026-11-12T15:00:00Z",
+        "ok   the release has the files from dist/: "
+        "segl_0.1.0_amd64.deb, SHA256SUMS, SHA256SUMS.sig",
+        f"ok   the notes on GitHub are the notes sent: {len(sent):,} characters",
+        "done: v0.1.0 is published, and every check passed",
+    ]
 
 
 def test_a_signature_the_signers_file_does_not_vouch_for_is_not_published(
@@ -566,7 +630,8 @@ def test_pypi_is_used_only_when_enabled(repo: Path, fake_runner, fake_sources, r
     path = repo / "versions.toml"
     path.write_text(path.read_text().replace("pypi = false", "pypi = true"))
     run_git(repo, "commit", "-q", "-am", "enable pypi")
-    runner = fake_runner(repo, {("gh", "api"): json.dumps(GREEN)})
+    github = FakeGitHub(repo)
+    runner = fake_runner(repo, {("gh", "api"): json.dumps(GREEN), **github.replies()})
     cut_and_commit(repo, runner, fake_sources(runner), run_git)
 
     assert publish(repo, runner, fake_sources(runner)) == 0
@@ -760,7 +825,9 @@ def releases(*tags: str) -> Result:
     return Result(0, json.dumps(rows))
 
 
-def publishable(repo: Path, fake_runner, fake_sources, run_git, replies: dict):
+def publishable(
+    repo: Path, fake_runner, fake_sources, run_git, replies: dict, github: FakeGitHub | None = None
+):
     """Cut 0.1.0 in ``repo``, with the install test and the update check, ready to publish."""
 
     def package_test(_argv: Sequence[str]) -> Result:
@@ -768,8 +835,15 @@ def publishable(repo: Path, fake_runner, fake_sources, run_git, replies: dict):
         (repo / "dist" / "segl_0.1.0_amd64.deb").write_bytes(b"deb")
         return Result(0, "systemd-test: all checks passed\n")
 
+    github = github or FakeGitHub(repo)
     runner = fake_runner(
-        repo, {("gh", "api"): json.dumps(GREEN), (PACKAGE_TEST,): package_test, **replies}
+        repo,
+        {
+            ("gh", "api"): json.dumps(GREEN),
+            (PACKAGE_TEST,): package_test,
+            **github.replies(),
+            **replies,
+        },
     )
     cut_and_commit(repo, runner, fake_sources(runner), run_git)
     add_package_test(repo, run_git)
@@ -807,7 +881,10 @@ def test_publish_checks_the_update_from_the_last_release_before_the_tag_and_from
     assert f"     v0.0.9 updates to 0.1.0: running `{REAL_UPDATE} v0.0.9 dist`" in out
     assert "    0:00  real-update: all 39 checks passed" in out
     assert "ok   v0.0.9 updates to 0.1.0, from the signed files: all 39 checks passed" in out
-    assert out[-1] == "ok   a server on v0.0.9 takes 0.1.0 from GitHub: all 39 checks passed"
+    assert out[-2:] == [
+        "ok   a server on v0.0.9 takes 0.1.0 from GitHub: all 39 checks passed",
+        "done: v0.1.0 is published, and every check passed",
+    ]
 
 
 def test_a_release_the_last_one_does_not_update_to_is_not_published(
@@ -863,10 +940,10 @@ def test_a_release_a_server_cannot_take_from_github_is_said_and_fails(
     assert publish(repo, runner, fake_sources(runner)) == 1
 
     assert runner.called("gh", "release", "create"), "it was published"
-    assert capsys.readouterr().out.splitlines()[-1] == (
-        "FAIL a server on v0.0.9 takes 0.1.0 from GitHub: real-update: 2 of 45 checks FAILED. "
-        "v0.1.0 is published: read the output above."
-    )
+    assert capsys.readouterr().out.splitlines()[-2:] == [
+        "FAIL a server on v0.0.9 takes 0.1.0 from GitHub: real-update: 2 of 45 checks FAILED",
+        "done: v0.1.0 is published, but 1 of 5 checks after it failed",
+    ]
 
 
 def test_releases_that_cannot_be_listed_stop_publish_before_the_tag(
@@ -894,3 +971,196 @@ def test_the_last_release_is_the_newest_other_than_this_one(repo: Path, fake_run
     assert previous_release(runner, "example/segl", "v0.2.0") == "v0.1.0"
     (listed, _) = runner.called("gh", "release", "list")
     assert "--exclude-drafts" in listed and "--exclude-pre-releases" in listed
+
+
+PEELED = ("git", "ls-remote", "--tags", "origin", "refs/tags/v0.1.0^{}")
+LATEST = ("gh", "api", "repos/example/segl/releases/latest")
+
+
+def without_sig(release: dict) -> dict:
+    return {**release, "assets": [a for a in release["assets"] if a["name"] != SIG_NAME]}
+
+
+def other_deb(release: dict) -> dict:
+    def spoil(asset: dict) -> dict:
+        return (
+            {**asset, "digest": "sha256:" + "0" * 64} if asset["name"].endswith(".deb") else asset
+        )
+
+    return {**release, "assets": [spoil(a) for a in release["assets"]]}
+
+
+@pytest.mark.parametrize(
+    ("spoil", "failed"),
+    [
+        (
+            lambda r, g: r.replies.update({PEELED: ""}),
+            "tag v0.1.0 on origin is HEAD: origin has no",
+        ),
+        (
+            lambda r, g: r.replies.update({PEELED: f"{'c' * 40}\trefs/tags/v0.1.0^{{}}\n"}),
+            "tag v0.1.0 on origin is HEAD: it is on ccccccc, and HEAD is ",
+        ),
+        (
+            lambda r, g: setattr(g, "latest", lambda rel: {**rel, "tag_name": "v0.0.9"}),
+            "releases/latest is v0.1.0: it is v0.0.9",
+        ),
+        (
+            lambda r, g: r.replies.update({LATEST: CommandError("gh api exited: HTTP 502")}),
+            "releases/latest is v0.1.0: gh api exited: HTTP 502",
+        ),
+        (
+            lambda r, g: r.replies.update({LATEST: "<html>"}),
+            "releases/latest is v0.1.0: releases/latest gave no JSON",
+        ),
+        (
+            lambda r, g: setattr(g, "by_tag", without_sig),
+            "the release has the files from dist/: missing SHA256SUMS.sig",
+        ),
+        (
+            lambda r, g: setattr(g, "by_tag", other_deb),
+            "the release has the files from dist/: not the bytes in dist/: segl_0.1.0_amd64.deb",
+        ),
+        (
+            lambda r, g: setattr(
+                g, "by_tag", lambda rel: {**rel, "assets": [*rel["assets"], {"name": "x.txt"}]}
+            ),
+            "the release has the files from dist/: not sent: x.txt",
+        ),
+        (
+            lambda r, g: setattr(
+                g, "by_tag", lambda rel: {**rel, "body": "Other.\n" + rel["body"]}
+            ),
+            "the notes on GitHub are the notes sent: line 1 differs",
+        ),
+        (
+            lambda r, g: setattr(
+                g, "by_tag", lambda rel: {**rel, "body": "\n".join(rel["body"].splitlines()[:3])}
+            ),
+            "the notes on GitHub are the notes sent: GitHub's notes are longer or shorter",
+        ),
+    ],
+    ids=[
+        "no-tag",
+        "tag-elsewhere",
+        "latest-older",
+        "latest-unasked",
+        "latest-not-json",
+        "file-missing",
+        "file-other-bytes",
+        "file-extra",
+        "notes-differ",
+        "notes-cut",
+    ],
+)
+def test_a_check_after_the_release_that_fails_is_said_and_the_others_still_run(
+    repo: Path,
+    fake_runner,
+    fake_sources,
+    run_git,
+    release_key: Path,
+    capsys,
+    spoil: Callable[..., None],
+    failed: str,
+) -> None:
+    github = FakeGitHub(repo)
+    runner = publishable(
+        repo,
+        fake_runner,
+        fake_sources,
+        run_git,
+        {("gh", "release", "list"): releases("v0.0.9"), (REAL_UPDATE,): PASSED},
+        github,
+    )
+    spoil(runner, github)
+
+    assert publish(repo, runner, fake_sources(runner)) == 1
+
+    out = capsys.readouterr().out.splitlines()
+    (line,) = [said for said in out if said.startswith("FAIL")]
+    assert line.startswith(f"FAIL {failed}")
+    # The release is out: the checks after the failed one still ran.
+    after = out[out.index("published v0.1.0 to example/segl") + 1 :]
+    assert len([said for said in after if said.startswith(("ok   ", "FAIL "))]) == 5
+    assert len(runner.called(REAL_UPDATE)) == 2
+    assert out[-2] == "ok   a server on v0.0.9 takes 0.1.0 from GitHub: all 39 checks passed"
+    assert out[-1] == "done: v0.1.0 is published, but 1 of 5 checks after it failed"
+
+
+def test_notes_that_github_ends_its_own_way_are_the_notes_sent(
+    repo: Path, fake_runner, fake_sources, run_git, release_key: Path, capsys
+) -> None:
+    github = FakeGitHub(repo)
+    github.by_tag = lambda rel: {**rel, "body": rel["body"].replace("\n", "\r\n") + "\r\n\r\n"}
+    runner = publishable(
+        repo, fake_runner, fake_sources, run_git, {("gh", "release", "list"): releases()}, github
+    )
+
+    assert publish(repo, runner, fake_sources(runner)) == 0
+
+    out = capsys.readouterr().out.splitlines()
+    assert any(line.startswith("ok   the notes on GitHub are the notes sent: ") for line in out)
+
+
+def test_publish_keeps_all_it_prints_in_a_log_and_adds_each_run(
+    repo: Path, fake_runner, fake_sources, run_git, release_key: Path, capsys
+) -> None:
+    runner = publishable(
+        repo,
+        fake_runner,
+        fake_sources,
+        run_git,
+        {("gh", "release", "list"): releases("v0.0.9"), (REAL_UPDATE,): PASSED},
+    )
+    capsys.readouterr()  # what `cut` said
+    zone = dt.timezone(dt.timedelta(hours=-5))
+    terminal = sys.stdout
+    head = run_git(repo, "rev-parse", "--short", "HEAD").strip()
+    log = repo / "dist" / "publish-0.1.0.log"
+
+    assert (
+        publish(repo, runner, fake_sources(runner), dt.datetime(2026, 11, 12, 10, tzinfo=zone)) == 0
+    )
+
+    assert sys.stdout is terminal
+    first = capsys.readouterr().out
+    assert first.splitlines()[0] == "     log: dist/publish-0.1.0.log"
+    assert first.rstrip().endswith("done: v0.1.0 is published, and every check passed")
+    header = f"== publish 0.1.0 at 2026-11-12T10:00:00-05:00, HEAD {head}\n"
+    assert log.read_text() == header + first
+
+    # Run again: the log in dist/ leaves the tree clean, and the tag stops it.
+    assert (
+        publish(repo, runner, fake_sources(runner), dt.datetime(2026, 11, 12, 11, tzinfo=zone)) == 1
+    )
+
+    second = capsys.readouterr().out
+    assert "ok   the working tree is clean: 0 changed or untracked path(s)" in second
+    assert second.rstrip().endswith("not published")
+    again = f"== publish 0.1.0 at 2026-11-12T11:00:00-05:00, HEAD {head}\n"
+    assert log.read_text() == header + first + again + second
+
+
+def test_an_error_that_ends_publish_is_in_its_log(
+    repo: Path, fake_runner, fake_sources, run_git, release_key: Path, capsys
+) -> None:
+    refused = CommandError("gh release create exited with status 1: HTTP 422")
+    runner = publishable(
+        repo,
+        fake_runner,
+        fake_sources,
+        run_git,
+        {("gh", "release", "list"): releases(), ("gh", "release", "create"): refused},
+    )
+    capsys.readouterr()  # what `cut` said
+    terminal = sys.stdout
+
+    with pytest.raises(CommandError):
+        publish(repo, runner, fake_sources(runner))
+
+    assert sys.stdout is terminal
+    written = (repo / "dist" / "publish-0.1.0.log").read_text()
+    assert capsys.readouterr().out in written
+    assert written.rstrip().endswith(
+        "CommandError: gh release create exited with status 1: HTTP 422"
+    )

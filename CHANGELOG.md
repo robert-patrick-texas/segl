@@ -4,6 +4,12 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
+`publish` keeps a log of each run and checks the release as GitHub serves it.
+
+### Changed
+
+- `publish` writes all it prints to `dist/publish-<version>.log`, each run after the last. After the release it checks that tag `v<version>` on `origin` is `HEAD`, that `releases/latest` is this tag, that GitHub's SHA-256 of each file is that of the file in `dist/`, and that GitHub serves the notes sent. Each check after the release runs even when one before it failed, and the last line counts them (`docs/RELEASING.md`).
+
 ## 0.4.0 — 2026-11-16
 
 A page that opens a slot gets its scene once: the socket sends only what changed since the copy the page loaded.
