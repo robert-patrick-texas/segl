@@ -480,7 +480,7 @@ The states: Existing, Planned, and To remove (`existing`, `planned`, `remove`). 
 
 Color is the team's:
 
-- segl never sets or changes a color. The library draws in the editor's default ink. The team colors links by speed or other signs, and devices by organization or manufacturer. Red means trouble to them.
+- segl never sets or changes a color. The library draws in the editor's default ink. The team colors links by speed or other signs, and devices by owner or vendor. Red means trouble to them.
 - A state change touches only the tag. A kind change on a link sets its line style, its width, and its ends, and nothing else.
 - What a person changes by hand in the editor's style menu stays. It does not change the kind or the state, which are data.
 
