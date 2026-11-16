@@ -191,19 +191,28 @@ export async function onPage(page: Page, x: number, y: number): Promise<{ x: num
 /**
  * Scroll the canvas so the scene point is in the middle of the view. The
  * tests share their slot with others, and draw away from what those draw.
+ * Each try reads the canvas's size again, since the editor lays itself out
+ * a moment after the page is resized, and scrolls what is left.
  */
 export async function lookAt(page: Page, x: number, y: number): Promise<void> {
-	const box = await canvasBox(page);
-	await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-	const { scrollX, scrollY, zoom } = await view(page);
-	const middle = { x: box.width / 2 / zoom - scrollX, y: box.height / 2 / zoom - scrollY };
-	await page.mouse.wheel((x - middle.x) * zoom, (y - middle.y) * zoom);
 	await expect
 		.poll(async () => {
-			const now = await view(page);
-			return Math.round(box.width / 2 / now.zoom - now.scrollX - x);
+			const box = await canvasBox(page);
+			const { scrollX, scrollY, zoom } = await view(page);
+			const dx = x - (box.width / 2 / zoom - scrollX);
+			const dy = y - (box.height / 2 / zoom - scrollY);
+			if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return true;
+			await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+			await page.mouse.wheel(dx * zoom, dy * zoom);
+			return false;
 		})
-		.toBe(0);
+		.toBe(true);
+}
+
+/** Resize the page, and wait until the editor's canvas has the new width. */
+export async function resize(page: Page, width: number, height: number): Promise<void> {
+	await page.setViewportSize({ width, height });
+	await expect.poll(async () => Math.round((await canvasBox(page)).width)).toBe(width);
 }
 
 /** The library's items, without the editor's offer to add what is selected. */

@@ -42,6 +42,7 @@ import {
 	openLibrary,
 	panel,
 	place,
+	resize,
 	scene,
 	seen,
 	seglOf,
@@ -587,8 +588,11 @@ test('the panel covers none of the editor tools, at any width', async ({ page },
 	await lookAt(page, at.x + 60, at.y + 50);
 	const router = await place(page, 0, { x: at.x, y: at.y });
 	for (const width of [1280, 800, 390]) {
-		await page.setViewportSize({ width, height: 844 });
+		await resize(page, width, 844);
 		await lookAt(page, router.x + 60, router.y + 50);
+		// Selected afresh at this width, not left over from the last.
+		await clickEmpty(page, router.x + 60, router.y + 250);
+		await expect(panel(page)).toHaveCount(0);
 		await select(page, router);
 		await expect(panel(page)).toBeVisible();
 		const own = (await panel(page).boundingBox())!;
@@ -607,7 +611,7 @@ test('the panel covers none of the editor tools, at any width', async ({ page },
 	}
 
 	// On a wide page the panel moves left of the library while it is open.
-	await page.setViewportSize({ width: 1280, height: 844 });
+	await resize(page, 1280, 844);
 	await lookAt(page, router.x + 60, router.y + 50);
 	await select(page, router);
 	await openLibrary(page);
