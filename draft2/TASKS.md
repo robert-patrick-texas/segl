@@ -395,7 +395,7 @@ As run, on 2026-11-13 and on commit `00ea07f`:
 
 ## T14 — Send a scene once
 
-- Status: next
+- Status: done
 - Requires: T13
 - Requirements: S-002, S-013
 - Read: `docs/ROADMAP.md` (after the gate, send a scene once), `docs/API.md` (the scene route and the WebSocket), `docs/ARCHITECTURE.md` (collaboration), `docs/DECISIONS.md` D2-025, `src/segl/room.py`, `src/segl/saver.py`, `web/src/collab/session.ts`, and the STATUS entries of T11 and of 2026-11-13 on the roadmap entry
