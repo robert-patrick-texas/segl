@@ -10,6 +10,7 @@ The release script says what it is doing while its long steps run, and the relea
 
 - The release notes close with two tables, where they had one. Lines of code is first: `cloc`'s count of the files git tracks, a row for each language, with its code lines split into Product, Tests, and Tooling. A statement under it says that the lines are segl's own and do not count the dependencies. Versions is the second table. The count no longer mixes Markdown in: the documentation is a sentence under the table (`scripts/release_lines.py`, `docs/RELEASING.md`).
 - `scripts/release.py` no longer goes silent for minutes. `cut` and `upgrade` name each command of the suite as it starts and say how it ended, with its time. `publish` says each step of the install test as it comes. A command that has said nothing for 30 seconds gets a `still running` line with the last line of its output (`scripts/release_progress.py`, `docs/RELEASING.md`).
+- fastapi 0.163.1, moved by `scripts/release.py upgrade` after the suite passed with it.
 
 ### Fixed
 

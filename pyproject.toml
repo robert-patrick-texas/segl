@@ -15,7 +15,7 @@ license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.15,<3.16"
 authors = [{ name = "segl contributors" }]
 dependencies = [
-    "fastapi==0.162.7",
+    "fastapi==0.163.1",
     # Plain uvicorn, not [standard], as in vakr and Sunstone.
     "uvicorn==0.54.0",
     # The WebSocket protocol for uvicorn, which has none of its own, and the
