@@ -134,12 +134,12 @@ def with_browser(commands: Sequence[tuple[str, ...]]) -> list[tuple[str, ...]]:
     Nothing is added when no browser test runs, or when the browser runs
     elsewhere.
     """
-    fetch = not browser_elsewhere()
+    if browser_elsewhere():
+        return list(commands)
     out: list[tuple[str, ...]] = []
     for argv in commands:
-        if fetch and argv[1:2] == WEB_E2E[1:2]:
+        if argv[1:2] == WEB_E2E[1:2]:
             out.append(BROWSER)
-            fetch = False
         out.append(argv)
     return out
 
