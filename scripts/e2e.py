@@ -15,7 +15,7 @@
 
 """Run all the browser tests, in as many groups at once as the machine has room for.
 
-    python3 scripts/e2e.py [--report FILE] [-- arguments for `playwright test`]
+    python3 scripts/e2e.py [--report FILE] [--part N/M] [-- arguments for `playwright test`]
 
 `npm --prefix web run e2e` runs the tests one at a time, in one process, and
 is the way to run one spec. This runs the whole suite. It splits the tests
@@ -27,7 +27,13 @@ share their slots, as they are written to.
 
 scripts/capacity.py says how many groups: fewer on a busy machine, more
 where there are more cores and memory, and it waits when there is no room.
-`SEGL_TEST_GROUPS=1` is one group, as before.
+`SEGL_TEST_GROUPS=1` is one group, as before. Spec files named after `--`
+get no more groups than there are of them.
+
+`--part N/M` runs part N of the tests, of M parts: CI runs the parts as jobs
+side by side, each on a machine of its own. Every part must split the tests
+the same way, so each needs `SEGL_TEST_GROUPS`, and part N's groups run
+shards N*G-G+1 to N*G of M*G.
 
 The exit status is 0 when every group passed. `--report` writes one
 Playwright JSON report for all the groups, which scripts/testplan.py reads.
@@ -38,6 +44,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -77,13 +84,25 @@ def busy_ports(bases: Sequence[int]) -> list[int]:
     return taken
 
 
-def group_command(index: int, groups: int, extra: Sequence[str]) -> list[str]:
-    """Return the `playwright test` of one group, counted from 1."""
+def parse_part(text: str) -> tuple[int, int]:
+    """Return N and M of a part given as N/M."""
+    match = re.fullmatch(r"([1-9]\d*)/([1-9]\d*)", text.strip())
+    if match is None or int(match[1]) > int(match[2]):
+        raise argparse.ArgumentTypeError(f"a part is N/M, with N from 1 to M, not {text!r}")
+    return int(match[1]), int(match[2])
+
+
+def group_command(
+    index: int, groups: int, extra: Sequence[str], part: tuple[int, int] = (1, 1)
+) -> list[str]:
+    """Return the `playwright test` of one group of a part, counted from 1."""
     command = ["npx", "playwright", "test", "--reporter=list,json"]
     # Each group clears its output folder when it starts, so each has its own.
     command.append(f"--output=test-results/group-{index}")
-    if groups > 1:
-        command.append(f"--shard={index}/{groups}")
+    number, parts = part
+    shards = groups * parts
+    if shards > 1:
+        command.append(f"--shard={(number - 1) * groups + index}/{shards}")
     return [*command, *extra]
 
 
@@ -112,7 +131,13 @@ def _relay(stream: Any, label: str, log: Any) -> None:
         sys.stdout.flush()
 
 
-def run_groups(groups: int, first_port: int, extra: Sequence[str], work: Path) -> list[int]:
+def run_groups(
+    groups: int,
+    first_port: int,
+    extra: Sequence[str],
+    work: Path,
+    part: tuple[int, int] = (1, 1),
+) -> list[int]:
     """Run the groups side by side. Return each one's exit status."""
     bases = port_bases(groups, first_port)
     taken = busy_ports(bases)
@@ -131,7 +156,7 @@ def run_groups(groups: int, first_port: int, extra: Sequence[str], work: Path) -
             }
             log = (work / f"group-{index}.log").open("w", encoding="utf-8")
             process = subprocess.Popen(
-                group_command(index, groups, extra),
+                group_command(index, groups, extra, part=part),
                 cwd=WEB,
                 env=env,
                 stdout=subprocess.PIPE,
@@ -168,15 +193,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         prog="e2e.py", description="Run the browser tests, in several groups at once."
     )
     parser.add_argument("--report", type=Path, help="write one JSON report of every group here")
+    parser.add_argument(
+        "--part",
+        type=parse_part,
+        default=(1, 1),
+        metavar="N/M",
+        help=f"run part N of M of the tests; needs {capacity.GROUPS_SETTING}",
+    )
     parser.add_argument("playwright", nargs="*", help="arguments for `playwright test`, after --")
     args = parser.parse_args(argv)
 
+    if args.part != (1, 1) and not os.environ.get(capacity.GROUPS_SETTING, "").strip():
+        # A part that measured the machine could split the tests otherwise
+        # than the others did, and leave some out.
+        parser.error(f"--part needs {capacity.GROUPS_SETTING}, so that the parts agree")
     groups = capacity.wait_for_room()
+    specs = [arg for arg in args.playwright if arg.endswith(".spec.ts")]
+    if specs and args.part == (1, 1) and groups > len(specs):
+        groups = len(specs)
+        print(f"e2e: {groups} group(s), one for each spec file named")
     first_port = int(os.environ.get(PORT_SETTING, FIRST_PORT))
     started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="segl-e2e-groups-") as folder:
         work = Path(folder)
-        statuses = run_groups(groups, first_port, args.playwright, work)
+        statuses = run_groups(groups, first_port, args.playwright, work, args.part)
         reports = []
         for index in range(1, groups + 1):
             path = work / f"group-{index}.json"
@@ -190,8 +230,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     minutes = (time.monotonic() - started) / 60
     stats = merged["stats"]
     failed = [index for index, status in enumerate(statuses, start=1) if status != 0]
+    number, parts = args.part
+    which = f"part {number} of {parts}, " if parts > 1 else ""
     print(
-        f"e2e: {groups} group(s) in {minutes:.1f} minutes: "
+        f"e2e: {which}{groups} group(s) in {minutes:.1f} minutes: "
         f"{stats.get('expected', 0)} passed, {stats.get('unexpected', 0)} failed, "
         f"{stats.get('flaky', 0)} flaky, {stats.get('skipped', 0)} skipped"
     )

@@ -131,14 +131,17 @@ def test_a_successful_cut_writes_the_version_and_the_changelog_section(
     assert cut(tree, runner, fake_sources(runner), TODAY) == 0
 
     # It says what it is doing: the gate, then each command of the suite.
+    # Outside a git checkout no tree is known to be good, so it is all of it.
     said = capsys.readouterr().out.splitlines()
-    assert said[:4] == [
+    assert said[:5] == [
         "checking that every component is current",
         "running the suite",
+        "no tree is known to be good here: running the whole suite",
         "  uv sync",
-        "    0:00  done",
+        "    0:00  uv sync: done",
     ]
     assert "  uv run pytest" in said
+    assert said[-2] == "not a git checkout: the version change itself is not checked"
     assert said[-1].startswith("cut 0.1.0.")
     assert tomllib.loads((tree / "versions.toml").read_text())["project"]["version"] == "0.1.0"
     assert tomllib.loads((tree / "pyproject.toml").read_text())["project"]["version"] == "0.1.0"
@@ -569,3 +572,64 @@ def test_the_command_line_reaches_each_command(
     assert release.main(["cut"], root=tree) == 0
     with pytest.raises(SystemExit):
         release.main(["cut", "--publish"], root=tree)
+
+
+def head_of(repo: Path) -> str:
+    done = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    )
+    return done.stdout.strip()
+
+
+def ci_passed_on(sha: str) -> Result:
+    return Result(0, json.dumps([{"headSha": sha}]))
+
+
+def test_a_cut_after_ci_passed_runs_no_suite_and_checks_the_version_change(
+    repo: Path, fake_runner, fake_sources, capsys: pytest.CaptureFixture[str]
+) -> None:
+    runner = fake_runner(repo, {("gh", "run", "list"): ci_passed_on(head_of(repo))})
+
+    assert cut(repo, runner, fake_sources(runner), TODAY) == 0
+
+    said = capsys.readouterr().out.splitlines()
+    assert said[1:4] == [
+        "running the suite",
+        f"known good: CI passed on {head_of(repo)[:7]}. Changed since: 0 files",
+        "nothing to run",
+    ]
+    assert "checking the version change to 0.1.0" in said
+    # versions.toml, pyproject.toml, and CHANGELOG.md: the fake `uv lock` leaves uv.lock.
+    assert "known good: the tree before the change. Changed since: 3 files" in said
+    # The suite did not run before the change; the change's own checks did.
+    assert runner.called("uv", "run", "pytest") == [["uv", "run", "pytest"]]
+    assert runner.called("uv", "lock")
+    assert said[-1].startswith("cut 0.1.0.")
+
+
+def test_a_version_change_that_fails_its_checks_is_put_back(
+    repo: Path, fake_runner, fake_sources, capsys: pytest.CaptureFixture[str]
+) -> None:
+    names = ("versions.toml", "pyproject.toml", "CHANGELOG.md", "uv.lock")
+    before = {name: (repo / name).read_bytes() for name in names}
+
+    def pytest_after_the_change(_argv: Sequence[str]) -> Result:
+        moved = 'version = "0.1.0"' in (repo / "versions.toml").read_text()
+        return Result(1, "FAILED tests/test_versions.py::test_version\n") if moved else Result(0)
+
+    runner = fake_runner(
+        repo,
+        {
+            ("gh", "run", "list"): ci_passed_on(head_of(repo)),
+            ("uv", "lock"): lambda _argv: (repo / "uv.lock").write_text("moved\n") or Result(0),
+            ("uv", "run", "pytest"): pytest_after_the_change,
+        },
+    )
+
+    assert cut(repo, runner, fake_sources(runner), TODAY) == 1
+
+    assert {name: (repo / name).read_bytes() for name in names} == before
+    assert capsys.readouterr().out.splitlines()[-1] == (
+        "not cut: the version change fails the suite "
+        "(tests/test_versions.py::test_version); files put back"
+    )

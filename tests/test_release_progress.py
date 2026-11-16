@@ -369,27 +369,51 @@ def test_the_suite_names_each_command_and_says_how_it_ended(
     failure = run_commands(runner, [("uv", "run", "ruff", "check", "."), ("uv", "run", "pytest")])
 
     assert failure is None
+    # Each line carries its command's short name: others may run beside it.
     assert capsys.readouterr().out.splitlines() == [
         "  uv run ruff check .",
-        "    0:00  done",
+        "    0:00  ruff check: done",
         "  uv run pytest",
-        "    0:00  capacity: 3 pytest worker(s) at once",
-        "    0:00  4 passed in 0.10s",
-        "    0:00  done",
+        "    0:00  pytest: capacity: 3 pytest worker(s) at once",
+        "    0:00  pytest: 4 passed in 0.10s",
+        "    0:00  pytest: done",
     ]
 
 
-def test_the_suite_says_which_command_failed_and_stops_there(
+def test_the_suite_says_which_command_failed(
     tmp_path: Path, fake_runner, capsys: pytest.CaptureFixture[str]
 ) -> None:
     failed = Result(1, "FAILED tests/test_health.py::test_health_answers_ok - boom\n")
     runner = fake_runner(tmp_path, {("uv", "run", "pytest"): failed})
 
-    failure = run_commands(runner, [("uv", "run", "pytest"), ("uv", "run", "ty", "check")])
+    failure = run_commands(runner, [("uv", "run", "ty", "check"), ("uv", "run", "pytest")])
 
     assert failure == "tests/test_health.py::test_health_answers_ok"
     out = capsys.readouterr().out.splitlines()
-    assert out[:2] == ["  uv run pytest", "    0:00  failed"]
-    assert out[2] == "  `uv run pytest` failed:"
-    assert "  uv run ty check" not in out
-    assert runner.calls == [["uv", "run", "pytest"]]
+    assert out[2:5] == ["  uv run pytest", "    0:00  pytest: failed", "  `uv run pytest` failed:"]
+
+
+def test_a_failure_stops_the_stages_after_it(
+    tmp_path: Path, fake_runner, capsys: pytest.CaptureFixture[str]
+) -> None:
+    runner = fake_runner(tmp_path, {("uv", "run", "ty"): Result(1, "error[x]: bad\n")})
+
+    failure = run_commands(runner, [("uv", "run", "pytest"), ("uv", "run", "ty", "check")])
+
+    # ty is a quick check, so it runs first, and pytest, a long one, never.
+    assert failure == "`uv run ty check` failed"
+    assert "  uv run pytest" not in capsys.readouterr().out.splitlines()
+    assert runner.calls == [["uv", "run", "ty", "check"]]
+
+
+def test_a_line_that_names_its_command_is_not_given_the_name_twice() -> None:
+    said: list[str] = []
+    progress = Progress(SUITE_STAGES, write=said.append, clock=lambda: 0.0, label="e2e")
+
+    progress.line("e2e: 3 group(s) in 4.2 minutes: 240 passed, 0 failed\n")
+    progress.line("capacity: 3 group(s) at once\n")
+
+    assert said == [
+        "    0:00  e2e: 3 group(s) in 4.2 minutes: 240 passed, 0 failed",
+        "    0:00  e2e: capacity: 3 group(s) at once",
+    ]

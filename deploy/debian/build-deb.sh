@@ -53,7 +53,7 @@ git ls-files -z --cached --others --exclude-standard |
 cp deploy/debian/build.sh "$stage/build.sh"
 
 rm -f "$out_dir/segl_${version}_amd64.deb"
-docker build --quiet --tag "$image" - <deploy/debian/Containerfile >/dev/null
+deploy/debian/image.sh "$image" deploy/debian/Containerfile
 
 mounts=()
 if [ -n "$uv_cache" ]; then mounts+=(--volume "$uv_cache:/root/.cache/uv"); fi

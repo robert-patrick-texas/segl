@@ -15,6 +15,8 @@
 """`upgrade`: one move at a time, kept when the suite passes, held when it fails."""
 
 import datetime as dt
+import json
+import subprocess
 import sys
 import tomllib
 from collections.abc import Callable, Sequence
@@ -22,6 +24,7 @@ from pathlib import Path
 
 from release_proc import Result
 from release_upgrade import NARROW_PYTHON, NARROW_WEB, suite_commands, upgrade
+from suite import step_of
 
 TODAY = dt.date(2026, 11, 12)
 
@@ -63,8 +66,35 @@ def add_tool(root: Path, name: str, version: str) -> None:
 
 
 def commands(runner) -> list[str]:
-    """Return every command the runner was given, each as one line."""
-    return [" ".join(argv) for argv in runner.calls]
+    """Return every command the runner was given, each as one line.
+
+    The commands of one stage run side by side (scripts/suite.py), so the
+    order they were called in is not fixed. Each run of one stage is sorted.
+    """
+    staged: list[str] = []
+    run: list[str] = []
+    last = None
+    for argv in runner.calls:
+        stage = step_of(argv).stage
+        if stage != last:
+            staged += sorted(run)
+            run, last = [], stage
+        run.append(" ".join(argv))
+    return staged + sorted(run)
+
+
+def in_stages(lines: Sequence[str]) -> list[str]:
+    """Return expected commands with each run of one stage sorted, as `commands` does."""
+    staged: list[str] = []
+    run: list[str] = []
+    last = None
+    for line in lines:
+        stage = step_of(line.split(" ")).stage
+        if stage != last:
+            staged += sorted(run)
+            run, last = [], stage
+        run.append(line)
+    return staged + sorted(run)
 
 
 def test_upgrade_holds_the_component_that_fails_and_keeps_the_others(
@@ -114,7 +144,7 @@ def test_moves_that_all_pass_cost_one_run_of_the_suite(
     assert doc["runtime"]["python"] == "3.15.3"
     assert doc["held"] == {}
     assert len(runner.called("uv", "run", "pytest")) == 1
-    assert commands(runner) == [" ".join(argv) for argv in suite_commands(tree)]
+    assert commands(runner) == in_stages([" ".join(argv) for argv in suite_commands(tree)])
     assert "trying together: " in capsys.readouterr().out
 
 
@@ -144,7 +174,7 @@ def test_a_tool_gets_the_checks_that_use_it_and_no_others(
     checks = ["uv sync", "uv run ruff check .", "uv run ruff format --check ."]
     # As the tree stands, since no run of the suite has shown it to be good,
     # and then with the move.
-    assert commands(runner) == checks + checks
+    assert commands(runner) == in_stages(checks + checks)
     assert not runner.called("uv", "run", "pytest")
 
 
@@ -202,12 +232,9 @@ def test_after_a_suite_run_passed_a_tool_is_not_checked_twice(
     suite = [" ".join(argv) for argv in suite_commands(tree)]
     # The suite for the dependency, which showed the tree to be good, and
     # then ruff's own checks once, with its move.
-    assert commands(runner) == [
-        *suite,
-        "uv sync",
-        "uv run ruff check .",
-        "uv run ruff format --check .",
-    ]
+    assert commands(runner) == in_stages(
+        [*suite, "uv sync", "uv run ruff check .", "uv run ruff format --check ."]
+    )
 
 
 def test_the_narrow_checks_are_commands_of_the_suite() -> None:
@@ -367,3 +394,26 @@ def test_a_failing_check_other_than_pytest_is_the_reason(
     upgrade(tree, runner, fake_sources(runner, {"good": "1.1.0"}), TODAY)
 
     assert versions(tree)["held"]["good"]["reason"] == "`uv run ruff check .` failed"
+
+
+def test_a_tree_known_to_be_good_is_not_run_again_after_a_failed_try(
+    repo: Path, fake_runner, fake_sources, capsys
+) -> None:
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    runner = fake_runner(
+        repo,
+        {
+            ("uv",): suite_that_fails_on(repo, 'bad = "2.0.0"'),
+            ("gh", "run", "list"): Result(0, json.dumps([{"headSha": head}])),
+        },
+    )
+
+    assert upgrade(repo, runner, fake_sources(runner, {"bad": "2.0.0"}), TODAY) == 0
+
+    assert versions(repo)["held"]["bad"]["reason"] == "tests/test_scene.py::test_reconcile"
+    # One run, with the move. CI had passed on the tree as it was.
+    assert len(runner.called("uv", "run", "pytest")) == 1
+    out = capsys.readouterr().out
+    assert f"  CI passed on {head[:7]}: not run again" in out

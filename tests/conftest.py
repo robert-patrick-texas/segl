@@ -26,6 +26,8 @@ for PyPI, npm, nodejs.org, and GitHub. No test uses the network.
 
 import json
 import subprocess
+import sys
+import threading
 from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import Any
@@ -187,6 +189,11 @@ class FakeRunner(Runner):
             ("cloc",): json.dumps(CLOC_BY_FILE),
             ("git", "push"): "",
             ("gh", "release"): "",
+            # CI's passes, which scripts/suite.py asks for: none by default.
+            ("gh", "run", "list"): "[]",
+            # The documentation site's link check, which `cut` runs for a
+            # changed CHANGELOG.md.
+            (sys.executable, "scripts/build_docs.py"): "",
         }
         self.replies.update(replies or {})
         self.calls: list[list[str]] = []
@@ -199,6 +206,7 @@ class FakeRunner(Runner):
         capture: bool = True,
         stdin: str | None = None,
         progress: Progress | None = None,
+        cancel: threading.Event | None = None,
     ) -> Result:
         self.calls.append(list(argv))
         # The longest matching prefix wins.
@@ -220,7 +228,7 @@ class FakeRunner(Runner):
                     progress.line(line)
             return result
         # Always captured: a test has no terminal for a program to ask at.
-        return super().run(argv, check=check, stdin=stdin, progress=progress)
+        return super().run(argv, check=check, stdin=stdin, progress=progress, cancel=cancel)
 
     def called(self, *prefix: str) -> list[list[str]]:
         """Return the recorded calls that start with ``prefix``."""

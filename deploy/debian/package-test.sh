@@ -29,7 +29,7 @@ python3 scripts/capacity.py --wait
 export SEGL_CAPACITY_WAITED=1
 # The image the test boots is built meanwhile: it needs nothing of the package.
 image=segl-systemd-test
-docker build --quiet --tag "$image" - <deploy/debian/Containerfile.systemd >/dev/null &
+deploy/debian/image.sh "$image" deploy/debian/Containerfile.systemd &
 image_build=$!
 version=$(python3 -c '
 import tomllib

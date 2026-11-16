@@ -1,6 +1,7 @@
 # The checks every change runs, on pushes to main and on pull requests. They
-# are the commands in docs/DEVELOPMENT.md, "Checks". This workflow publishes
-# nothing.
+# are the commands in docs/DEVELOPMENT.md, "Checks", in three jobs side by
+# side, and the browser tests in two parts of their own. This workflow
+# publishes nothing.
 name: CI
 
 on:
@@ -76,22 +77,57 @@ jobs:
         env:
           SEGL_REQUIRE_NGINX: "1"
 
+  # The browser tests, in two parts side by side, each on a runner of its own.
+  # Python serves the build, at a host root and behind nginx at /board/. Each
+  # part runs three groups at once, each with servers of its own
+  # (scripts/e2e.py). The parts must split the tests the same way, so the
+  # number is set here and not measured; a runner has no other work.
+  browser:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: web/.node-version
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install the locked environment (Python from .python-version)
+        run: uv sync --locked
+
+      - name: Install the locked web packages
+        run: npm --prefix web ci --ignore-scripts --no-audit --no-fund
+
+      - name: Web build
+        run: npm --prefix web run build
+
+      - name: Install nginx for the tests behind it
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends nginx openssl
+
       # The browser of the pinned @playwright/test, with its system libraries.
       - name: Install Chromium for the browser tests
         working-directory: web
         run: npx playwright install --with-deps chromium
 
-      # Python serves the build, at a host root and behind nginx at /board/.
-      # scripts/e2e.py runs the tests in as many groups at once as the runner
-      # has room for, each with servers of its own.
-      - name: Browser tests
-        run: python3 scripts/e2e.py
+      - name: Browser tests, part ${{ matrix.part }} of 2
+        run: python3 scripts/e2e.py --part ${{ matrix.part }}/2
+        env:
+          SEGL_TEST_GROUPS: "3"
 
       - name: Keep the browser traces of a failure
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-traces
+          name: playwright-traces-${{ matrix.part }}
           path: web/test-results/
           if-no-files-found: ignore
           retention-days: 7
@@ -106,8 +142,31 @@ jobs:
         with:
           persist-credentials: false
 
+      # The builder image and the image the test boots take about a minute to
+      # make. They are kept between runs, and made again each week, for the
+      # base images' fixes, and when a Containerfile changes. The scripts
+      # build an image only when its label does not hold its Containerfile's
+      # hash (deploy/debian/build-deb.sh, package-test.sh).
+      - name: The week, which the kept images' key holds
+        id: week
+        run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v6
+        id: images
+        with:
+          path: ~/segl-images.tar
+          key: segl-images-${{ steps.week.outputs.week }}-${{ hashFiles('deploy/debian/Containerfile', 'deploy/debian/Containerfile.systemd') }}
+
+      - name: Load the kept images
+        if: steps.images.outputs.cache-hit == 'true'
+        run: docker load --input ~/segl-images.tar
+
       - name: Build the package and install it
         run: deploy/debian/package-test.sh
+
+      - name: Keep the images for the next run
+        if: steps.images.outputs.cache-hit != 'true'
+        run: docker save segl-deb-builder segl-systemd-test --output ~/segl-images.tar
 
       - name: Keep the package
         uses: actions/upload-artifact@v7

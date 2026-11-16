@@ -18,6 +18,7 @@ The groups here are small stand-ins for `playwright test`. The real thing
 runs in CI, in the dev container, and from scripts/testplan.py.
 """
 
+import argparse
 import json
 import re
 import socket
@@ -49,24 +50,33 @@ sys.exit(1 if fail == index else 0)
 
 @pytest.fixture
 def stand_in(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, str]:
-    """Put the stand-in where `playwright test` goes. Set `fail` to a group's number."""
-    options = {"fail": "0"}
+    """Put the stand-in where `playwright test` goes. Set `fail` to a group's number.
 
-    def command(index: int, groups: int, extra: Sequence[str]) -> list[str]:
+    The stand-in listens on no port, so the look for a run on the same ports
+    is a stand-in too: set `taken` to the ports, joined by commas, it finds in
+    use. A real look could find another pytest worker's server there.
+    """
+    options = {"fail": "0", "taken": ""}
+
+    def command(
+        index: int, groups: int, extra: Sequence[str], part: tuple[int, int] = (1, 1)
+    ) -> list[str]:
         return [sys.executable, "-c", STAND_IN, str(index), str(groups), options["fail"], *extra]
 
+    def busy_ports(bases: Sequence[int]) -> list[int]:
+        taken = [int(port) for port in options["taken"].split(",") if port]
+        return [p for p in taken if any(b <= p < b + e2e.PORTS_A_GROUP for b in bases)]
+
     monkeypatch.setattr(e2e, "group_command", command)
+    monkeypatch.setattr(e2e, "busy_ports", busy_ports)
     monkeypatch.setattr(e2e, "WEB", tmp_path)
     monkeypatch.delenv("SEGL_E2E_PORT", raising=False)
-    monkeypatch.setattr(e2e, "FIRST_PORT", free_port_base())
+    monkeypatch.setattr(e2e, "FIRST_PORT", STAND_IN_PORT)
     return options
 
 
-def free_port_base() -> int:
-    """Return a port with nothing listening on it or on the thirty after it."""
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return probe.getsockname()[1] - 40
+# Where the stand-in's groups say their ports start. Nothing listens there.
+STAND_IN_PORT = 40000
 
 
 def test_each_group_has_ports_of_its_own() -> None:
@@ -106,8 +116,9 @@ def test_a_port_in_use_is_found() -> None:
         taken.listen()
         port = taken.getsockname()[1]
 
-        assert e2e.busy_ports([port - 3]) == [port]
-    assert e2e.busy_ports([port - 3]) == []
+        # Another pytest worker may listen next to it: only this port is known.
+        assert port in e2e.busy_ports([port - 3])
+    assert port not in e2e.busy_ports([port - 3])
 
 
 def test_the_reports_of_the_groups_become_one() -> None:
@@ -209,12 +220,10 @@ def test_a_run_does_not_start_beside_another_on_the_same_ports(
     stand_in: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("SEGL_TEST_GROUPS", "2")
-    with socket.socket() as taken:
-        taken.bind(("127.0.0.1", e2e.FIRST_PORT + 10))
-        taken.listen()
+    stand_in["taken"] = str(e2e.FIRST_PORT + 10)
 
-        with pytest.raises(SystemExit, match=f"already listens on port {e2e.FIRST_PORT + 10}"):
-            e2e.main([])
+    with pytest.raises(SystemExit, match=f"already listens on port {e2e.FIRST_PORT + 10}"):
+        e2e.main([])
 
 
 def test_a_group_that_leaves_no_report_leaves_none_for_the_reader(
@@ -222,11 +231,68 @@ def test_a_group_that_leaves_no_report_leaves_none_for_the_reader(
 ) -> None:
     monkeypatch.setenv("SEGL_TEST_GROUPS", "2")
     monkeypatch.setattr(e2e, "WEB", tmp_path)
-    monkeypatch.setattr(e2e, "FIRST_PORT", free_port_base())
+    monkeypatch.setattr(e2e, "FIRST_PORT", STAND_IN_PORT)
+    monkeypatch.setattr(e2e, "busy_ports", lambda _bases: [])
     monkeypatch.setattr(
-        e2e, "group_command", lambda *_: [sys.executable, "-c", "raise SystemExit(3)"]
+        e2e, "group_command", lambda *_, **__: [sys.executable, "-c", "raise SystemExit(3)"]
     )
     report = tmp_path / "all.json"
 
     assert e2e.main(["--report", str(report)]) == 1
     assert not report.exists()
+
+
+def shard_of(index: int, groups: int, part: tuple[int, int]) -> str | None:
+    command = e2e.group_command(index, groups, [], part=part)
+    return next((arg for arg in command if arg.startswith("--shard=")), None)
+
+
+def test_the_parts_of_a_run_take_each_shard_once() -> None:
+    assert shard_of(1, 3, (1, 2)) == "--shard=1/6"
+    assert shard_of(3, 3, (2, 2)) == "--shard=6/6"
+    taken = [shard_of(index, 3, (number, 2)) or "" for number in (1, 2) for index in (1, 2, 3)]
+    assert sorted(taken) == sorted(f"--shard={number}/6" for number in range(1, 7))
+    # One group of one part is the whole run; one group of two parts is a half.
+    assert shard_of(1, 1, (1, 1)) is None
+    assert shard_of(1, 1, (2, 2)) == "--shard=2/2"
+
+
+@pytest.mark.parametrize("text", ["0/2", "3/2", "1", "a/b", "1/0", "-1/2"])
+def test_a_part_is_n_of_m(text: str) -> None:
+    with pytest.raises(argparse.ArgumentTypeError):
+        e2e.parse_part(text)
+
+
+def test_a_part_needs_a_fixed_number_of_groups(
+    stand_in: dict[str, str], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("SEGL_TEST_GROUPS", raising=False)
+    # Without the check it would measure the machine, and wait while it is busy.
+    monkeypatch.setenv("SEGL_TEST_WAIT", "0")
+
+    with pytest.raises(SystemExit):
+        e2e.main(["--part", "1/2"])
+
+    assert "--part needs SEGL_TEST_GROUPS, so that the parts agree" in capsys.readouterr().err
+
+
+def test_a_part_says_which_it_is(
+    stand_in: dict[str, str], monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("SEGL_TEST_GROUPS", "2")
+
+    assert e2e.main(["--part", "2/2"]) == 0
+
+    assert re.search(r"e2e: part 2 of 2, 2 group\(s\) in \d", capfd.readouterr().out)
+
+
+def test_spec_files_named_get_no_more_groups_than_there_are(
+    stand_in: dict[str, str], monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("SEGL_TEST_GROUPS", "3")
+
+    assert e2e.main(["--", "e2e/slot.spec.ts"]) == 0
+
+    out = capfd.readouterr().out
+    assert "e2e: 1 group(s), one for each spec file named" in out
+    assert "group 1 of 1" in out

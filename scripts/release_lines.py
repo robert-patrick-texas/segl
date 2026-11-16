@@ -77,6 +77,7 @@ TOOLING_FILES = frozenset(
         "deploy/debian/Containerfile",
         "deploy/debian/build-deb.sh",
         "deploy/debian/build.sh",
+        "deploy/debian/image.sh",
         "deploy/debian/nfpm.yaml",
         "web/package.json",
     }

@@ -67,7 +67,9 @@ SEGL_TEST_GROUPS=1 python3 scripts/e2e.py   # one group, as `npm run e2e` runs t
 
 `scripts/e2e.py` runs the whole suite in less time. It splits the tests into groups with Playwright's `--shard` and runs the groups side by side. Each group is a `playwright test` of its own, with its own servers: every port follows `SEGL_E2E_PORT`, and each group gets a base ten above the last (18950, 18960, 18970). Inside a group nothing changes. The tests still run one at a time and share their slots. So no test had to change, and a test that passes in one group passes in three.
 
-`npm --prefix web run e2e` stays as it is: one process, and the way to run one spec.
+`npm --prefix web run e2e` stays as it is: one process, and the way to run one spec. Spec files named after `--` to `scripts/e2e.py` get no more groups than there are of them.
+
+`--part N/M` runs part N of the tests, of M parts. CI runs two parts as jobs side by side. Every part must split the tests the same way, so `--part` needs `SEGL_TEST_GROUPS`: part N of M, with G groups, runs shards N×G−G+1 to N×G of M×G.
 
 `scripts/capacity.py` picks the number of groups from what the machine has free at that moment:
 
@@ -88,7 +90,7 @@ Each group's lines are printed with its number in front, `[2]`. Its traces of a 
 
 On the development host, idle, three groups ran the 240 tests in 4.2 minutes on 2026-11-13, where one process takes about ten. The three groups had 82, 79, and 79 tests and took 4.2, 3.9, and 4.0 minutes. The groups share four cores, so each runs slower than it would alone: the load average reached 11.8. No test failed and none was retried. `scripts/testplan.py`, which is pytest and then these groups, took 5.5 minutes there, where it took 11.3 before.
 
-CI, the dev container (`scripts/testplan.py`), and `scripts/release.py upgrade` all run the browser tests this way.
+The dev container (`scripts/testplan.py`) and `scripts/release.py` run the browser tests this way. CI runs them in two parts of three groups each.
 
 `web/e2e/fonts.spec.ts` is about the one font file that is not the editor's own, Liberation Sans (`web/licenses/README.md`). A page fetches that file only when some text uses the face, so the test asks the page to load it, and checks that the browser took it as a font and that its bytes are the file in `web/fonts/`.
 
@@ -170,7 +172,55 @@ python3 scripts/e2e.py                 # the same tests, in groups side by side 
 
 `npm --prefix web run format` rewrites the files Prettier would complain about. Vitest covers the modules that need no browser: how the page finds segl's root, slot parsing and the last slot, display names, slot titles, the canvas adapter's reading of a stored scene, the collaboration session (against a socket, a canvas, and a file server the test supplies, with a clock it moves), the messages of the socket, the files of images (`web/src/collab/files.ts`, and the `data:` URL codec beside it), the stored pass (`web/src/pass.ts`), the access page's logic (`web/src/access.ts`: what the server's answer to a code means, and the words for it), the notice in the bar, and the build scripts. `tests/display_name_cases.json` is one table of typed names and what segl shows for each. Vitest and pytest both read it, so the browser's title case and the server's cannot drift apart. A test (`tests/test_pins.py`) holds `web/package.json`, `web/package-lock.json`, and `web/.node-version` to `versions.toml`.
 
-CI runs the same commands (`.github/workflows/ci.yml`). It installs nginx and Chromium, sets `SEGL_REQUIRE_NGINX=1`, and builds `web/` before pytest.
+CI runs the same commands (`.github/workflows/ci.yml`), in three jobs side by side:
+
+- `checks`: ruff, ty, the web checks, the build, and pytest, with nginx installed and `SEGL_REQUIRE_NGINX=1`.
+- `browser`: the browser tests, in two parts, each on a runner of its own, with three groups each (`scripts/e2e.py --part`, below).
+- `package`: the build of the `.deb` and the install test (the package, below).
+
+### The suite in one command
+
+```bash
+python3 scripts/suite.py                    # everything CI runs, side by side where it can
+python3 scripts/suite.py --changed          # only what covers the files that changed
+python3 scripts/suite.py --changed --plan   # say what that would run, and why; run nothing
+python3 scripts/suite.py --changed --base origin/main   # start from this, taken as good
+```
+
+`scripts/suite.py` runs CI's checks in three stages. A stage starts when the one before it has ended.
+
+1. `uv sync` and `npm install`, side by side.
+2. The quick checks, side by side: `ruff check`, `ruff format --check`, ty, tsc, Vitest, Prettier, and the web build. Together they take about ten seconds here.
+3. The long ones: the browser tests, the install test when a change reaches it, and pytest. The longest starts first. The next starts beside it when `scripts/capacity.py` finds room for one more on two looks in a row, five seconds apart, or else when it ends. On the development host, with four cores, the browser tests fill the machine, so pytest waits for them. A larger machine runs both at once.
+
+Each command is named as it starts. Each line it prints starts with its short name, such as `pytest:`. A failure stops the commands beside it, and no later stage starts. Ctrl+C stops every command, and what each started. Of two that fail side by side, the one first in the list above is reported.
+
+A pass is kept in the git folder (`.git/segl-suite-passed`), against the tree as `git add --all` would commit it. That hash comes from an index of its own, which starts from `HEAD` with no stat data, so git hashes every file again: about a tenth of a second here. A pass of `--changed` is kept too, and says so, so the next `--changed` starts from it. A file that changed while the suite ran keeps no pass.
+
+`--changed` starts from a tree known to be good: the one the suite last passed on here, whole or for what changed, or a commit that CI passed on, of its newest 20 (`gh run list`). It takes the one with the fewest changed files. Without `gh`, or offline, only the kept pass counts. With neither, it runs the whole suite. For each file that differs, it adds what covers it:
+
+| A change to | Runs |
+|---|---|
+| `pyproject.toml`, `uv.lock`, `.python-version` | `uv sync`, ruff, ty, and all of pytest |
+| `web/package.json`, `web/package-lock.json`, `web/.node-version` | `npm install`, every web check, all of Vitest, and every browser test |
+| a Python file | ruff and ty, and the tests that import it, start it, or name it |
+| `src/segl/`, but `src/segl/update/`, and `deploy/nginx/` | every browser test, after the build |
+| `deploy/`, but its `Containerfile`, and `src/segl/update/` and `src/segl/cli.py` | the install test |
+| a file in `web/src/` | tsc, Prettier, the Vitest tests that import it (`vitest related`), the build, and every browser test |
+| a spec in `web/e2e/` | tsc, Prettier, and that spec |
+| another file in `web/e2e/`, or `web/playwright.config.ts` | every browser test |
+| Markdown, `tools/md2html/`, `images/` | the documentation site's check (`scripts/build_docs.py`) |
+| any file | the tests that name it, and `tests/test_license_headers.py` |
+
+How it finds the tests of a file:
+
+- By import, through any module of `scripts/`, `tests/`, and `tools/md2html/`, and the `segl` package as one. A module that starts segl as a process (`"-m", "segl"`) depends on all of `src/segl`. What a `conftest.py` imports is not followed, since it imports for many tests. A change to a `conftest.py` runs every test of its folder.
+- By name: a test reaches a file when it, or a module it imports, builds the file's path (`ROOT / "deploy" / "nginx"`, or `DEBIAN / "build.sh"` after `DEBIAN = DEPLOY / "debian"`) or names the file (`"versions.toml"`). A folder name alone, such as `"tests/"`, counts only when a path is built under it: elsewhere it is a label.
+- A web test names a file in quotes. A spec that does runs alone. A helper in `web/e2e/` that does runs every spec.
+
+The plan lists each file with what covers it, and says which files nothing covers. The rules err toward running more. They can still miss a file that a test reads by a path it computes. CI runs everything on every push, and a release is published only after CI passed on its commit.
+
+`scripts/release.py upgrade` and `cut` run the suite this way (`RELEASING.md`).
 
 ## The dev container
 
@@ -257,6 +307,8 @@ The whole run took 191 seconds on the development host on 2026-11-13, twice: abo
 The test releases also carry the apt upgrade by hand: 9.0.1 over the package under test. Set `SEGL_KEEP_CONTAINER=1` to leave the container running afterwards and look around in it. The host needs `ssh-keygen` and `openssl` for the keys and the certificates.
 
 The container is privileged, because systemd as PID 1 needs a cgroup tree of its own. The test was run under rootful Docker.
+
+`deploy/debian/image.sh` makes both images: the builder and the one the test boots. It builds an image only when the image's label does not hold its Containerfile's hash, so a kept image is used as it is. CI keeps both between runs, and makes them again each week, for the base images' fixes, and when a Containerfile changes.
 
 `tests/test_package.py` reads the same files without building anything: the units, the nfpm spec, the maintainer scripts, the copyright file, and the operator notes. The update's own logic has pytest tests that need no container (`tests/test_update_*.py`): the merge of settings, the merge of nginx files with the real `diff3`, the signature check with the real `ssh-keygen`, the HTTPS client against a local server and a local proxy, and the update's order with apt, systemctl, and nginx played by a stand-in. It also runs `web/scripts/collect-licenses.ts` against the real web build, when there is one, so a bundled package or a font without a license text fails pytest.
 

@@ -21,14 +21,13 @@ failing test (docs/RELEASING.md).
 It does not run the whole suite for every component. A tool that can only
 break its own check gets that check, which takes seconds. The others move
 together and the suite runs once. Only when that run fails does it run the
-suite on the tree as it was, and then for each of them alone.
+suite on the tree as it was, unless that tree is known to be good already
+(scripts/suite.py), and then for each of them alone.
 """
 
 from __future__ import annotations
 
 import datetime as dt
-import re
-import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -45,36 +44,21 @@ from release_components import (
     report,
     workflow_files,
 )
-from release_proc import CommandError, Runner
-from release_progress import SUITE_STAGES, Progress, say
+from release_proc import Runner
 from release_versions import at_precision
-
-# The commands CI runs (docs/DEVELOPMENT.md, "Checks"), in CI's order.
-#
-# Both environments are brought to the pins first: `uv sync` and `npm install`
-# resolve the lockfiles again after a pin moved, and pytest holds
-# web/package-lock.json to versions.toml. The web build comes before pytest,
-# which compares its stand-in for the build with the real one, and before the
-# browser tests, which Python serves it to. Those need a browser of the pinned
-# Playwright version (docs/DEVELOPMENT.md).
-PYTHON_SYNC: tuple[str, ...] = ("uv", "sync")
-PYTHON_CHECKS: tuple[tuple[str, ...], ...] = (
-    ("uv", "run", "ruff", "check", "."),
-    ("uv", "run", "ruff", "format", "--check", "."),
-    ("uv", "run", "ty", "check"),
+from suite import (
+    PYTHON_CHECKS,
+    PYTHON_SYNC,
+    PYTHON_TESTS,
+    WEB_FORMAT,
+    WEB_SYNC,
+    WEB_TYPES,
+    has_web,
+    known_good,
+    run,
+    run_whole,
+    whole_suite,
 )
-PYTHON_TESTS: tuple[str, ...] = ("uv", "run", "pytest")
-WEB_SYNC: tuple[str, ...] = ("npm", "--prefix", "web", "install", "--no-audit", "--no-fund")
-WEB_CHECKS: tuple[tuple[str, ...], ...] = (
-    ("npm", "--prefix", "web", "run", "check"),
-    ("npm", "--prefix", "web", "test"),
-    ("npm", "--prefix", "web", "run", "format:check"),
-    ("npm", "--prefix", "web", "run", "build"),
-)
-# The browser tests, in as many groups at once as the machine has room for.
-WEB_E2E: tuple[str, ...] = (sys.executable, "scripts/e2e.py")
-WEB_FORMAT: tuple[str, ...] = ("npm", "--prefix", "web", "run", "format:check")
-WEB_TYPES: tuple[str, ...] = ("npm", "--prefix", "web", "run", "check")
 
 # What the move of a tool can break, when that is less than everything: the
 # commands of the suite that use the tool. A component that is not named
@@ -102,12 +86,6 @@ NARROW_WEB: dict[str, tuple[tuple[str, ...], ...]] = {
     "@types/react-dom": (WEB_TYPES,),
 }
 MD2HTML = "tools/md2html/md2html.py"
-_FAILED_TEST = re.compile(r"^(?:FAILED|ERROR) (\S+)", flags=re.MULTILINE)
-
-
-def has_web(root: Path) -> bool:
-    """Report whether the tree at ``root`` has the web package."""
-    return (root / "web" / "package.json").is_file()
 
 
 def sync_commands(root: Path) -> tuple[tuple[str, ...], ...]:
@@ -116,10 +94,17 @@ def sync_commands(root: Path) -> tuple[tuple[str, ...], ...]:
 
 
 def suite_commands(root: Path) -> tuple[tuple[str, ...], ...]:
-    """Return the suite for the tree at ``root``."""
-    if not has_web(root):
-        return (PYTHON_SYNC, *PYTHON_CHECKS, PYTHON_TESTS)
-    return (*sync_commands(root), *PYTHON_CHECKS, *WEB_CHECKS, PYTHON_TESTS, WEB_E2E)
+    """Return the suite for the tree at ``root``: CI's checks, in CI's order.
+
+    Both environments are brought to the pins first: `uv sync` and `npm
+    install` resolve the lockfiles again after a pin moved, and pytest holds
+    web/package-lock.json to versions.toml. The web build comes before pytest,
+    which compares its stand-in for the build with the real one, and before
+    the browser tests, which Python serves it to. Those need a browser of the
+    pinned Playwright version (docs/DEVELOPMENT.md). scripts/suite.py runs
+    them by stage, side by side where it can.
+    """
+    return whole_suite(root)
 
 
 def narrow_commands(root: Path, status: Status) -> tuple[tuple[str, ...], ...] | None:
@@ -139,31 +124,18 @@ def narrow_commands(root: Path, status: Status) -> tuple[tuple[str, ...], ...] |
 
 
 def run_suite(runner: Runner, root: Path) -> str | None:
-    """Run the suite. Return None when it passes, or what failed first."""
-    return run_commands(runner, suite_commands(root))
+    """Run the whole suite. Return None when it passes, or what failed first."""
+    return run_whole(runner, root)
 
 
 def run_commands(runner: Runner, commands: Sequence[tuple[str, ...]]) -> str | None:
-    """Run commands in order. Return None when all pass, or what failed first.
+    """Run commands of the suite. Return None when all pass, or what failed first.
 
-    Each command is named as it starts, and says when it ends. One that takes
-    long says so meanwhile (release_progress).
+    They run by stage, side by side where they can (scripts/suite.py). Each
+    is named as it starts and says when it ends, and one that takes long says
+    so meanwhile (release_progress).
     """
-    for argv in commands:
-        command = " ".join(argv)
-        say(f"  {command}")
-        progress = Progress(SUITE_STAGES)
-        try:
-            result = runner.run(argv, check=False, progress=progress)
-        except CommandError as exc:
-            return str(exc)
-        progress.done(result.returncode == 0)
-        if result.returncode != 0:
-            failed = _FAILED_TEST.search(result.output)
-            tail = "\n".join(result.output.strip().splitlines()[-15:])
-            print(f"  `{command}` failed:\n{tail}")
-            return failed[1] if failed else f"`{command}` failed"
-    return None
+    return run(runner, commands)
 
 
 def tracked_files(root: Path) -> list[Path]:
@@ -301,8 +273,12 @@ def upgrade(root: Path, runner: Runner, sources: Sources, today: dt.date | None 
         return True
 
     held = 0
-    # Whether a whole-suite run has passed, on the tree or on the tree with moves.
-    tree_is_good = False
+    # The tree as it stands may be known to be good already: the whole suite
+    # passed on it here, or CI passed on a commit with the same files.
+    good = known_good(root, runner)
+    tree_was_good = good is not None and not good.changed
+    # Whether the tree, or the tree with moves, is known to be good.
+    tree_is_good = tree_was_good
     if wide:
         # The components that can break anything, together, and the suite
         # once. A pass shows the tree and every one of these moves to be good.
@@ -320,8 +296,14 @@ def upgrade(root: Path, runner: Runner, sources: Sources, today: dt.date | None 
         else:
             # Something failed: the tree as it was, or one of the moves.
             restore(start)
-            print(f"the suite fails with those moves ({reason}); running it before any move")
-            baseline = run_suite(runner, root)
+            if tree_was_good:
+                assert good is not None
+                print(f"the suite fails with those moves ({reason}); before any move,")
+                print(f"  {good.what}: not run again")
+                baseline = None
+            else:
+                print(f"the suite fails with those moves ({reason}); running it before any move")
+                baseline = run_suite(runner, root)
             if baseline is not None:
                 print(f"the suite fails before any move ({baseline}); nothing was changed")
                 return 1

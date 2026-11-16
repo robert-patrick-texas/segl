@@ -23,6 +23,7 @@ If a task is blocked, leave Next task unchanged, set `Blocked: yes`, and log the
 - Acceptance commands exited 0.
 - ruff and ty are clean for the Python the task touched.
 - The web checks are clean when the task touched `web/`.
+- `python3 scripts/suite.py --changed` passed before the push: the checks that cover what changed since a tree known to be good (`docs/DEVELOPMENT.md`, the suite in one command). CI runs all of them on the push.
 - `STATUS.md` and the task status line match the tree that was actually verified.
 
 ## Implementation rules

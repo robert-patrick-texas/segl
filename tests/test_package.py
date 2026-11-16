@@ -724,9 +724,65 @@ def test_the_build_and_the_install_test_wait_for_a_machine_that_is_busy() -> Non
 def test_the_install_test_builds_its_image_while_the_package_builds() -> None:
     install = read(DEBIAN / "package-test.sh")
     started = install.index(
-        'docker build --quiet --tag "$image" - <deploy/debian/Containerfile.systemd >/dev/null &\n'
+        'deploy/debian/image.sh "$image" deploy/debian/Containerfile.systemd &\n'
     )
 
     assert started < install.index("deploy/debian/build-deb.sh dist")
     # And it is waited for, so a failed image build fails the test, before the container starts.
     assert started < install.index('\nwait "$image_build"\n') < install.index("docker run --detach")
+
+
+FAKE_DOCKER = """#!/bin/sh
+echo "$*" >>"$DOCKER_LOG"
+if [ "$1 $2" = "image inspect" ]; then
+    [ -n "$DOCKER_LABEL" ] || exit 1
+    echo "$DOCKER_LABEL"
+fi
+"""
+
+
+@pytest.mark.parametrize(
+    ("label", "builds"),
+    [("same", False), ("other", True), (None, True)],
+    ids=["made-from-this-file", "made-from-another", "not-there"],
+)
+def test_an_image_is_made_only_when_its_containerfile_changed(
+    tmp_path: Path, label: str | None, builds: bool
+) -> None:
+    recipe = DEBIAN / "Containerfile.systemd"
+    digest = hashlib.sha256(recipe.read_bytes()).hexdigest()
+    (tmp_path / "docker").write_text(FAKE_DOCKER)
+    (tmp_path / "docker").chmod(0o755)
+    log = tmp_path / "calls"
+    env = {
+        **os.environ,
+        "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
+        "DOCKER_LOG": str(log),
+        "DOCKER_LABEL": {"same": digest, "other": "0" * 64, None: ""}[label],
+    }
+
+    done = subprocess.run(
+        [str(DEBIAN / "image.sh"), "segl-systemd-test", "deploy/debian/Containerfile.systemd"],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert done.returncode == 0, done.stderr
+    calls = log.read_text().splitlines()
+    built = [call for call in calls if call.startswith("build ")]
+    if builds:
+        assert built == [f"build --quiet --label segl.recipe={digest} --tag segl-systemd-test -"]
+    else:
+        assert built == []
+        assert "is made from this deploy/debian/Containerfile.systemd already" in done.stdout
+
+
+def test_both_images_are_made_through_the_label_check() -> None:
+    assert 'deploy/debian/image.sh "$image" deploy/debian/Containerfile\n' in read(
+        DEBIAN / "build-deb.sh"
+    )
+    for script in ("build-deb.sh", "package-test.sh"):
+        assert "docker build" not in read(DEBIAN / script), script

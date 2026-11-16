@@ -14,8 +14,11 @@
 
 """`cut` and `publish`: the version bump and changelog section, then the tag and release.
 
-`cut` changes files only after the gate and the suite pass. `publish` runs a
-preflight in the order docs/RELEASING.md gives and stops at the first failure.
+`cut` changes files only after the gate and the suite pass, and keeps them
+only when the checks of the version change pass too. It runs the suite only
+for what changed since a tree known to be good (scripts/suite.py). `publish`
+runs a preflight in the order docs/RELEASING.md gives and stops at the first
+failure.
 """
 
 from __future__ import annotations
@@ -33,7 +36,7 @@ import release_sign as signing
 from release_components import Sources, gate_passes, load_versions, report
 from release_proc import CommandError, Runner
 from release_progress import PACKAGE_STAGES, Progress, say
-from release_upgrade import run_suite
+from suite import run_changed, work_tree
 
 UNPUBLISHED = "0.0.0"
 BRANCH = "main"
@@ -91,10 +94,14 @@ def cut(root: Path, runner: Runner, sources: Sources, today: dt.date | None = No
         print("not cut: `check --gate` fails. Run `upgrade`, then try again.")
         return 1
     say("running the suite")
-    failure = run_suite(runner, root)
+    failure = run_changed(runner, root)
     if failure is not None:
         print(f"not cut: the suite fails ({failure})")
         return 1
+    # The tree the suite has just shown to be good, before the version moves.
+    good = work_tree(root)
+    names = ("versions.toml", "pyproject.toml", "CHANGELOG.md", "uv.lock")
+    saved = {name: (root / name).read_bytes() for name in names if (root / name).is_file()}
     current = str(load_versions(root)["project"]["version"])
     new = bump_version(current, topics)
     date = (today or dt.date.today()).isoformat()
@@ -123,6 +130,16 @@ def cut(root: Path, runner: Runner, sources: Sources, today: dt.date | None = No
     )
     # uv.lock records the project's own version.
     runner.run(["uv", "lock"])
+    if good is None:
+        say("not a git checkout: the version change itself is not checked")
+    else:
+        say(f"checking the version change to {new}")
+        failure = run_changed(runner, root, base=good, base_name="the tree before the change")
+        if failure is not None:
+            for name, content in saved.items():
+                (root / name).write_bytes(content)
+            print(f"not cut: the version change fails the suite ({failure}); files put back")
+            return 1
     print(f"cut {new}. Commit and push, wait for CI, then run `release.py publish`.")
     return 0
 

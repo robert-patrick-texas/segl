@@ -21,10 +21,13 @@ The pattern follows Sunstone's tools/release.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import queue
+import signal
 import subprocess
 import threading
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,6 +36,9 @@ from release_progress import Progress
 
 # How often a watched command that prints nothing is looked at.
 WATCH_SECONDS = 1.0
+# How long a watched command that was told to stop has before it is killed.
+# scripts/e2e.py gives its groups 20 seconds to stop their servers.
+STOP_SECONDS = 30.0
 
 
 class CommandError(RuntimeError):
@@ -46,6 +52,8 @@ class Result:
     returncode: int
     stdout: str = ""
     stderr: str = ""
+    # Ended because it was told to stop (`cancel`), not on its own.
+    stopped: bool = False
 
     @property
     def output(self) -> str:
@@ -67,6 +75,7 @@ class Runner:
         capture: bool = True,
         stdin: str | None = None,
         progress: Progress | None = None,
+        cancel: threading.Event | None = None,
     ) -> Result:
         """Run one command and wait for it.
 
@@ -79,13 +88,15 @@ class Runner:
             progress: Is given each line of output as it comes, for a command
                 that takes minutes. The output is kept all the same, with
                 standard error among standard output, in the order written.
+            cancel: Stops a watched command when it is set: the suite stops
+                the commands beside one that failed.
 
         Raises:
             CommandError: When the program is missing, or exits with a status
                 other than 0 while ``check`` is true.
         """
         if progress is not None:
-            return self._watched(argv, check, stdin, progress)
+            return self._watched(argv, check, stdin, progress, cancel)
         try:
             done = subprocess.run(
                 list(argv),
@@ -105,9 +116,18 @@ class Runner:
         return result
 
     def _watched(
-        self, argv: Sequence[str], check: bool, stdin: str | None, progress: Progress
+        self,
+        argv: Sequence[str],
+        check: bool,
+        stdin: str | None,
+        progress: Progress,
+        cancel: threading.Event | None,
     ) -> Result:
-        """Run one command and hand each line it prints to ``progress``."""
+        """Run one command and hand each line it prints to ``progress``.
+
+        The command runs in a process group of its own, so that a stop reaches
+        what it started too: pytest's workers, and the browser tests' servers.
+        """
         try:
             process = subprocess.Popen(
                 list(argv),
@@ -119,6 +139,7 @@ class Runner:
                 errors="replace",
                 # Python holds its output back from a pipe otherwise.
                 env={**os.environ, "PYTHONUNBUFFERED": "1"},
+                start_new_session=True,
             )
         except FileNotFoundError as exc:
             raise CommandError(f"command not found: {argv[0]}") from exc
@@ -133,11 +154,14 @@ class Runner:
 
         threading.Thread(target=read, daemon=True).start()
         kept: list[str] = []
+        told: float | None = None
         try:
             if stdin is not None and process.stdin is not None:
                 process.stdin.write(stdin)
                 process.stdin.close()
             while True:
+                if cancel is not None and cancel.is_set():
+                    told = _stop(process, told)
                 try:
                     line = lines.get(timeout=WATCH_SECONDS)
                 except queue.Empty:
@@ -149,12 +173,36 @@ class Runner:
                 progress.line(line)
             returncode = process.wait()
         except BaseException:
-            process.kill()
-            process.wait()
+            told = _stop(process, None)
+            while process.poll() is None:
+                time.sleep(0.1)
+                told = _stop(process, told)
             raise
-        result = Result(returncode, "".join(kept))
+        result = Result(returncode, "".join(kept), stopped=told is not None)
+        if told is not None:
+            # Whatever it started that has not stopped by now is ended here.
+            _signal(process, signal.SIGKILL)
         if check and returncode != 0:
             last = result.stdout.strip().splitlines()[-1:]
             suffix = f": {last[0]}" if last else ""
             raise CommandError(f"{' '.join(argv[:3])} exited with status {returncode}{suffix}")
         return result
+
+
+def _signal(process: subprocess.Popen[str], number: int) -> None:
+    """Send a signal to a watched command's process group."""
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(process.pid, number)
+
+
+def _stop(process: subprocess.Popen[str], told: float | None) -> float:
+    """Tell a watched command to stop, as Ctrl+C would, then kill it after a while.
+
+    Returns when it was first told, for the next call.
+    """
+    if told is None:
+        _signal(process, signal.SIGINT)
+        return time.monotonic()
+    if time.monotonic() - told >= STOP_SECONDS:
+        _signal(process, signal.SIGKILL)
+    return told

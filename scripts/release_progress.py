@@ -71,6 +71,7 @@ class Progress:
         write: Takes each line. The default prints it.
         clock: Returns seconds that only grow. The default is the machine's.
         every: The seconds of quiet before a "still running" line.
+        label: Starts each line, for a command that runs beside others.
     """
 
     def __init__(
@@ -80,8 +81,10 @@ class Progress:
         write: Callable[[str], None] = say,
         clock: Callable[[], float] = time.monotonic,
         every: float = QUIET_SECONDS,
+        label: str = "",
     ) -> None:
         self.stages, self.write, self.clock, self.every = stages, write, clock, every
+        self.label = f"{label}: " if label else ""
         self.started = clock()
         self.said = self.started
         self.last = ""
@@ -92,7 +95,9 @@ class Progress:
         if shown:
             self.last = shown
         if shown and self.stages is not None and self.stages.search(_ANSI.sub("", text)):
-            self._say(shown)
+            # A line that names its command already, such as e2e's last one,
+            # is not given the name twice.
+            self._say(shown.removeprefix(self.label))
         else:
             self.tick()
 
@@ -105,6 +110,10 @@ class Progress:
         """Say that the command ended, how, and after how long."""
         self._say("done" if passed else "failed")
 
+    def stopped(self) -> None:
+        """Say that the command was stopped because another failed."""
+        self._say("stopped")
+
     def _say(self, text: str) -> None:
         self.said = self.clock()
-        self.write(f"{INDENT}{elapsed(self.said - self.started)}  {text}")
+        self.write(f"{INDENT}{elapsed(self.said - self.started)}  {self.label}{text}")

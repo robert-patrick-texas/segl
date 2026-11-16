@@ -4,16 +4,25 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
-The release script says what it is doing while its long steps run, and the release notes count segl's own lines of code in a table of their own.
+Checks wait less, since the suite runs side by side and only for what changed and CI splits the browser tests in two, and the release script says what it is doing and counts segl's own lines of code.
+
+### New
+
+- `scripts/suite.py` runs CI's checks in three stages: both environments, then the quick checks side by side, then the long ones, longest first, with the next beside it when `scripts/capacity.py` finds room. A failure stops the rest. `--changed` runs only what covers the files changed since a tree known to be good: the one the suite last passed on here, or a commit CI passed on. It finds a file's tests by import and by the paths and file names they write out, and says what it runs and why. `--plan` runs nothing (`docs/DEVELOPMENT.md`, D2-036).
 
 ### Changed
 
 - The release notes close with two tables, where they had one. Lines of code is first: `cloc`'s count of the files git tracks, a row for each language, with its code lines split into Product, Tests, and Tooling. A statement under it says that the lines are segl's own and do not count the dependencies. Versions is the second table. The count no longer mixes Markdown in: the documentation is a sentence under the table (`scripts/release_lines.py`, `docs/RELEASING.md`).
 - `scripts/release.py` no longer goes silent for minutes. `cut` and `upgrade` name each command of the suite as it starts and say how it ended, with its time. `publish` says each step of the install test as it comes. A command that has said nothing for 30 seconds gets a `still running` line with the last line of its output (`scripts/release_progress.py`, `docs/RELEASING.md`).
 - fastapi 0.163.1, moved by `scripts/release.py upgrade` after the suite passed with it.
+- `cut` runs the suite only for what changed since a tree known to be good. After CI passed on a clean `HEAD`, that is nothing. It then checks the version change itself, with pytest, the documentation site, and the browser test that reads the version, and puts the files back if that fails. `upgrade` no longer runs the suite again on a tree known to be good.
+- CI runs the browser tests in a job of their own, in two parts on two runners (`scripts/e2e.py --part`), beside `checks` and `package`. The package job keeps its two images between runs, for a week at most, and `deploy/debian/image.sh` builds an image only when its Containerfile changed.
+- A command the suite runs has a process group of its own. A failure beside it, or Ctrl+C, stops it and what it started, with SIGINT and then SIGKILL after 30 seconds.
 
 ### Fixed
 
+- A browser test that drops an image no longer fails now and then on a busy machine. `dropImage` returned the image once the editor held its file, which can be before the editor gives it its own size and moves it to its final place. It now waits for the size the PNG holds (`web/e2e/pages.ts`).
+- `tests/test_e2e_groups.py` no longer looks for real listeners on the ports its stand-in groups name, which a server of another pytest worker could hold.
 - pytest's workers no longer disagree, now and then, on the names of the tests. Two parametrized tests in `tests/test_sweep.py` took their names from a pass, which holds the second of its issue. Two workers that started in different seconds collected different names, and pytest-xdist stopped the run. The names are fixed now, and a test in `tests/test_capacity.py` collects the suite twice, in two seconds and with two hash seeds, and compares.
 
 ## 0.1.0 — 2026-11-13
