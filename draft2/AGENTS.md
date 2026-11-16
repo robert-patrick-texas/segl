@@ -37,8 +37,8 @@ If a task is blocked, leave Next task unchanged, set `Blocked: yes`, and log the
 7. Releases follow `docs/RELEASING.md`: every component moves to its newest release, and one is held back only after it fails the tests. Versions live only in `versions.toml`. Add a `CHANGELOG.md` bullet for a source or document change a contributor needs to know about. Write a `journal/YYYY-MM-DD-short-title.md` entry for a story or a lesson, not for every task.
 8. The browser application stores preferences in `localStorage`. It does not use cookies. Do not add `Set-Cookie`, session middleware, or credentialed CORS.
 9. Access codes and their secret, when configured, live in the server TOML file (D2-033). Do not put a code, the secret, or a pass in scene JSON, logs, the injected page config, or a query string. A pass is in one answer, the access route's, and nowhere else.
-10. Slot numbers 1–9 are the only workspaces in this phase. Do not add login, inventory, network symbols, PostgreSQL, a base-path setting, or a production container image. The access page is not a login: it takes a code, knows no user, and keeps no account (D2-033).
-11. Parameterized SQL only. Internal ids are allocated by the server. A hostname or an Excalidraw element id is not a domain identity.
+10. Slot numbers 1–9 are the only workspaces. Do not add login, inventory, PostgreSQL, a base-path setting, or a production container image. P1's network objects live in the scene, in each element's `customData`, with no table, route, or service of their own (T15). The access page is not a login: it takes a code, knows no user, and keeps no account (D2-033).
+11. Parameterized SQL only. Internal ids are allocated by the server. A hostname or an Excalidraw element id is not a domain identity. A P1 network object's id is a random UUID the page makes, since no server record holds one (T15).
 12. Node builds the frontend. It is not a runtime service. systemd starts Python only.
 13. Do not claim a test passed unless that command was run in this session.
 14. A task that changes behavior updates the contract page it cites, in the same change.

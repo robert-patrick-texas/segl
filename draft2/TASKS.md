@@ -445,3 +445,80 @@ As built, where the text above left a choice open or the build went past it (D2-
 - `scene` carries `whole` and `mark` ahead of `elements`. The page takes a `scene` with no `whole` as whole, and a mark that is not text of at most 64 characters as none. The page always sends `mark` in `hello`, `null` when it has none.
 - A `scene` that is not whole and names another epoch than the page's is not taken: the page drops its mark and reconnects for the whole scene. The server does not send one.
 - The tests of the route, the socket, a real process, and nginx are `tests/test_marks.py`. `MarkOf` in `tests/harness.py` matches a mark whose start the test cannot know. The browser tests stand between the page and the server with `tapSockets` in `web/e2e/pages.ts`. The size run fails when the new browser's socket `scene` is 1,000 characters or more.
+
+## T15 — Network devices and typed links
+
+- Status: next
+- Requires: T14
+- Requirements: L-001 (draft1 N-001 to N-005). N-006, named interfaces, waits.
+- Read: `docs/ROADMAP.md` (P1, and what is carried forward from draft1), `draft1/REQUIREMENTS.md` (N-001 to N-006, the initial symbol types), `draft1/ARCHITECTURE.md` (semantic-to-visual mapping, typed links), `draft1/DATA-MODEL.md` (enumerations, modeling rules), `docs/ARCHITECTURE.md` (the canvas adapter, collaboration), `web/src/canvas/`, `web/src/collab/session.ts`, and the STATUS entry of 2026-11-16 that queued this task
+
+Added on 2026-11-16 at the user's request: the first task of P1. The user answered one batch of questions: devices and links in one task, symbols drawn by hand, the editor's library with a small segl panel, and a link's kind shown by its line. Then: a state shows as a letter tag and never as a color, a connector has a dot at each end, and "other" replaces "unknown". Keep the task to that.
+
+What a person can do after it:
+
+- Open the editor's library panel and find segl's network library: 12 devices and 5 links. Place any of them on a slot.
+- Select a device or a link and see segl's panel: its kind, its name, and its state. Set the state. Set a link's kind.
+- Draw a link from one device to another. Its ends stay on the devices as they move.
+- See each object's state at a glance, in every browser on the slot, and after a reload, a restore, an export, and an import.
+
+The devices, 12 kinds: router, switch, firewall, Wi-Fi AP (`wireless_ap`), server, workstation, printer, VoIP phone (`voip_phone`), mobile, host, cloud (provider transport), and other. Other is a device of none of the other kinds. It replaces draft1's "unknown device", at the user's word.
+
+The links, 5 kinds, each a line style:
+
+| Kind | Line |
+|---|---|
+| cable | solid, thin |
+| circuit | solid, bold |
+| neighbor | dashed |
+| relationship | dotted |
+| connector | thin, a dot at each end (the editor's `circle` end) |
+
+The other four have no end marks.
+
+The states: Existing, Planned, and To remove (`existing`, `planned`, `remove`). draft1 called them observed, planned, and retired_proposed. Nothing here is observed: a person draws what exists. P2's imported records will be the observed ones. A state never changes a real network.
+
+Color is the team's:
+
+- segl never sets or changes a color. The library draws in the editor's default ink. The team colors links by speed or other signs, and devices by organization or manufacturer. Red means trouble to them.
+- A state change touches only the tag. A kind change on a link sets its line style, its width, and its ends, and nothing else.
+- What a person changes by hand in the editor's style menu stays. It does not change the kind or the state, which are data.
+
+The tag:
+
+- Existing shows no tag. Planned shows `P`, and To remove shows `R`, in the object's ink.
+- On a device, the tag is a small text element in the device's group, at its top right, so it moves with the device.
+- On a link, the tag starts the link's label, before any words the team writes there: `P 10G`. Setting the state rewrites only that letter and its space. A label the person edits by hand stays as they wrote it.
+
+The record:
+
+- Each device and each link carries `customData.segl` on one element: the device's body shape, or the link's line. It is `{ "schemaVersion": 1, "objectId", "objectType", "state" }`. `objectId` is a random UUID the page makes when the object is placed. It is not an element id. A device's tag carries `{ "schemaVersion": 1, "objectId", "part": "tag" }`.
+- A device's name is its body's own text label, edited on the canvas as any label is. The panel shows it. No second copy is kept.
+- A link's ends are the editor's bindings, each to a device's body. The record keeps no copy of them. A link with an end on nothing is legal.
+- The record rides in the scene. Live sync, saving, history, restore, export, and import carry it as they carry a color. No table, route, or service is added. The server already keeps `customData` as sent, and checks nothing new: a record is the drawing's own. A server check is a later ask.
+- The page reads a record strictly. An element whose record it cannot read is drawn as it is, as freeform. Freeform shapes and arrows stay legal beside network objects.
+
+Copies:
+
+- A placed copy gets a new `objectId`: from the library, a paste, the editor's duplicate, and Alt-drag. A cut and a paste keeps it, since the first copy is gone.
+- Only this browser's own changes get a new id. An element that came over the socket keeps the id it came with.
+
+The library and the panel:
+
+- The canvas adapter gives the editor segl's library at load, merged with what the person has. `web/src/network/` describes the symbols as plain shapes and does not import the editor. The adapter turns them into the editor's elements.
+- The panel shows for one selected network object. The bar gains nothing. At 390 px wide the panel covers none of the editor's tools: measure it.
+- A viewer sees the tags and changes nothing.
+
+The risk, to try first: the editor keeps `customData` through each way an element is placed or copied: a library item, a paste, duplicate, Alt-drag, and an update from another browser. A link's binding holds when the device's group moves. If the pinned editor drops `customData` in one of these, say how the page puts it back before anything else is built.
+
+Tests:
+
+- Vitest: reading a record (a good one, each bad shape, none), the 12 symbols and the 5 line styles, the tag of each state on a device and in a label, the label rewrite (`10G`, `P 10G`, `R 10G`, `10G`), a new id for each kind of copy, and none for an element from the socket.
+- The browser: each of the 12 devices and 5 links placed from the library, each with its own `objectId`. A state set in the panel shows its tag in a second browser. A link between two devices keeps both ends when one moves. A copy gets a new id. A color the person set survives a state change. After a reload, a restore, and an export and import, the records and the tags are the same. A viewer sees the tags and changes nothing. A new row, T-022 in `docs/TEST-PLAN.md`, with its row in `tests/testplan.toml`.
+- A screenshot of a mixed diagram: physical, logical, and planned, which is the gate draft1 set for this phase. Show it to the user in the recap.
+
+Documents: `docs/REQUIREMENTS.md` (L-001 becomes N-001 to N-005 under P1, with "other" in place of "unknown", and N-006 stays later), `docs/TEST-PLAN.md` (T-022), `docs/ARCHITECTURE.md` (network objects), `docs/DATA-MODEL.md` (the record in `customData`), a new decision D2-038 with the user's answers, `docs/ROADMAP.md` (P1), the status in `README.md`, and `CHANGELOG.md`.
+
+Acceptance: T-022 passes, and T-001 through T-011 still pass by `scripts/e2e.py`. ruff, ty, and the web checks pass. The screenshot shows all 12 devices, all 5 links, and a tag of each state.
+
+Out of scope: a named interface at a link's end (N-006); inventory, device import, and search (P2); a device that changes kind once placed (place another); a server check of the record; scenarios; a symbol manifest file; and keeping a person's own library between visits.
