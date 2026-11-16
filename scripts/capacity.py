@@ -201,6 +201,9 @@ def wait_for_room(
             say(f"capacity: {groups} {unit}(s) at once ({machine.summary})")
             return groups
         if waited >= limit:
+            if limit == 0:
+                say(f"capacity: no room now ({machine.summary}); running 1 {unit} at once")
+                return 1
             busy = f"still busy after {waited} seconds ({machine.summary})"
             say(f"capacity: {busy}; running 1 {unit}")
             return 1

@@ -142,6 +142,7 @@ The dev container runs the same suite while it builds (below).
 - One worker for each core that is idle at that moment, less one, 8 at most, and no more than the free memory allows at 512 MiB a worker.
 - When the machine is busy with other work and there is no room, it waits. It looks again every 15 seconds, and after ten minutes it goes ahead in one process.
 - A run that names at most three test files, and no folder, stays in one process and does not wait. It is over before workers would have started.
+- A run of named files that hold no more than a quarter of the suite's test functions, as `scripts/suite.py --changed` runs, does not wait either. It takes the workers there is room for now, and one process when there is none. The count is of `def test_` lines, before any parameters: 1,087 in the suite on 2026-11-15. One such run waited 3 minutes 45 seconds for a busy machine, for 14 seconds of tests.
 
 ```bash
 uv run pytest                        # the suite, in as many workers as there is room for

@@ -486,3 +486,71 @@ def test_every_worker_gives_each_test_the_same_name() -> None:
     assert len(first) > 1000
     assert sorted(set(first) ^ set(again)) == []
     assert first == again, "the same tests in another order"
+
+
+def test_a_part_of_the_suite_is_named_files_with_a_quarter_of_its_tests_at_most(
+    tmp_path: Path,
+) -> None:
+    part = root_conftest().is_part_of_suite
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    # Each file's plain tests, and its async ones.
+    sizes = {"test_a.py": (1, 1), "test_b.py": (2, 1), "test_c.py": (7, 1), "test_d.py": (1, 5)}
+    for name, (plain, waits) in sizes.items():
+        body = "".join(f"def test_{n}() -> None:\n    pass\n\n" for n in range(plain))
+        body += "".join(
+            f"    async def test_w{n}(self) -> None:\n        pass\n" for n in range(waits)
+        )
+        (tests / name).write_text(body.replace("    async", "class TestW:\n    async", 1))
+    a, b, c, d = (str(tests / name) for name in sizes)
+
+    # 19 tests in all; a quarter is 4.75. test_a has 2, test_b 3, test_c 8,
+    # and test_d 6, most of them async, in a class.
+    assert part([a], True, tmp_path)
+    assert part([b, f"{b}::test_0"], True, tmp_path)
+    assert not part([a, b], True, tmp_path)
+    assert not part([c], True, tmp_path)
+    assert not part([d], True, tmp_path)
+    assert not part([str(tests)], True, tmp_path), "a folder"
+    assert not part([], True, tmp_path)
+    assert not part([a], False, tmp_path), "the suite's own paths"
+
+
+def test_a_part_of_the_suite_takes_the_workers_that_fit_now_and_does_not_wait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conftest = root_conftest()
+    asked: list[dict[str, object]] = []
+
+    def room_for(*args: object, **named: object) -> int:
+        asked.append(named)
+        return 2
+
+    monkeypatch.setattr(conftest.capacity, "wait_for_room", room_for)
+    files = [f"tests/{name}" for name in ("test_capacity.py", "test_health.py", "test_names.py")]
+    files.append("tests/test_versions.py")
+
+    assert conftest.pytest_xdist_auto_num_workers(_Config(files, True)) == 2
+    (named,) = asked
+    environ = named["environ"]
+    assert isinstance(environ, dict)
+    assert environ[capacity.WAIT_SETTING] == "0"
+
+
+def test_a_run_of_more_than_a_quarter_of_the_suite_waits(monkeypatch: pytest.MonkeyPatch) -> None:
+    conftest = root_conftest()
+    asked: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        conftest.capacity, "wait_for_room", lambda *a, **named: asked.append(named) or 3
+    )
+    every = sorted(str(path.relative_to(ROOT)) for path in (ROOT / "tests").glob("test_*.py"))
+
+    assert conftest.pytest_xdist_auto_num_workers(_Config(every, True)) == 3
+    assert asked == [{"each": capacity.WORKER_BYTES, "unit": "pytest worker"}]
+
+
+def test_no_wait_says_so_and_runs_one() -> None:
+    said: list[str] = []
+
+    assert wait_for_room(environ={"SEGL_TEST_WAIT": "0"}, look=Looks(BUSY), say=said.append) == 1
+    assert said == [f"capacity: no room now ({BUSY.summary}); running 1 group at once"]

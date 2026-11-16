@@ -4,6 +4,14 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
+`publish` no longer repeats CI's install test, and a pytest run of a part of the suite no longer waits for a busy machine.
+
+### Changed
+
+- `publish` builds the package and compares it with the one CI built, installed, and tested for `HEAD`. When they are the same bytes it does not run the install test again. The step took 3 minutes 40 seconds for 0.2.0, and the build alone takes about a minute. Otherwise it runs it as before (`docs/RELEASING.md`).
+- A pytest run of named files with at most a quarter of the suite's tests, as `scripts/suite.py --changed` runs, takes the workers there is room for and does not wait for a busy machine. The whole suite still waits, up to ten minutes (`conftest.py`, `docs/DEVELOPMENT.md`).
+- The package build says that the paths it prints, `/opt/segl` among them, are inside its container.
+
 ## 0.2.0 — 2026-11-15
 
 Checks wait less, since the suite runs side by side and only for what changed and CI splits the browser tests in two, and the release script says what it is doing and counts segl's own lines of code.
