@@ -39,7 +39,7 @@ from collections.abc import Callable, Sequence
 
 from starlette.concurrency import run_in_threadpool
 
-from segl.reconcile import Element
+from segl.reconcile import Element, live_count
 from segl.repository import SYSTEM_LABEL, Flush, Replacement, Repository, SlotFile
 from segl.room import FileEntry, Room, Snapshot, encode
 
@@ -47,6 +47,14 @@ logger = logging.getLogger("segl.saver")
 
 # How long after a write failed the next one is tried.
 RETRY_SECONDS = 5.0
+
+
+def deletes_most(head_live: int, live: int) -> bool:
+    """Whether a scene with ``live`` live elements leaves fewer than 90% of the head's.
+
+    The head's scene is then kept before the flush (docs/DATA-MODEL.md).
+    """
+    return live * 10 < head_live * 9
 
 
 class Saver:
@@ -74,6 +82,8 @@ class Saver:
         self._closing = False
         # The head holds a scene that the newest history row does not.
         self._unrecorded = False
+        # How many live elements the head holds. The room starts as the head.
+        self._head_live = live_count(room.elements.values())
         self._task: asyncio.Task[None] | None = None
         # Held by whatever is writing the slot: a flush, or a replacement.
         self._lock = asyncio.Lock()
@@ -94,7 +104,8 @@ class Saver:
         First what the room holds is written, with a history row whatever the
         age of the newest one, so that the scene being replaced can be
         restored in its turn. Then the new head, the new epoch, and the row
-        for it. Then the room, and every connection is sent the scene.
+        for it, with the row of the scene that goes marked kept (``restore``).
+        Then the room, and every connection is sent the scene.
 
         An edit that arrives while this is being written was made on the scene
         that is going, and goes with it. When a write fails, the room is as it
@@ -106,6 +117,7 @@ class Saver:
                 editor_label,
                 [],
                 lambda epoch: self._room.replace(epoch, scene_json),
+                kept="restore",
             )
 
     async def put(
@@ -114,7 +126,8 @@ class Saver:
         """Put these elements in the room's place, at a new epoch: an import.
 
         The steps are a restore's, and so is what happens to an edit that
-        arrives meanwhile and to a write that fails. The scene is the slot's
+        arrives meanwhile and to a write that fails. The row of the scene
+        that goes is marked kept for the import (``import``). The scene is the slot's
         own document with these elements, in the order given. ``files`` are
         the ones the elements name whose bytes are stored. Those the slot does
         not have yet join its list in the write that starts the epoch.
@@ -130,6 +143,7 @@ class Saver:
                 editor_label,
                 new,
                 lambda epoch: room.put(epoch, document, elements, new),
+                kept="import",
             )
 
     async def _swap_in(
@@ -138,11 +152,14 @@ class Saver:
         editor_label: str,
         files: Sequence[FileEntry],
         arrive: Callable[[int], None],
+        *,
+        kept: str,
     ) -> Replacement:
         """Write the room's scene and then the one in its place. The caller holds the lock.
 
         ``scene`` returns the new scene as it is stored, and is called in the
-        worker thread. ``arrive`` takes the new epoch and gives the room the scene.
+        worker thread. ``arrive`` takes the new epoch and gives the room the
+        scene. ``kept`` is the reason the row of the scene that goes is kept.
         """
         room = self._room
         waiting = room.take_waiting()
@@ -150,7 +167,9 @@ class Saver:
         # head may hold a scene that no history row does.
         snapshot = room.snapshot()
         try:
-            replacement = await run_in_threadpool(self._swap, snapshot, scene, editor_label, files)
+            replacement = await run_in_threadpool(
+                self._swap, snapshot, scene, editor_label, files, kept
+            )
         except BaseException:
             room.take_back(snapshot)
             room.keep_waiting(waiting)
@@ -162,6 +181,7 @@ class Saver:
         # Nobody is told `saved`: the new epoch tells every browser that
         # what it sent for the old scene has nothing left to wait for.
         arrive(replacement.epoch)
+        self._head_live = live_count(room.elements.values())
         return replacement
 
     def _on_empty(self) -> None:
@@ -222,10 +242,11 @@ class Saver:
         snapshot = room.snapshot() if room.dirty or (record and self._unrecorded) else None
         try:
             if snapshot is not None:
-                flush = await run_in_threadpool(self._write, snapshot, record)
+                flush, live = await run_in_threadpool(self._write, snapshot, record)
                 # From now the scene route hands out this snapshot's mark.
                 room.wrote(snapshot)
                 self._saved_at = flush.saved_at
+                self._head_live = live
                 # A flush that was told to record has done what can be done, so
                 # a leave or a stop never asks twice for the same history row.
                 self._unrecorded = not (flush.recorded or record)
@@ -244,23 +265,32 @@ class Saver:
         scene: Callable[[], str],
         editor_label: str,
         files: Sequence[FileEntry],
+        kept: str,
     ) -> Replacement:
         """Write the scene that is going, and then the one in its place. A worker thread."""
-        self._write(snapshot, record=True)
+        # Under the lock: nothing else reads or sets the head's count meanwhile.
+        _, self._head_live = self._write(snapshot, record=True)
         return self._repository.replace_head(
-            self._room.slot, scene(), editor_label, files=_slot_files(files)
+            self._room.slot, scene(), editor_label, files=_slot_files(files), kept=kept
         )
 
-    def _write(self, snapshot: Snapshot, record: bool) -> Flush:
-        """Write one snapshot. This runs in a worker thread."""
-        return self._repository.flush_head(
+    def _write(self, snapshot: Snapshot, record: bool) -> tuple[Flush, int]:
+        """Write one snapshot. Return what the flush did, and the snapshot's live elements.
+
+        This runs in a worker thread, under the lock, so the head's count is
+        not changed meanwhile.
+        """
+        live = live_count(snapshot.elements)
+        flush = self._repository.flush_head(
             self._room.slot,
             snapshot.epoch,
             snapshot.scene_json(),
             snapshot.editor_label or SYSTEM_LABEL,
             history_seconds=0 if record else self._history_seconds,
             files=_slot_files(snapshot.files),
+            before_delete=deletes_most(self._head_live, live),
         )
+        return flush, live
 
 
 def _slot_files(files: Sequence[FileEntry]) -> list[SlotFile]:

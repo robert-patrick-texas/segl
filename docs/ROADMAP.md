@@ -18,7 +18,7 @@ T15 built the first part on 2026-11-16 (`REQUIREMENTS.md`, N-001 to N-005; D2-03
 
 On 2026-11-26 the user put collaboration first and queued three tasks before named interfaces (`draft2/TASKS.md`):
 
-1. T16, history that lasts, and clearing a slot: the newest 50 revisions, then fewer as they age, for a week, and the board as it was before a big delete, a restore, or an import. `segl slot clear N` wipes a slot for good.
+1. T16, history that lasts, and clearing a slot: the newest 50 revisions, then fewer as they age, for a week, and the board as it was before a big delete, a restore, or an import. `segl slot clear N` wipes a slot for good. Built on 2026-11-26.
 2. T17, Diagram mode on slot 9: drawio's editor with live co-editing, and the pen for one editor at a time while the others watch (D2-039). It measures how well co-editing works.
 3. T18, follow mode: click a name and follow that person's view, on every slot. In Diagram mode, everyone else follows whoever takes the pen until they scroll, zoom, or click. It is not a presentation mode.
 

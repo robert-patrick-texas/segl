@@ -456,6 +456,29 @@ check "dpkg has 9.0.2" equals "$(package_version)" 9.0.2
 check "segl answers as 9.0.2" serves 9.0.2
 check "the board is still there" contains "$(scene 2)" package-test-1
 
+section "clear a slot: segl slot clear stops the unit, clears, and starts it"
+check "slot 3 is drawn on" \
+    /opt/segl/venv/bin/python3 /deploy/debian/socket_check.py wss://dev.example.com/board 3 package-test-clear "$CA"
+check "slot 3 has it" contains "$(scene 3)" package-test-clear
+before=$(main_pid)
+check "without a terminal or --yes, it clears nothing" \
+    bash -c "! segl slot clear 3 </dev/null >/tmp/clear.log 2>&1 && grep -q '^Nothing was cleared.' /tmp/clear.log"
+check "and segl was not stopped" equals "$(main_pid)" "$before"
+check "segl slot clear 3 --yes clears it" bash -c "segl slot clear 3 --yes >/tmp/clear.log 2>&1"
+check "it said each step" bash -c "grep -q '^Stopping segl.service.' /tmp/clear.log \
+    && grep -q '^Cleared slot 3. It is empty' /tmp/clear.log && grep -q '^Starting segl.service.' /tmp/clear.log \
+    && grep -q '^segl answers again.' /tmp/clear.log"
+check "segl runs again, as a new process" test "$(main_pid)" != "$before"
+check "and answers" healthy
+check "slot 3 is empty" lacks "$(scene 3)" package-test-clear
+check "slot 2 is as it was" contains "$(scene 2)" package-test-1
+check "every file beside the database is still segl's, though root cleared it" \
+    test -z "$(find /opt/segl/var ! -user segl)"
+check "segl writes the database again" \
+    /opt/segl/venv/bin/python3 /deploy/debian/socket_check.py wss://dev.example.com/board 3 package-test-after "$CA"
+check "the system log has the clear, beside segl's own lines" \
+    contains "$(journalctl -t segl --no-pager -o cat)" "slot 3 cleared by segl slot clear"
+
 section "stop"
 check "segl stops" systemctl stop segl.service
 check "the stop was clean" equals "$(systemctl show -p Result --value segl.service)" success

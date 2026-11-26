@@ -21,19 +21,26 @@ any thread may call it. An ``async`` caller runs it in a worker thread.
 
 The schema is the numbered SQL files in ``segl/migrations``. The database
 records the number of the newest file applied to it in ``PRAGMA user_version``.
+
+A head is plain JSON text. A revision's scene is stored compressed with zstd,
+from Python's own library, and which revisions stay is ``segl.retention``'s.
 """
 
 import json
 import re
 import sqlite3
 import threading
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Callable, Generator, Iterable, Sequence
+from compression import zstd
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from importlib import resources
 from pathlib import Path
 from typing import Self
+
+from segl.reconcile import live_count
+from segl.retention import REASONS, Row, staying
 
 SLOT_NUMBERS = range(1, 10)
 
@@ -58,6 +65,16 @@ _SLOT_COLUMNS = (
     "SELECT slot.number, slot.title, slot.epoch, slot.updated_at, slot_head.saved_at "
     "FROM slot JOIN slot_head ON slot_head.slot = slot.number"
 )
+
+
+def pack_scene(scene_json: str) -> bytes:
+    """Return a scene as a revision stores it: its UTF-8 text, compressed with zstd."""
+    return zstd.compress(scene_json.encode("utf-8"))
+
+
+def unpack_scene(packed: bytes) -> str:
+    """Return the scene text a revision stores."""
+    return zstd.decompress(packed).decode("utf-8")
 
 
 def load_empty_scene() -> str:
@@ -125,13 +142,19 @@ class Head:
 
 @dataclass(frozen=True)
 class RevisionSummary:
-    """One history row without its scene."""
+    """One history row without its scene.
+
+    ``kept`` says why segl marked it kept, or None: ``delete``, ``restore``,
+    or ``import``, the write that came after its scene. The mark stays with
+    the row. Whether the row still stays for it is ``segl.retention``'s.
+    """
 
     slot: int
     revision: int
     epoch: int
     author_label: str
     created_at: str
+    kept: str | None
 
 
 @dataclass(frozen=True)
@@ -139,6 +162,29 @@ class Revision(RevisionSummary):
     """One history row with its scene."""
 
     scene_json: str = field(repr=False)
+
+
+@dataclass(frozen=True)
+class SlotContents:
+    """What ``segl slot clear`` would remove from one slot.
+
+    ``elements`` counts the head's live elements, and ``hashes`` are the
+    files its file ids name.
+    """
+
+    slot: Slot
+    elements: int
+    revisions: int
+    files: int
+    hashes: frozenset[str]
+
+
+@dataclass(frozen=True)
+class Cleared:
+    """What ``clear_slot`` did: the slot's new epoch, and the files no slot names now."""
+
+    epoch: int
+    unnamed: frozenset[str]
 
 
 @dataclass(frozen=True)
@@ -221,6 +267,8 @@ def apply_migrations(connection: sqlite3.Connection, migrations: Sequence[Migrat
         sqlite3.Error: When a migration fails.
     """
     newest = len(migrations)
+    # The one function of segl's own a migration may call (0003).
+    connection.create_function("segl_zstd", 1, pack_scene, deterministic=True)
     # The write lock first: a second process starting now waits, then finds nothing to do.
     connection.execute("BEGIN IMMEDIATE")
     try:
@@ -422,17 +470,20 @@ class Repository:
     def append_revision(self, n: int, epoch: int, scene_json: str, author_label: str) -> int:
         """Add a history row at the slot's current epoch. Return its revision number.
 
-        The oldest rows past the history limit are deleted in the same transaction.
+        The rows the retention rules no longer keep are deleted in the same
+        transaction.
 
         Raises:
             InvalidSlot: When ``n`` is not 1 to 9.
             EpochMismatch: When ``epoch`` is not the slot's epoch. Nothing is written.
         """
         _check_slot(n)
-        now = self._now()
+        moment = self._clock().astimezone(UTC)
         with self._transaction() as db:
             self._require_epoch(db, n, epoch)
-            return self._insert_revision(db, n, epoch, scene_json, author_label, now)
+            revision = self._insert_revision(db, n, epoch, scene_json, author_label, _stamp(moment))
+            self._prune(db, n, moment)
+        return revision
 
     def flush_head(
         self,
@@ -443,6 +494,7 @@ class Repository:
         *,
         history_seconds: float,
         files: Sequence[SlotFile] = (),
+        before_delete: bool = False,
     ) -> Flush:
         """Write what a room holds, in one transaction (docs/DATA-MODEL.md, flush rules).
 
@@ -455,6 +507,12 @@ class Repository:
         that changes the head. A row for a head this flush did not write
         carries the head's own label, not ``editor_label``: the scene is by
         whoever saved it.
+
+        ``before_delete`` says that this scene leaves fewer than 90% of the
+        head's live elements, which the saver works out. Before the head is
+        written, its scene is then kept as a revision marked ``delete``,
+        unless the newest revision holds it already, which is marked instead.
+        This scene then gets a row of its own, whatever the newest one's age.
 
         Raises:
             InvalidSlot: When ``n`` is not 1 to 9.
@@ -470,28 +528,39 @@ class Repository:
                 (scene_json, n),
             ).fetchone()
             written = not same
+            newest = self._newest(db, n)
+            if written and before_delete:
+                (old,) = db.execute(
+                    "SELECT scene_json FROM slot_head WHERE slot = ?", (n,)
+                ).fetchone()
+                if newest is not None and newest[1] == old:
+                    self._mark(db, n, newest[0], "delete")
+                else:
+                    # By whoever saved the head, as any row of a head is.
+                    self._insert_revision(db, n, epoch, old, author, now, kept="delete")
             if written:
                 self._write_head(db, n, epoch, scene_json, editor_label, now)
                 saved_at, author = now, editor_label
             self._insert_files(db, n, files, now)
-            newest = db.execute(
-                "SELECT scene_json = ?, created_at FROM revision WHERE slot = ? "
-                "ORDER BY revision DESC LIMIT 1",
-                (scene_json, n),
-            ).fetchone()
+            holds = newest is not None and newest[1] == scene_json
             revision = None
-            if newest is None:
+            if written and before_delete:
+                # The scene after the delete is history too, at once.
+                due = True
+            elif newest is None:
                 # Nothing has been recorded. The scene a slot starts with is
                 # not history, so the first row waits for the first change.
                 due = written
             else:
-                age = (moment - datetime.fromisoformat(newest[1])).total_seconds()
+                age = (moment - datetime.fromisoformat(newest[2])).total_seconds()
                 # A clock that went backwards does not stop the history.
-                due = not newest[0] and (age >= history_seconds or age < 0)
+                due = not holds and (age >= history_seconds or age < 0)
             if due:
+                # A row kept for a delete is added only with this one.
                 revision = self._insert_revision(db, n, epoch, scene_json, author, now)
+                self._prune(db, n, moment)
             # Nothing is owed to a slot whose first change is still to come.
-            recorded = due or newest is None or bool(newest[0])
+            recorded = due or newest is None or holds
         return Flush(saved_at=saved_at, written=written, revision=revision, recorded=recorded)
 
     def list_files(self, n: int) -> list[SlotFile]:
@@ -509,7 +578,13 @@ class Repository:
         return [SlotFile(*row) for row in rows]
 
     def replace_head(
-        self, n: int, scene_json: str, editor_label: str, *, files: Sequence[SlotFile] = ()
+        self,
+        n: int,
+        scene_json: str,
+        editor_label: str,
+        *,
+        files: Sequence[SlotFile] = (),
+        kept: str | None = None,
     ) -> Replacement:
         """Start a new epoch with this scene: the write behind restore and import.
 
@@ -517,13 +592,27 @@ class Repository:
         records it, in one transaction. ``files`` are the ones an import
         brought with its scene. They are added to the slot's files in the same
         transaction, and a file id the slot already has keeps the bytes it had.
+        ``kept`` is ``restore`` or ``import``: in the same transaction, the
+        newest revision is marked kept for it when it holds the scene that goes.
+        The caller has just recorded that scene (docs/DATA-MODEL.md, restore).
 
         Raises:
             InvalidSlot: When ``n`` is not 1 to 9.
+            ValueError: When ``kept`` is not one of the reasons.
         """
         _check_slot(n)
-        now = self._now()
+        if kept is not None and kept not in REASONS:
+            raise ValueError(f"{kept!r} is not a reason to keep a revision")
+        moment = self._clock().astimezone(UTC)
+        now = _stamp(moment)
         with self._transaction() as db:
+            if kept is not None:
+                newest = self._newest(db, n)
+                (going,) = db.execute(
+                    "SELECT scene_json FROM slot_head WHERE slot = ?", (n,)
+                ).fetchone()
+                if newest is not None and newest[1] == going:
+                    self._mark(db, n, newest[0], kept)
             epoch = db.execute("SELECT epoch FROM slot WHERE number = ?", (n,)).fetchone()[0] + 1
             db.execute(
                 "UPDATE slot SET epoch = ?, updated_at = ? WHERE number = ?", (epoch, now, n)
@@ -531,6 +620,7 @@ class Repository:
             self._write_head(db, n, epoch, scene_json, editor_label, now)
             self._insert_files(db, n, files, now)
             revision = self._insert_revision(db, n, epoch, scene_json, editor_label, now)
+            self._prune(db, n, moment)
         return Replacement(epoch=epoch, revision=revision, saved_at=now)
 
     def list_revisions(self, n: int) -> list[RevisionSummary]:
@@ -542,7 +632,7 @@ class Repository:
         _check_slot(n)
         with self._reading() as db:
             rows = db.execute(
-                "SELECT slot, revision, epoch, author_label, created_at FROM revision "
+                "SELECT slot, revision, epoch, author_label, created_at, kept FROM revision "
                 "WHERE slot = ? ORDER BY revision DESC",
                 (n,),
             ).fetchall()
@@ -558,13 +648,80 @@ class Repository:
         _check_slot(n)
         with self._reading() as db:
             row = db.execute(
-                "SELECT slot, revision, epoch, author_label, created_at, scene_json "
+                "SELECT slot, revision, epoch, author_label, created_at, kept, scene_zstd "
                 "FROM revision WHERE slot = ? AND revision = ?",
                 (n, revision),
             ).fetchone()
         if row is None:
             raise RevisionNotFound(n, revision)
-        return Revision(*row)
+        return Revision(*row[:-1], scene_json=unpack_scene(row[-1]))
+
+    def slot_contents(self, n: int) -> SlotContents:
+        """Return what clearing a slot would remove from it.
+
+        Raises:
+            InvalidSlot: When ``n`` is not 1 to 9.
+        """
+        _check_slot(n)
+        with self._reading() as db:
+            slot = self._slot(db, n)
+            (scene_json,) = db.execute(
+                "SELECT scene_json FROM slot_head WHERE slot = ?", (n,)
+            ).fetchone()
+            (revisions,) = db.execute(
+                "SELECT count(*) FROM revision WHERE slot = ?", (n,)
+            ).fetchone()
+            hashes = db.execute("SELECT hash FROM slot_file WHERE slot = ?", (n,)).fetchall()
+        # A head is the document a flush or a bootstrap wrote: its elements are objects.
+        elements = json.loads(scene_json).get("elements", [])
+        return SlotContents(
+            slot=slot,
+            elements=live_count(elements),
+            revisions=revisions,
+            files=len(hashes),
+            hashes=frozenset(hash for (hash,) in hashes),
+        )
+
+    def hashes_named_outside(self, slots: Iterable[int]) -> frozenset[str]:
+        """Return the hashes that the file ids of the other slots name."""
+        inside = set(slots)
+        with self._reading() as db:
+            rows = db.execute("SELECT DISTINCT slot, hash FROM slot_file").fetchall()
+        return frozenset(hash for slot, hash in rows if slot not in inside)
+
+    def clear_slot(self, n: int) -> Cleared:
+        """Empty a slot for good, in one transaction: the write behind ``segl slot clear``.
+
+        Its history and its file rows are deleted. It gets the empty scene,
+        its first title, and the next epoch, as a slot that was just made
+        but for the epoch. segl must not be running: a room holds the scene
+        in memory and would write it back.
+
+        Raises:
+            InvalidSlot: When ``n`` is not 1 to 9.
+        """
+        _check_slot(n)
+        empty = load_empty_scene()
+        now = self._now()
+        with self._transaction() as db:
+            named = {
+                hash for (hash,) in db.execute("SELECT hash FROM slot_file WHERE slot = ?", (n,))
+            }
+            db.execute("DELETE FROM revision WHERE slot = ?", (n,))
+            db.execute("DELETE FROM slot_file WHERE slot = ?", (n,))
+            still = {
+                hash
+                for (hash,) in db.execute(
+                    "SELECT DISTINCT hash FROM slot_file WHERE slot != ?", (n,)
+                )
+            }
+            epoch = db.execute("SELECT epoch FROM slot WHERE number = ?", (n,)).fetchone()[0] + 1
+            db.execute(
+                "UPDATE slot SET title = ?, epoch = ?, updated_at = ? WHERE number = ?",
+                (f"Workspace {n}", epoch, now, n),
+            )
+            self._write_head(db, n, epoch, empty, SYSTEM_LABEL, now)
+        return Cleared(epoch=epoch, unnamed=frozenset(named - still))
 
     def allocate_display_name(self, words: Sequence[str]) -> str:
         """Return the next label, such as ``Alpha1``, and advance the counter.
@@ -642,29 +799,54 @@ class Repository:
                 (n, file.file_id, file.hash, file.media_type, now),
             )
 
+    @staticmethod
+    def _newest(db: sqlite3.Connection, n: int) -> tuple[int, str, str] | None:
+        """Return the slot's newest revision: its number, its scene, and when it was made."""
+        row = db.execute(
+            "SELECT revision, scene_zstd, created_at FROM revision WHERE slot = ? "
+            "ORDER BY revision DESC LIMIT 1",
+            (n,),
+        ).fetchone()
+        return None if row is None else (row[0], unpack_scene(row[1]), row[2])
+
+    @staticmethod
     def _insert_revision(
-        self,
         db: sqlite3.Connection,
         n: int,
         epoch: int,
         scene_json: str,
         author_label: str,
         now: str,
+        kept: str | None = None,
     ) -> int:
         revision = db.execute(
             "SELECT COALESCE(MAX(revision), 0) + 1 FROM revision WHERE slot = ?", (n,)
         ).fetchone()[0]
         db.execute(
-            "INSERT INTO revision (slot, revision, epoch, scene_json, author_label, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (n, revision, epoch, scene_json, author_label, now),
-        )
-        # A slot's numbers have no gap, so the newest `limit` rows are the ones above this.
-        db.execute(
-            "DELETE FROM revision WHERE slot = ? AND revision <= ?",
-            (n, revision - self._history_limit),
+            "INSERT INTO revision "
+            "(slot, revision, epoch, author_label, created_at, kept, scene_zstd) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (n, revision, epoch, author_label, now, kept, pack_scene(scene_json)),
         )
         return revision
+
+    @staticmethod
+    def _mark(db: sqlite3.Connection, n: int, revision: int, kept: str) -> None:
+        db.execute(
+            "UPDATE revision SET kept = ? WHERE slot = ? AND revision = ?", (kept, n, revision)
+        )
+
+    def _prune(self, db: sqlite3.Connection, n: int, moment: datetime) -> None:
+        """Delete the slot's revisions that the retention rules no longer keep."""
+        rows = [
+            Row(revision, datetime.fromisoformat(created_at), kept)
+            for revision, created_at, kept in db.execute(
+                "SELECT revision, created_at, kept FROM revision WHERE slot = ?", (n,)
+            )
+        ]
+        stay = staying(rows, moment, self._history_limit)
+        gone = [(n, row.revision) for row in rows if row.revision not in stay]
+        db.executemany("DELETE FROM revision WHERE slot = ? AND revision = ?", gone)
 
 
 def _check_slot(n: int) -> None:

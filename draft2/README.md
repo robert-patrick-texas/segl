@@ -19,7 +19,7 @@
 
 ## System in one pass
 
-A browser opens `s/N` under segl's root (`N` is 1–9), such as `https://dev.example.com/board/s/1`, where nginx strips `/board`. Python returns the React application with asset URLs relative to the page, and a small runtime config that names the way back to segl's root. The page loads that slot's scene from SQLite, assigns a display label if the browser does not already have one, and joins a WebSocket room for that slot. Element edits and cursors fan out to the other browsers on the same slot. The server writes the head scene to SQLite and keeps the latest 50 revisions for restore. Slot 9 is the same mechanism as slot 1. A future protected area under `/{team}/{project}/{board}` is reserved and is not part of this MVP.
+A browser opens `s/N` under segl's root (`N` is 1–9), such as `https://dev.example.com/board/s/1`, where nginx strips `/board`. Python returns the React application with asset URLs relative to the page, and a small runtime config that names the way back to segl's root. The page loads that slot's scene from SQLite, assigns a display label if the browser does not already have one, and joins a WebSocket room for that slot. Element edits and cursors fan out to the other browsers on the same slot. The server writes the head scene to SQLite and keeps the newest 50 revisions, and older ones for a week, for restore. Slot 9 is the same mechanism as slot 1. A future protected area under `/{team}/{project}/{board}` is reserved and is not part of this MVP.
 
 ## Repository the tasks create
 

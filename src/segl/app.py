@@ -196,6 +196,8 @@ def _revision_json(row: RevisionSummary) -> dict[str, object]:
         "epoch": row.epoch,
         "authorLabel": row.author_label,
         "createdAt": row.created_at,
+        # Why segl kept it: the scene before a delete, a restore, or an import.
+        "kept": row.kept,
     }
 
 
@@ -355,7 +357,7 @@ def create_app(
         return _error(
             404,
             "revision_not_found",
-            "The slot has no such revision. The oldest ones are dropped as new ones are kept.",
+            "The slot has no such revision. Older ones are dropped as new ones are kept.",
         )
 
     @app.exception_handler(HTTPException)

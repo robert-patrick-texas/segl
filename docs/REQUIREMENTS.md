@@ -10,7 +10,7 @@ Priority **M** is required for its phase's gate: P0's was the MVP gate. **L** is
 | S-002 | M | Live collaboration | Two browsers on the same slot see each other's element edits and cursors. |
 | S-003 | M | Nine persistent slots | Slots 1–9 exist after first startup. Each has its own scene and title. Users cannot create or delete slots. |
 | S-004 | M | Restart recovery | After the process is killed once the UI says saved, the head scene returns on reload. |
-| S-005 | M | History | The latest 50 revisions per slot can be listed and restored. Restore updates every connected browser and can itself be restored. |
+| S-005 | M | History | A slot's history keeps its newest 50 revisions, and older ones as they age: the newest of each minute for an hour, of each hour for a day, and of each day for a week. The board as it was before a big delete, a restore, or an import is kept a week. Each can be listed and restored. Restore updates every connected browser and can itself be restored. |
 | S-006 | M | Mount path | The same build works at a host root (`/s/1`) and under a path a proxy strips (`https://dev.example.com/board/s/1`). No setting names the path, and the page requests nothing outside it. |
 | S-007 | M | No cookies | No MVP response sets `Set-Cookie`. Preferences and the pass an access code buys live in `localStorage`. |
 | S-008 | M | Optional access codes | With no access codes, every viewer can edit. With one or more, viewers still follow live, and scene, title, restore, import, and asset writes need a pass. A browser is issued a pass when a person enters one of the codes on the access page, and enters a code again when the pass has ended. Nobody is authenticated: a pass says that someone knew a code (D2-033). |
@@ -25,6 +25,7 @@ Priority **M** is required for its phase's gate: P0's was the MVP gate. **L** is
 | S-017 | M | Dev container | The dev container runs the automated test suite, including the two-browser cases, under rootful Docker, rootless Docker, or rootless Podman. |
 | S-018 | M | Internal networks | With `internal_networks` set, segl answers no request and no WebSocket handshake from an address outside those networks. Loopback is inside. With the list empty, segl answers every address. |
 | S-019 | M | Updates | `segl update` installs a newer release from GitHub on an installed `.deb`, by hand or from a nightly timer that is off until the site turns it on. It installs only a release whose signature verifies against the keys the installed package ships. It can go through a proxy. It adds a new version's statements to the site's settings and nginx files and keeps every line the site wrote. It checks the settings and `nginx -t` before it starts the new version, and goes back to the previous version when a check fails. |
+| S-020 | M | Clearing a slot | `segl slot clear N` empties a slot for good: its scene, its title, its history, its files, and the image files no other slot names. It says what goes, and asks for the number to be typed back unless `--yes` is given. On the package it stops segl's unit first and starts it after. Elsewhere it refuses while segl answers on its port. A browser open on the slot gets the empty board when it reconnects. |
 
 ## P1 — network objects on a canvas
 

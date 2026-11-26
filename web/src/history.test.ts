@@ -15,6 +15,7 @@
 import { expect, test } from 'vitest';
 import {
 	historyRows,
+	KEPT_PHRASES,
 	NEEDS_CODE,
 	parseRevisions,
 	restoreProblem,
@@ -23,17 +24,62 @@ import {
 } from './history.ts';
 
 function revision(number: number, epoch = 1, authorLabel = 'Guest1'): RevisionInfo {
-	return { revision: number, epoch, authorLabel, createdAt: '2026-11-12T09:00:00.000Z' };
+	return {
+		revision: number,
+		epoch,
+		authorLabel,
+		createdAt: '2026-11-12T09:00:00.000Z',
+		kept: null
+	};
 }
 
-test('a list of revisions is read as its four fields', () => {
+test('a list of revisions is read as its five fields', () => {
 	const listed = [
-		{ revision: 2, epoch: 1, authorLabel: 'Staff2', createdAt: '2026-11-12T09:00:01.000Z' },
-		{ revision: 1, epoch: 1, authorLabel: 'Guest1', createdAt: '2026-11-12T09:00:00.000Z' }
+		{
+			revision: 3,
+			epoch: 1,
+			authorLabel: 'Staff2',
+			createdAt: '2026-11-12T09:00:02.000Z',
+			kept: null
+		},
+		{
+			revision: 2,
+			epoch: 1,
+			authorLabel: 'Staff2',
+			createdAt: '2026-11-12T09:00:01.000Z',
+			kept: 'delete'
+		},
+		{
+			revision: 1,
+			epoch: 1,
+			authorLabel: 'Guest1',
+			createdAt: '2026-11-12T09:00:00.000Z',
+			kept: 'restore'
+		}
 	];
 
 	expect(parseRevisions(listed)).toEqual(listed);
 	expect(parseRevisions([])).toEqual([]);
+});
+
+test.each([
+	['delete', 'Before delete'],
+	['restore', 'Before restore'],
+	['import', 'Before import']
+] as const)('the mark %s reads "%s"', (kept, phrase) => {
+	expect(KEPT_PHRASES[kept]).toBe(phrase);
+	expect(parseRevisions([{ ...revision(4), kept }])).toEqual([{ ...revision(4), kept }]);
+});
+
+test.each([
+	['an older segl, which sends no reason', undefined],
+	['a reason a later segl may send', 'lunch'],
+	['a reason that is not text', 1],
+	['a name an object has', 'toString']
+])('%s is read as no reason', (_name, kept) => {
+	const { kept: _none, ...plain } = revision(5);
+
+	expect(parseRevisions([{ ...plain, kept }])).toEqual([revision(5)]);
 });
 
 test('what a later segl adds to a revision is left out', () => {

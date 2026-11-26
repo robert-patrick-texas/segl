@@ -17,9 +17,10 @@
  * T-007), or give settings of its own. The other browser tests share the
  * servers Playwright starts, which cannot be restarted under them, so
  * `durability.spec.ts` runs this one, on a port and in a folder of its own,
- * and `expiry.spec.ts` runs it with passes that last seconds.
+ * `expiry.spec.ts` runs it with passes that last seconds, and
+ * `lasting.spec.ts` with a short history, and stops it to clear a slot.
  */
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -88,6 +89,24 @@ export class RestartableServer {
 	 */
 	async kill(): Promise<void> {
 		await this.signal('SIGKILL');
+	}
+
+	/** Stop segl as systemd does, with SIGTERM: it writes every room's scene first. */
+	async stop(): Promise<void> {
+		await this.signal('SIGTERM');
+	}
+
+	/**
+	 * Run `segl slot clear` on these slots, with `--yes`, over this server's
+	 * settings. Stop the server first: the command refuses while it answers.
+	 */
+	clearSlots(slots: number[]): { status: number | null; output: string } {
+		const done = spawnSync(
+			'uv',
+			['run', 'segl', 'slot', 'clear', ...slots.map(String), '--yes', '--config', this.config],
+			{ cwd: resolve('..'), encoding: 'utf8', timeout: PATIENCE_MS }
+		);
+		return { status: done.status, output: `${done.stdout}${done.stderr}` };
 	}
 
 	/** Stop whatever is running, and remove the folder. */

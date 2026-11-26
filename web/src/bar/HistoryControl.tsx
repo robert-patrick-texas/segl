@@ -23,6 +23,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import {
 	historyRows,
+	KEPT_PHRASES,
 	NEEDS_CONNECTION,
 	NEEDS_CODE,
 	restoreProblem,
@@ -176,6 +177,15 @@ export function HistoryControl({
 													title="A restore or an import put the whole canvas in place here"
 												>
 													replacement
+												</span>
+											)}
+											{row.kept !== null && (
+												<span
+													className="segl-bar__revision-tag"
+													data-kept={row.kept}
+													title="segl keeps this version for up to a week"
+												>
+													{KEPT_PHRASES[row.kept]}
 												</span>
 											)}
 										</span>

@@ -42,6 +42,7 @@ import warnings
 from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -173,6 +174,24 @@ def assert_no_secrets(text: str | bytes, what: str = "") -> None:
         assert secret not in text, what
     # A pass ends in its signature, which the secret makes.
     assert issue_pass().partition(".")[2] not in text, what
+
+
+class OneMinuteClock:
+    """A repository clock for tests that write past the history limit.
+
+    It starts at a whole UTC minute and moves 10 ms at each read. So a burst
+    of revisions falls in one clock minute, and the minute tier keeps only
+    the newest of them, which the limit keeps anyway (docs/DATA-MODEL.md,
+    "Which revisions stay"). On the real clock a burst that crossed a minute
+    would keep one row more.
+    """
+
+    def __init__(self) -> None:
+        self.now = datetime(2026, 11, 26, 10, 0, tzinfo=UTC)
+
+    def __call__(self) -> datetime:
+        self.now += timedelta(milliseconds=10)
+        return self.now
 
 
 def make_settings(**changes: Any) -> Settings:

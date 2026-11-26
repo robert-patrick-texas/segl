@@ -87,6 +87,24 @@ class AssetStore:
         """Return the names, of those given, that are stored files."""
         return frozenset(name for name in names if self.has(name))
 
+    def size(self, name: str) -> int:
+        """Return the size of the stored file with this hash, or 0 when there is none."""
+        path = self.path(name)
+        try:
+            return path.stat().st_size if path is not None else 0
+        except FileNotFoundError:
+            return 0
+
+    def remove(self, name: str) -> None:
+        """Delete the stored file with this hash, if there is one: ``segl slot clear``.
+
+        Raises:
+            OSError: When it is there and cannot be deleted.
+        """
+        path = self.path(name)
+        if path is not None:
+            path.unlink(missing_ok=True)
+
     def save(self, data: bytes) -> str:
         """Store the bytes and return their hash. Bytes already stored are left alone.
 

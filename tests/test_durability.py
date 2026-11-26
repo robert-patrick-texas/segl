@@ -39,6 +39,7 @@ from harness import (
     PASS_HEADER,
     MarkOf,
     NginxTools,
+    OneMinuteClock,
     SeglServer,
     issue_pass,
     make_settings,
@@ -267,7 +268,7 @@ def test_half_a_surrogate_pair_in_a_scene_is_stored_and_served(client: TestClien
 def test_the_history_keeps_the_newest_revisions_up_to_the_limit(tmp_path: Path) -> None:
     """The caps and intervals of the configuration reach the flush."""
     database = tmp_path / "segl.sqlite"
-    with Repository(database, history_limit=3) as repository:
+    with Repository(database, history_limit=3, clock=OneMinuteClock()) as repository:
         repository.bootstrap()
         client = application(repository, tmp_path, history_interval_seconds=0.001)
         with client, client.websocket_connect("/collab?slot=5") as socket:

@@ -60,7 +60,8 @@ web_dir = "/opt/segl/app/web/dist"
 max_asset_bytes = 10485760
 max_scene_bytes = 52428800
 
-# History: revisions kept per slot, and the least time between two of them.
+# History: the newest revisions kept per slot, and the least time between two
+# of them. Older ones thin out for a week (docs/DATA-MODEL.md).
 history_limit = 50
 history_interval_seconds = 1
 

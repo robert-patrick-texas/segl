@@ -14,9 +14,23 @@
 
 /**
  * A slot's history as the bar lists it (S-005, docs/API.md): the revisions
- * the server keeps, newest first, and the words for when each was made and
- * for a restore that was refused. No React and no editor here.
+ * the server keeps, newest first, and the words for when each was made, for
+ * why one was kept, and for a restore that was refused. No React and no
+ * editor here.
  */
+
+/**
+ * Why the server kept a revision: its scene is the one from just before a
+ * big delete, a restore, or an import (docs/DATA-MODEL.md).
+ */
+export type Kept = 'delete' | 'restore' | 'import';
+
+/** What the list says beside a kept revision. */
+export const KEPT_PHRASES: Readonly<Record<Kept, string>> = {
+	delete: 'Before delete',
+	restore: 'Before restore',
+	import: 'Before import'
+};
 
 /** One revision, without its scene, as `GET api/v1/slots/{n}/revisions` lists it. */
 export interface RevisionInfo {
@@ -28,6 +42,8 @@ export interface RevisionInfo {
 	authorLabel: string;
 	/** When it was made, in UTC, as the server wrote it. */
 	createdAt: string;
+	/** Why the server kept it, or null for a revision kept as people drew. */
+	kept: Kept | null;
 }
 
 /** A revision as a row of the list. */
@@ -52,18 +68,21 @@ function isRevisionInfo(value: unknown): value is RevisionInfo {
 	);
 }
 
+function isKept(value: unknown): value is Kept {
+	return typeof value === 'string' && Object.hasOwn(KEPT_PHRASES, value);
+}
+
 /**
  * Return the revisions of a response, or null when it is not such a list.
- * Each is kept as its four fields, whatever else a later segl sends.
+ * Each is kept as its five fields, whatever else a later segl sends. A
+ * reason this page does not know, or none, as from an older segl, is none.
  */
 export function parseRevisions(value: unknown): RevisionInfo[] | null {
 	if (!Array.isArray(value) || !value.every(isRevisionInfo)) return null;
-	return value.map(({ revision, epoch, authorLabel, createdAt }) => ({
-		revision,
-		epoch,
-		authorLabel,
-		createdAt
-	}));
+	return value.map(({ revision, epoch, authorLabel, createdAt, ...rest }) => {
+		const kept = (rest as { kept?: unknown }).kept;
+		return { revision, epoch, authorLabel, createdAt, kept: isKept(kept) ? kept : null };
+	});
 }
 
 /**
@@ -129,7 +148,7 @@ export function restoreProblem(error: unknown): string {
 			? (error as { code: unknown }).code
 			: null;
 	if (code === 'view_only') return NEEDS_CODE;
-	// It was the oldest row, and newer ones have pushed it out since the list was read.
+	// The rules the server keeps revisions by dropped it since the list was read.
 	if (code === 'revision_not_found') return 'That version is no longer kept.';
 	if (error instanceof Error && error.message !== '') return error.message;
 	return 'segl could not restore that version.';

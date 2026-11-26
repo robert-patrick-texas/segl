@@ -125,7 +125,7 @@ def test_the_database_is_in_wal_mode_with_foreign_keys_on(repo: Repository, data
     assert rows(database, "PRAGMA journal_mode") == [("wal",)]
     # The repository's own connection refuses a row for a slot that does not exist.
     with pytest.raises(StorageError, match="FOREIGN KEY"), repo._transaction() as db:
-        db.execute("INSERT INTO revision VALUES (99, 1, 1, '{}', 'x', 'now')")
+        db.execute("INSERT INTO revision VALUES (99, 1, 1, 'x', 'now', NULL, x'00')")
 
 
 def test_bootstrap_creates_nine_slots(repo: Repository) -> None:
@@ -456,8 +456,9 @@ def test_the_51st_revision_drops_the_oldest(repo: Repository) -> None:
     assert [row.revision for row in repo.list_revisions(2)] == [1]
 
 
-def test_the_history_limit_is_the_one_given(database: Path) -> None:
-    with Repository(database, history_limit=3) as repository:
+def test_the_history_limit_is_the_one_given(database: Path, clock: Clock) -> None:
+    # Five revisions in the same instant: one clock minute.
+    with Repository(database, history_limit=3, clock=clock) as repository:
         repository.bootstrap()
         for _ in range(5):
             repository.append_revision(1, 1, DRAWN, "Alpha1")
@@ -675,8 +676,8 @@ def test_a_database_from_before_the_file_list_gains_the_table_and_keeps_its_slot
     assert rows(database, "PRAGMA user_version") == [(1,)]
     assert rows(database, "SELECT name FROM sqlite_master WHERE name = 'slot_file'") == []
     with Repository(database, clock=clock) as before:
-        # The older segl's bootstrap: the same rows, without the newer table.
-        before._connection.execute("PRAGMA user_version = 2")
+        # The older segl's bootstrap: the same rows, without the newer tables.
+        before._connection.execute(f"PRAGMA user_version = {len(load_migrations()):d}")
         before.bootstrap()
         before._connection.execute("PRAGMA user_version = 1")
         before.rename_slot(2, "Kept")

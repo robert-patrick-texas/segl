@@ -4,6 +4,17 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
+History lasts a week: the newest 50 revisions, then one a minute, an hour, and a day as they age, and the board as it was before a big delete, a restore, or an import. `segl slot clear N` empties a slot for good.
+
+### New
+
+- A slot's history keeps its newest 50 revisions, and older ones as the newest of each clock minute for an hour, of each clock hour for a day, and of each clock day for a week. The board as it was before a flush that leaves fewer than 90% of its live elements, and the board a restore or an import replaced, is kept a week, at most 20 a slot. The History control marks those rows `Before delete`, `Before restore`, or `Before import`, and the revision list names the reason in `kept` (S-005; `docs/DATA-MODEL.md`, which revisions stay; D2-011).
+- `segl slot clear N` empties one or more slots for good: the scene, the title, the history, the files, and the image files no other slot names. It asks for each number to be typed back unless `--yes` is given. With the package's settings it stops segl's unit, clears, and starts it again. A browser that was open on the slot takes the empty board when it reconnects (S-020; `docs/DEPLOY.md`, clearing a slot).
+
+### Changed
+
+- Revision scenes are stored compressed with zstd, from Python's own library. Migration `0003` compresses the revisions that exist and adds the mark, so a database from 0.5.0 opens and reads back the same scenes. It is the first migration a `segl update` runs. The database file keeps its size until a `VACUUM` (`docs/DATA-MODEL.md`).
+
 ## 0.5.0 — 2026-11-16
 
 segl's network library puts devices and links on any slot, and a small panel marks each as planned or to remove. `publish` keeps a log of each run and checks the release as GitHub serves it.

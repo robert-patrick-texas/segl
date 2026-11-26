@@ -35,9 +35,9 @@ There is no base-path setting. segl serves at its root, and nginx strips the pat
 
 segl checks the file when it starts. A key it does not know, such as a misspelled `access_codes` or the removed `base_path`, or a value it cannot use, stops it with exit status 2 and a message that names the key. The message never repeats a code or the secret. `edit_token`, the one static token of an earlier build, is such a key now: no release shipped with it, and the message points at `access_codes`. The sizes and `history_limit` are whole numbers, 1 or more. The two intervals are seconds above 0.
 
-`max_scene_bytes` is the most the elements of one slot may come to, as JSON, and also the largest message the collaboration WebSocket takes. A longer message closes that connection, and an edit that would take a slot over is refused (`API.md`, WebSocket). It is the largest file an import takes too. An exported file holds its images as base64 text, a third larger than their bytes, and each image in it may be up to `max_asset_bytes`. The database can hold up to `history_limit` + 1 copies of each slot's scene.
+`max_scene_bytes` is the most the elements of one slot may come to, as JSON, and also the largest message the collaboration WebSocket takes. A longer message closes that connection, and an edit that would take a slot over is refused (`API.md`, WebSocket). It is the largest file an import takes too. An exported file holds its images as base64 text, a third larger than their bytes, and each image in it may be up to `max_asset_bytes`. The database holds each slot's head and its revisions, each revision compressed: up to `history_limit` + 91 of them, and 20 kept ones (`DATA-MODEL.md`, which revisions stay).
 
-`head_flush_seconds` is how long after an edit segl writes the slot's head, and so how much a crash can lose. `history_interval_seconds` is the least time between two history rows of one slot while people draw (`DATA-MODEL.md`, flush rules). segl also writes when the last browser leaves a slot and when it is stopped with SIGTERM, which is how systemd stops it.
+`head_flush_seconds` is how long after an edit segl writes the slot's head, and so how much a crash can lose. `history_interval_seconds` is the least time between two history rows of one slot while people draw (`DATA-MODEL.md`, flush rules). `history_limit` is how many of a slot's newest revisions stay whatever their age. Older ones thin out by the minute, the hour, and the day, for a week. segl also writes when the last browser leaves a slot and when it is stopped with SIGTERM, which is how systemd stops it.
 
 `assets_dir` holds the bytes of the images on the canvases, one file to an image, each at most `max_asset_bytes`. segl makes the folder when it starts, and a folder it cannot write in stops it with exit status 1 and one line that names the folder. Nothing removes a file from it. Back up `database` and `assets_dir` together: a scene names its images by the files in that folder.
 
@@ -319,6 +319,23 @@ There is no option to skip the certificate check. A CA that is trusted by mistak
 
 `apt remove` keeps the folder. `apt purge` removes it.
 
+## Clearing a slot
+
+`segl slot clear N` empties slots for good: the scene, the title, the whole history, and the slot's files, with the image files under `assets_dir` that no other slot names. Use it when a board was saved elsewhere, or holds images too heavy to keep. A clear cannot be undone. To get a slot back, restore a backup (`OPERATOR.md`, back up).
+
+```bash
+sudo segl slot clear 3             # one slot
+sudo segl slot clear 3 5 --yes     # two, without the question
+```
+
+It says what goes: each slot's elements, revisions, and files, and the size of the image files only those slots name. Then it asks for each number to be typed back. `--yes` skips the question. Without a terminal and without `--yes`, it clears nothing.
+
+A running segl holds each open slot's scene in memory and would write it back. So with the package's settings, the default `/opt/segl/etc/segl.toml`, and `segl.service` running, the command stops the unit, clears, starts the unit, and waits until segl answers. It says each step, and needs root for it. With another settings file, or with the unit stopped, it refuses while anything answers on segl's port, and leaves segl as it was.
+
+The slot's epoch goes up, as after a restore. A browser that was open on the slot reconnects when segl is back and shows the empty board. It sends nothing of the old one.
+
+Each clear is a line in the system log under `segl`, beside the unit's own lines: `journalctl -t segl`. The line has the counts, and nothing of the board.
+
 ## Dev container
 
 `deploy/Containerfile` is based on Ubuntu 26.04 and installs uv, Node for the web build, nginx for the mount tests, and Chromium for the browser tests. It does not install the production `.deb` layout. Tests run with `uv sync` and `uv run` inside the container, using the project's pinned Python. Rootful Docker, rootless Docker, or rootless Podman can build and run it (D2-015). T01 created the file with uv alone, pinned by image digest, and its build runs `uv run pytest` as the image's unprivileged `ubuntu` account. T02 added nginx and openssl, and set `SEGL_REQUIRE_NGINX=1`, so the tests through nginx fail there instead of skipping. T04 added Node, at the version in `web/.node-version` and pinned by image digest, and the build now also runs `npm ci`, the web typecheck, Vitest, Prettier, and `vite build` before pytest. T11 added Chromium, from the pinned `@playwright/test`, with the system libraries Playwright lists for Ubuntu 26.04. The image's command is now `scripts/testplan.py`: `docker run --rm --init segl-dev` runs pytest and the browser tests and prints one line for each row of `TEST-PLAN.md`. It passed under rootful Docker and under rootless Docker. Podman was not tried. The host tools are in `DEVELOPMENT.md`.
@@ -329,6 +346,6 @@ Not part of the MVP. After the gate, L-005 adds an image that runs the same `/op
 
 ## Operator notes
 
-[`deploy/OPERATOR.md`](../deploy/OPERATOR.md) is the short form of this page for the person who installs segl. The package installs it as `/usr/share/doc/segl/OPERATOR.md`. It covers: install the `.deb` and start the unit, install the nginx files and add the include line, leave `access_codes` empty or set codes with `access_secret`, end every pass with `access_passes_after`, set `internal_networks` where the site wants the second check, replace `display-names.txt`, back up, update with `segl update` or the nightly timer, and remove. It says that the access page is not a login, that slots are shared, and that protected inventory is not available on them.
+[`deploy/OPERATOR.md`](../deploy/OPERATOR.md) is the short form of this page for the person who installs segl. The package installs it as `/usr/share/doc/segl/OPERATOR.md`. It covers: install the `.deb` and start the unit, install the nginx files and add the include line, leave `access_codes` empty or set codes with `access_secret`, end every pass with `access_passes_after`, set `internal_networks` where the site wants the second check, replace `display-names.txt`, back up, update with `segl update` or the nightly timer, clear a slot with `segl slot clear`, and remove. It says that the access page is not a login, that slots are shared, and that protected inventory is not available on them.
 
 The install test runs the nginx commands of those notes as they are written, and pytest holds the two to each other (`tests/test_package.py`).

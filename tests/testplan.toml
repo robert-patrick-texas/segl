@@ -22,6 +22,7 @@ default = ["direct", "root", "board"]
 "access.spec.ts" = ["access-direct", "access-root", "access-board"]
 "durability.spec.ts" = ["restart"]
 "expiry.spec.ts" = ["restart"]
+"lasting.spec.ts" = ["restart"]
 
 [rows.T-001]
 pytest = [
@@ -179,3 +180,7 @@ browser = [
     "network.spec.ts",
     "access.spec.ts > a browser without a pass sees the tags of network objects and changes nothing",
 ]
+
+[rows.T-023]
+pytest = ["tests/test_retention.py", "tests/test_clear.py"]
+browser = ["lasting.spec.ts"]

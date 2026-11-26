@@ -127,3 +127,8 @@ def ordered(elements: Iterable[Element]) -> list[Element]:
         (indexed if isinstance(element.get("index"), str) else rest).append(element)
     indexed.sort(key=lambda element: (element["index"], element["id"]))
     return indexed + rest
+
+
+def live_count(elements: Iterable[Element]) -> int:
+    """Return how many of these elements are live: not deleted."""
+    return sum(1 for element in elements if element.get("isDeleted") is not True)

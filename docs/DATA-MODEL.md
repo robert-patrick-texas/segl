@@ -1,12 +1,14 @@
 # Data model (MVP)
 
-SQLite, WAL mode, foreign keys on. Migrations are numbered SQL files in `src/segl/migrations/`, applied in order at startup: `0001_slots.sql`, and `0002_slot_files.sql` for the files of images. The repository module, `src/segl/repository.py`, is the only code that runs SQL. A later PostgreSQL implementation must satisfy the same method list.
+SQLite, WAL mode, foreign keys on. Migrations are numbered SQL files in `src/segl/migrations/`, applied in order at startup: `0001_slots.sql`, `0002_slot_files.sql` for the files of images, and `0003_lasting_history.sql`, which compresses each revision's scene and adds its mark (T16). The repository module, `src/segl/repository.py`, is the only code that runs SQL. A later PostgreSQL implementation must satisfy the same method list.
 
 ## Database file and migrations
 
 segl opens the `database` file when it starts, before it listens, and creates the file and its folder when they are missing. The connection uses WAL mode, foreign keys, and `synchronous = FULL`, so a head the UI calls saved is on the disk.
 
-A migration is a file named `NNNN_name.sql`, such as `0001_slots.sql`. The numbers start at `0001` and have no gap. The database keeps the number of the newest file applied to it in `PRAGMA user_version`. Startup applies the files above that number, all in one transaction, so a migration that fails leaves the database as it was. A migration file has no `BEGIN` or `COMMIT` of its own. A released migration is never edited. A schema change is a new file.
+A migration is a file named `NNNN_name.sql`, such as `0001_slots.sql`. The numbers start at `0001` and have no gap. The database keeps the number of the newest file applied to it in `PRAGMA user_version`. Startup applies the files above that number, all in one transaction, so a migration that fails leaves the database as it was. A migration file has no `BEGIN` or `COMMIT` of its own. A released migration is never edited. A schema change is a new file. The connection that runs them has one function of segl's own, `segl_zstd(text)`, which returns the text compressed as a revision stores it. `0003` calls it on every revision that exists.
+
+`0003` builds the revision table again: it renames the old one, makes the new one, copies each row with its scene compressed, and drops the old one. SQLite keeps the pages it freed in the file and uses them again, so the file does not shrink by itself. A `VACUUM`, with segl stopped, gives them back to the disk.
 
 When segl stops, on SIGTERM or an interrupt, it closes the database, which folds the write-ahead log back into the one file. After a kill that skips this, the `-wal` and `-shm` files stay beside the database and the next start reads them.
 
@@ -36,9 +38,10 @@ CREATE TABLE revision (
   slot INTEGER NOT NULL REFERENCES slot(number),
   revision INTEGER NOT NULL,
   epoch INTEGER NOT NULL,
-  scene_json TEXT NOT NULL,
   author_label TEXT NOT NULL,
   created_at TEXT NOT NULL,
+  kept TEXT CHECK (kept IN ('delete', 'restore', 'import')),
+  scene_zstd BLOB NOT NULL,
   PRIMARY KEY (slot, revision)
 );
 
@@ -56,6 +59,8 @@ CREATE TABLE slot_file (
   PRIMARY KEY (slot, file_id)
 );
 ```
+
+`revision.scene_zstd` is the scene's text, compressed with zstd from Python's own library (`compression.zstd`). The head stays plain JSON text. `revision.kept` is why segl kept that revision ("Which revisions stay", below), or null.
 
 Startup inserts slots 1–9 with title `Workspace N`, epoch 1, the editor's empty scene, editor label `System`, and `name_counter.next_value = 1`. Rows that already exist are left alone.
 
@@ -87,26 +92,27 @@ Times are text in UTC to the millisecond, such as `2026-11-12T09:00:00.000Z`. `s
 The pinned editor keeps an image's bytes outside the scene, under a file id of its own, and an image element names that id in `fileId` (D2-028). segl stores the bytes the same way, outside `scene_json`:
 
 - The bytes are a file under `assets_dir`, named by the SHA-256 of its content, 64 lowercase hex digits. The same bytes are stored once, whichever slots use them. A file is written beside its place, synced to the disk, and then moved there.
-- `slot_file` says which hash one of a slot's file ids means, and the image type the browser gave. A flush adds the rows for the files named since the last one, in the transaction that writes the head. A row is never changed or deleted: a file id keeps the bytes it was first given, and a revision that names it still finds them.
+- `slot_file` says which hash one of a slot's file ids means, and the image type the browser gave. A flush adds the rows for the files named since the last one, in the transaction that writes the head. A row is never changed: a file id keeps the bytes it was first given, and a revision that names it still finds them. Only a clear deletes rows ("Clearing a slot", below).
 - A slot's file list, as the API returns it with a scene, is the rows whose file id an element of that scene names. A deleted image still names its file.
 
-Nothing removes a file from `assets_dir`. A backup of segl is the database file and that folder together.
+Only `segl slot clear` removes a file from `assets_dir`: one that no slot names once the cleared slots' rows are gone. A backup of segl is the database file and that folder together.
 
 ## Repository methods
 
 - `bootstrap()` — migrations and the nine slots.
 - `get_slot(n)` / `list_slots()` / `rename_slot(n, title)`.
 - `get_head(n)` / `save_head(n, epoch, scene_json, editor_label)`.
-- `flush_head(n, epoch, scene_json, editor_label, history_seconds=, files=)` — the write behind a head flush, in one transaction. It writes the head unless the head already holds that scene, adds `files` to the slot's file list, and appends a revision under the rules below. It returns the head's `saved_at`, whether it wrote the head, the new revision number or none, and whether the newest revision now holds the head's scene. A revision for a head that this flush did not write carries the head's own label.
+- `flush_head(n, epoch, scene_json, editor_label, history_seconds=, files=, before_delete=)` — the write behind a head flush, in one transaction. It writes the head unless the head already holds that scene, adds `files` to the slot's file list, and appends a revision under the rules below. `before_delete` keeps the head's scene first: the saver works out when. It returns the head's `saved_at`, whether it wrote the head, the new revision number or none, and whether the newest revision now holds the head's scene. A revision for a head that this flush did not write carries the head's own label.
 - `list_files(n)` — every file the slot's scenes have named, oldest first.
-- `append_revision(n, epoch, scene_json, author_label)` — returns the new revision number, then deletes oldest rows past the history limit.
-- `replace_head(n, scene_json, editor_label, files=)` — the write behind restore and import. `files` are the ones an import brought, added to the slot's file list in the same transaction. Returns the new epoch, the new revision number, and the save time. The caller first flushes what the slot's room holds (restore rules below).
-- `list_revisions(n)` / `get_revision(n, revision)`. The list is newest first and leaves the scenes out. `GET /api/v1/slots/{n}/revisions` and `.../revisions/{revision}` are these two.
+- `append_revision(n, epoch, scene_json, author_label)` — returns the new revision number, then deletes the rows the rules no longer keep.
+- `replace_head(n, scene_json, editor_label, files=, kept=)` — the write behind restore and import. `files` are the ones an import brought, added to the slot's file list in the same transaction. `kept` is `restore` or `import`, which marks the revision of the scene that goes. Returns the new epoch, the new revision number, and the save time. The caller first flushes what the slot's room holds (restore rules below).
+- `list_revisions(n)` / `get_revision(n, revision)`. The list is newest first and leaves the scenes out. Each row has its mark, `kept`. `GET /api/v1/slots/{n}/revisions` and `.../revisions/{revision}` are these two.
 - `allocate_display_name(words: Sequence[str]) -> str` — the transaction in `ARCHITECTURE.md`.
+- `slot_contents(n)` / `hashes_named_outside(slots)` / `clear_slot(n)` — what `segl slot clear` counts, and its write ("Clearing a slot", below).
 
 `save_head`, `append_revision`, and `flush_head` refuse a write whose epoch does not match the slot's epoch (`EpochMismatch`), and write nothing. Restore and import go through `replace_head`, which increments the epoch and writes the head and a revision in one transaction.
 
-Revision numbers count up per slot from 1 and are not reused after the oldest rows are deleted. A slot number outside 1–9 raises `InvalidSlot`, and a revision the slot does not have raises `RevisionNotFound`. A database failure raises `StorageError`. `rename_slot` stores the title it is given. The route that calls it trims and checks the title (`API.md`).
+Revision numbers count up per slot from 1 and are not reused after older rows are deleted. A clear deletes them all, so the slot's numbers start again from 1. A slot number outside 1–9 raises `InvalidSlot`, and a revision the slot does not have raises `RevisionNotFound`. A database failure raises `StorageError`. `rename_slot` stores the title it is given. The route that calls it trims and checks the title (`API.md`).
 
 The repository holds one connection behind a lock, and every method blocks. HTTP handlers call it from worker threads. Code on the event loop, such as the WebSocket room, calls it through a worker thread.
 
@@ -119,15 +125,46 @@ A slot's live scene is in its room, in memory, from the first connection to the 
 - When the last connection for the slot closes, the room is flushed at once. When segl stops, on SIGTERM or an interrupt, every room is flushed before the database is closed.
 - The head is not written when it already holds that scene: the JSON is compared in the transaction, and `saved_at` and `editor_label` stay as they were.
 - A flush appends a revision when the newest revision for that slot does not hold this scene and is at least `history_interval_seconds` old (default 1). The flush after the last connection left, and the one when segl stops, append it whatever its age. So the history has at most one row a second while people draw, and always the scene the slot was left with. Restore and import write their own revision (`replace_head`).
-- A restore is two writes by the slot's saver, under the lock its flushes take (`ARCHITECTURE.md`, collaboration). First a flush of the room, which appends a revision whatever the age of the newest one, unless the newest already holds that scene. Then `replace_head` with the scene of the chosen revision, which was read before the flush: the flush may be the row that drops it. So after a restore the two newest revisions are the scene that was replaced and the scene put in its place, and restoring the first of them undoes the restore.
-- An import is the same two writes (D2-031). The scene of the second is the slot's own stored document with the imported elements in its list, in drawing order. The bytes of the files the document carried are written under `assets_dir` first, and the file ids the slot did not have join `slot_file` in the second write, `replace_head`. An import whose second write fails leaves the bytes, which no scene names, and nothing else.
+- A restore is two writes by the slot's saver, under the lock its flushes take (`ARCHITECTURE.md`, collaboration). First a flush of the room, which appends a revision whatever the age of the newest one, unless the newest already holds that scene. Then `replace_head` with the scene of the chosen revision, which was read before the flush: the flush may be the row that drops it. The second write marks the newest revision `restore`, in its own transaction, when that revision holds the scene being replaced, whether the first write added it or it was there already. So a restore whose second write fails marks nothing. So after a restore the two newest revisions are the scene that was replaced and the scene put in its place, and restoring the first of them undoes the restore.
+- An import is the same two writes (D2-031), and its second marks the scene being replaced `import`. The scene of the second is the slot's own stored document with the imported elements in its list, in drawing order. The bytes of the files the document carried are written under `assets_dir` first, and the file ids the slot did not have join `slot_file` in the second write, `replace_head`. An import whose second write fails leaves the bytes, which no scene names, and nothing else.
 - A slot's first revision is the first flush that changes the head. The scene a slot starts with is not history, and a slot someone only looked at gets no row.
-- At most `history_limit` revisions per slot are kept (default 50). The 51st drops the oldest.
+- Each write that adds a revision, or marks one kept, then deletes what the rules in "Which revisions stay" no longer keep.
+- When a flush would leave fewer than 90% of the live elements the head holds (elements whose `isDeleted` is not true), the head's scene is kept first. If the newest revision holds it, that row is marked `delete`. If not, the head's scene becomes a revision marked `delete`, with the head's own label. The flush then writes the head, and a revision of its own scene whatever the newest one's age. The saver works out the drop from the elements in the room and the count it keeps for the head, so the flush reads no JSON for it. Nine of ten is 90%: nothing more is kept. A drop made in several small flushes is compared one flush at a time.
 - `editor_label`, on the head and on the revision, is the display name the connection had when it sent the newest change in that flush, and `System` for a connection without a label. A revision added for a head that an earlier flush wrote, as after a restart, carries that head's label. The revision a restore or an import writes, and the head with it, carry the display name the request gave, or `System`.
 - A write that fails is logged with the slot's number and tried again after five seconds. The room stays dirty, and nobody is told `saved` meanwhile. A write that fails while segl is stopping is not tried again.
 - After a flush, each connection whose numbered message it held is sent `saved` (`API.md`, WebSocket).
 
 The elements of one slot come to at most `max_scene_bytes` as JSON, each counted as the server writes it. A batch that would take the scene over the limit is refused whole with `scene_too_large`. A batch that makes the scene smaller is always taken, so a slot whose limit was lowered can still be emptied.
+
+## Which revisions stay
+
+Each write that adds or marks a revision applies these rules to the slot's revisions, in the same transaction (`src/segl/retention.py`). A revision stays when any rule keeps it:
+
+- It is one of the newest `history_limit` (default 50).
+- It is the newest revision of its clock minute, and that minute is one of the last 60, the current one with them. So a person finds the board as it was in each minute of the last hour.
+- It is the newest of its clock hour, and that hour is one of the last 24, the current one with them.
+- It is the newest of its clock day, and that day is one of the last 7, today with them.
+- It is marked kept, it is less than a week old, and it is one of the slot's 20 newest marked revisions. So the 21st drops the oldest kept one.
+
+Minutes, hours, and days are UTC clock ones, from `created_at`. Newest means the highest revision number. A revision from after the time of the write, as after a clock that went back, counts as now. The rest go. A slot nobody draws on keeps what it had, since only a write applies the rules.
+
+A mark says why segl kept the revision: `delete`, `restore`, or `import`, the write that came after its scene. A row keeps its mark after the week or the 20, while another rule keeps the row. The History control shows it as `Before delete`, `Before restore`, or `Before import`.
+
+At most, a slot that is drawn on all week keeps 50 + 60 + 24 + 7 revisions, fewer where they overlap, and 20 marked ones. Measured on one slot of 1,024 elements, a scene of 500 KB, with a full history (T16): 135 revisions took 7.1 MiB, where 0.5.0's 50 took 24.9 MiB. A flush that adds a revision took 3.2 ms, where it took 2.4 ms, and reading the history list 0.2 ms, where it took 8.1 ms. The scene is the table's last column, so a read of the other columns does not walk its pages.
+
+## Clearing a slot
+
+`segl slot clear N` empties slots for good (`DEPLOY.md`, clearing a slot). `clear_slot(n)` does it in one transaction for each slot:
+
+- The slot's revisions and its rows in `slot_file` are deleted.
+- The head gets the empty scene, with the label `System`.
+- The title goes back to `Workspace N`, and the epoch goes up by one, as a restore's does.
+
+It returns the new epoch, and the hashes no row of any slot names now. The command then deletes those files under `assets_dir`. So a file another slot names stays, and slots cleared in one command take the files only they named.
+
+The epoch is what a browser that was open on the slot meets when it reconnects: the server's scene is of another epoch, so the page puts the empty board in place of its own, and sends nothing of the old one (`takeScene` in `web/src/collab/session.ts`). An edit it still sends for the old epoch is answered with the scene of the new one.
+
+segl must not be running: a room holds an open slot's scene in memory and would write it back. The command stops the unit first, or refuses (`DEPLOY.md`).
 
 ## Network objects (P1)
 

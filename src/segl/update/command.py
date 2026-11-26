@@ -34,7 +34,7 @@ from segl.web import WebBuildError, load_web_build
 USAGE = 2
 
 
-def _config_option(parser: argparse.ArgumentParser) -> None:
+def config_option(parser: argparse.ArgumentParser) -> None:
     # A command's own --config is left out of its result unless it was given,
     # so one written before the command still counts.
     parser.add_argument(
@@ -46,8 +46,8 @@ def _config_option(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def add_commands(parser: argparse.ArgumentParser) -> None:
-    """Add the three commands to the ``segl`` parser."""
+def add_commands(parser: argparse.ArgumentParser) -> argparse._SubParsersAction:
+    """Add the three commands to the ``segl`` parser, and return its list of commands."""
     commands = parser.add_subparsers(dest="command", metavar="COMMAND", title="commands")
 
     check = commands.add_parser(
@@ -57,7 +57,7 @@ def add_commands(parser: argparse.ArgumentParser) -> None:
         "the server does when it starts, and say what is wrong. It changes nothing and "
         "does not open the database.",
     )
-    _config_option(check)
+    config_option(check)
 
     group = commands.add_parser("config", help="work on the settings and the nginx files")
     actions = group.add_subparsers(dest="config_command", metavar="ACTION", required=True)
@@ -68,7 +68,7 @@ def add_commands(parser: argparse.ArgumentParser) -> None:
         "what it changed in its nginx files into the site's copies in /etc/nginx. Every "
         "line the site wrote stays. Without --write it only says what it would do.",
     )
-    _config_option(merge)
+    config_option(merge)
     merge.add_argument("--write", action="store_true", help="change the files")
 
     update = commands.add_parser(
@@ -78,7 +78,7 @@ def add_commands(parser: argparse.ArgumentParser) -> None:
         "settings and the database are saved first, and the previous version goes back "
         "if the new one fails its checks.",
     )
-    _config_option(update)
+    config_option(update)
     update.add_argument(
         "--check",
         action="store_true",
@@ -111,6 +111,7 @@ def add_commands(parser: argparse.ArgumentParser) -> None:
         help="reach GitHub through this proxy, as in http://proxy.example.com:3128/ "
         "(default: update_proxy in the settings, then https_proxy)",
     )
+    return commands
 
 
 def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:

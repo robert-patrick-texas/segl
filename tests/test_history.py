@@ -43,6 +43,7 @@ from harness import (
     ROOT_SITE,
     MarkOf,
     NginxTools,
+    OneMinuteClock,
     assert_no_secrets,
     issue_pass,
     make_settings,
@@ -193,8 +194,11 @@ def test_the_list_is_newest_first_and_leaves_the_scenes_out(
         (2, 1, "Staff2"),
         (1, 1, "Guest1"),
     ]
-    # The four fields of docs/API.md and nothing else: no scene.
-    assert [set(row) for row in listed] == [{"revision", "epoch", "authorLabel", "createdAt"}] * 3
+    # The five fields of docs/API.md and nothing else: no scene.
+    fields = {"revision", "epoch", "authorLabel", "createdAt", "kept"}
+    assert [set(row) for row in listed] == [fields] * 3
+    # Drawn, and not kept for a delete, a restore, or an import.
+    assert [row["kept"] for row in listed] == [None] * 3
     assert [row["createdAt"] for row in listed] == [
         row.created_at for row in written.list_revisions(SLOT)
     ]
@@ -211,7 +215,8 @@ def test_one_revision_is_its_scene_as_it_was_stored(stored: TestClient) -> None:
     assert (body["revision"], body["epoch"], body["authorLabel"]) == (2, 1, "Staff2")
     assert body["scene"] == {**EMPTY_SCENE, "elements": [A, B]}
     assert body["files"] == []
-    assert set(body) == {"revision", "epoch", "authorLabel", "createdAt", "scene", "files"}
+    assert body["kept"] is None
+    assert set(body) == {"revision", "epoch", "authorLabel", "createdAt", "kept", "scene", "files"}
 
 
 def test_a_revision_lists_the_files_its_images_name(repository: Repository, tmp_path: Path) -> None:
@@ -295,8 +300,14 @@ def test_the_history_routes_take_only_their_own_methods(stored: TestClient) -> N
     assert rows(stored) == [(3, 1, "Guest3"), (2, 1, "Staff2"), (1, 1, "Guest1")]
 
 
-def test_the_list_is_at_most_the_history_limit(repository: Repository, tmp_path: Path) -> None:
-    """T-011: the 51st revision drops the oldest, as the list route shows it."""
+def test_the_list_is_at_most_the_history_limit(tmp_path: Path) -> None:
+    """T-011: the newest 50 stay, as the list route shows it.
+
+    The 51 revisions are in one clock minute, so the 51st drops the oldest.
+    tests/test_retention.py has the rules for older ones (T-023).
+    """
+    repository = Repository(tmp_path / "segl.sqlite", clock=OneMinuteClock())
+    repository.bootstrap()
     for number in range(1, 52):
         scene = scene_text(element("a", number))
         repository.flush_head(SLOT, 1, scene, f"Guest{number}", history_seconds=0)
@@ -718,7 +729,8 @@ def test_the_token_is_checked_before_the_body_is_read(written: Repository, tmp_p
 def test_the_oldest_revision_can_be_restored_when_the_history_is_full(tmp_path: Path) -> None:
     # Recording the scene that is going drops the oldest row, which is the one
     # being restored. Its scene was read first.
-    with Repository(tmp_path / "segl.sqlite", history_limit=3) as repository:
+    clock = OneMinuteClock()
+    with Repository(tmp_path / "segl.sqlite", history_limit=3, clock=clock) as repository:
         repository.bootstrap()
         for label, elements in (("Guest1", [A]), ("Staff2", [A, B]), ("Guest3", [A, B, C])):
             repository.flush_head(SLOT, 1, scene_text(*elements), label, history_seconds=0)

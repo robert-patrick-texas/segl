@@ -92,18 +92,25 @@ class Browser:
 class Setup:
     """A room, its saver, and the database under them."""
 
-    def __init__(self, folder: Path, *, flush: float = 0.01, history: float = 1.0) -> None:
+    def __init__(
+        self, folder: Path, *, flush: float = 0.01, history: float = 1.0, head: str = ""
+    ) -> None:
+        """``head`` is a scene the slot holds, with its first revision, before the room is made."""
         self.clock = Clock()
         self.repository = Repository(folder / "segl.sqlite", clock=self.clock)
         self.repository.bootstrap()
-        head = self.repository.get_head(SLOT)
-        self.room = Room.from_head(SLOT, "Workspace 2", head.epoch, head.scene_json, start="s")
+        if head:
+            self.repository.flush_head(SLOT, 1, head, "Guest1", history_seconds=0)
+        head_row = self.repository.get_head(SLOT)
+        self.room = Room.from_head(
+            SLOT, "Workspace 2", head_row.epoch, head_row.scene_json, start="s"
+        )
         self.saver = Saver(
             self.room,
             self.repository,
             head_flush_seconds=flush,
             history_interval_seconds=history,
-            saved_at=head.saved_at,
+            saved_at=head_row.saved_at,
         )
         # Every write the saver asked for, as (elements, label, history_seconds).
         self.writes: list[tuple[list[dict[str, Any]], str, float]] = []
@@ -144,7 +151,7 @@ async def until(condition: Callable[[], bool], seconds: float = 5.0) -> None:
             await asyncio.sleep(0.005)
 
 
-def run(folder: Path, scenario: Callable[[Setup], Awaitable[None]], **options: float) -> Setup:
+def run(folder: Path, scenario: Callable[[Setup], Awaitable[None]], **options: Any) -> Setup:
     """Run a scenario on an event loop of its own, and return the setup for the asserts."""
 
     async def main() -> Setup:
@@ -1106,3 +1113,77 @@ def test_an_imported_scene_is_stored_as_the_room_would_write_it(tmp_path: Path) 
     assert setup.revisions() == [1]
     # Nothing was written for the leave or the stop.
     assert len(setup.writes) == 1
+
+
+# A big delete (T16): the saver counts the head's live elements, and says
+# when a flush leaves fewer than 90% of them (docs/DATA-MODEL.md).
+
+TEN = [element(str(number), 1, index=f"a{number}") for number in range(10)]
+
+
+def deleted(of: dict[str, Any]) -> dict[str, Any]:
+    return {**of, "version": of["version"] + 1, "isDeleted": True}
+
+
+def kept_rows(setup: Setup) -> list[tuple[int, str | None]]:
+    return [(row.revision, row.kept) for row in setup.repository.list_revisions(SLOT)]
+
+
+def test_a_board_loaded_from_the_head_and_deleted_at_the_first_flush_is_kept(
+    tmp_path: Path,
+) -> None:
+    async def scenario(setup: Setup) -> None:
+        browser = Browser(setup.room)
+
+        browser.draw(*(deleted(each) for each in TEN[:5]), seq=1)
+        await setup.settled()
+
+        # Row 1 is the board the slot was loaded with.
+        assert kept_rows(setup) == [(2, None), (1, "delete")]
+
+    run(tmp_path, scenario, head=scene_text(*TEN))
+
+
+def test_after_a_replacement_a_delete_is_counted_against_the_board_put_in_place(
+    tmp_path: Path,
+) -> None:
+    async def scenario(setup: Setup) -> None:
+        browser = Browser(setup.room)
+        await setup.saver.replace(scene_text(*TEN), "Bravo2")
+
+        # Eight of the ten the restore put in place.
+        browser.draw(deleted(TEN[0]), deleted(TEN[1]), seq=1, epoch=2)
+        await setup.settled()
+
+        assert kept_rows(setup) == [(2, None), (1, "delete")]
+
+    run(tmp_path, scenario)
+
+
+def test_a_replacement_that_fails_after_writing_the_room_counts_the_board_it_wrote(
+    tmp_path: Path,
+) -> None:
+    more = [element(f"m{number}", 1, index=f"b{number}") for number in range(10)]
+
+    async def scenario(setup: Setup) -> None:
+        browser = Browser(setup.room)
+        # In the room only: no timer writes it.
+        browser.draw(*more, seq=1)
+
+        def full(*arguments: Any, **options: Any) -> Replacement:
+            raise StorageError("the disk is full")
+
+        setup.repository.replace_head = full
+        with pytest.raises(StorageError):
+            await setup.saver.replace(scene_text(), "Bravo2")
+
+        # The first write did happen: the head holds all twenty. The restore
+        # did not, so nothing says "before restore".
+        assert len(setup.stored()) == 20
+        assert kept_rows(setup) == [(2, None), (1, None)]
+        # Sixteen of the twenty: fewer than 90% of the head, though more than the ten before it.
+        browser.draw(*(deleted(each) for each in more[:4]), seq=2)
+
+    # The stop writes the room, after the board it replaced is kept.
+    setup = run(tmp_path, scenario, flush=NEVER, head=scene_text(*TEN))
+    assert kept_rows(setup) == [(3, None), (2, "delete"), (1, None)]

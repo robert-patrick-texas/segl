@@ -101,7 +101,7 @@ The appearance of the canvas that the editor keeps outside the elements, such as
 
 ## History
 
-The server keeps the latest `history_limit` revisions of each slot (`DATA-MODEL.md`, flush and revision rules). The bar's History control lists them, newest first: when each was made, the display name behind it, and a `replacement` mark on a row that a restore or an import wrote. The mark is worked out in the browser: each of the two writes the first revision of a new epoch, so a row whose epoch is higher than that of the row under it is one. Nothing stored says which of the two it was (D2-030).
+The server keeps the newest `history_limit` revisions of each slot, and older ones by the minute, the hour, and the day for a week. It also keeps the board as it was before a flush that left fewer than 90% of its live elements, and before a restore or an import, for a week (`DATA-MODEL.md`, which revisions stay). The bar's History control lists them, newest first: when each was made, the display name behind it, a `replacement` mark on a row that a restore or an import wrote, and `Before delete`, `Before restore`, or `Before import` on a row the server kept for that. The `replacement` mark is worked out in the browser: each of the two writes the first revision of a new epoch, so a row whose epoch is higher than that of the row under it is one. Nothing stored says which of the two wrote it (D2-030). The server's mark is on the row under it, and says which came next.
 
 The control reads `api/v1/slots/{n}/revisions` each time it is opened, after a restore of its own, and when the epoch of the canvas moves, which is how a list open in another browser follows a restore. It is not live otherwise: a row made while the list is open shows at the next opening.
 

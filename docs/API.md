@@ -20,8 +20,8 @@ A mutation, or a WebSocket upgrade, whose `Origin` header is present and does no
 | GET | `/api/v1/slots/{n}` | One slot's metadata, the same object as its entry in the list. |
 | PATCH | `/api/v1/slots/{n}` | Body `{ "title" }`, a JSON object of at most 4096 bytes. The title is trimmed, and is 1–80 characters on one line. Returns the slot's metadata with the title as stored. A pass when codes are set. Sends a `slot` message to the slot's room. |
 | GET | `/api/v1/slots/{n}/scene` | Head scene, epoch, savedAt, editorLabel, the head's file list (`id`, `hash`, `mimeType`): the files its images name, and the head's mark, which `hello` hands back. |
-| GET | `/api/v1/slots/{n}/revisions` | `{ "revisions": [ ... ] }`, the slot's history, newest first, at most `history_limit` entries (50): revision, epoch, authorLabel, createdAt. Scene bodies stay on the single-revision route. No pass. |
-| GET | `/api/v1/slots/{n}/revisions/{revision}` | One revision: the same four fields, its stored scene, and the scene's file list. No pass. |
+| GET | `/api/v1/slots/{n}/revisions` | `{ "revisions": [ ... ] }`, the slot's history, newest first: the revisions the rules in `DATA-MODEL.md` keep, with revision, epoch, authorLabel, createdAt, and kept. Scene bodies stay on the single-revision route. No pass. |
+| GET | `/api/v1/slots/{n}/revisions/{revision}` | One revision: the same five fields, its stored scene, and the scene's file list. No pass. |
 | POST | `/api/v1/slots/{n}/restore` | Body `{ "revision", "displayName" }`, a JSON object of at most 4096 bytes. Records the scene being replaced, puts the revision's scene in the head at the next epoch, appends a revision for it, and sends `scene` to the slot's room. Returns `{ "revision", "epoch", "savedAt" }`. A pass when codes are set. |
 | POST | `/api/v1/slots/{n}/import` | The body is an Excalidraw scene document, the file the editor's export writes, of at most `max_scene_bytes`. Records the scene being replaced, puts the document's elements in the head at the next epoch, with the files of its images, appends a revision for it, and sends `scene` to the slot's room. Returns `{ "revision", "epoch", "savedAt" }`. A pass when codes are set. |
 | POST | `/api/v1/display-name` | Allocates the next `WordN` and returns `{ "displayName" }`. No body and no pass. At most 30 names per minute per client address (`SECURITY.md`). The next call gets `429` with `rate_limited` and a `Retry-After` header. |
@@ -41,7 +41,7 @@ Errors that no route names:
 | 403 | `wrong_code` | `POST /api/v1/access` with text that is not one of the access codes. |
 | 404 | `no_access_codes` | `POST /api/v1/access` on a segl without access codes. Everyone can edit there, and there is no pass to issue. |
 | 404 | `not_found` | No route has this path. |
-| 404 | `revision_not_found` | The slot has no revision with that number. It was never made, or it was the oldest and has been dropped. |
+| 404 | `revision_not_found` | The slot has no revision with that number. It was never made, or the rules in `DATA-MODEL.md` have dropped it. |
 | 405 | `method_not_allowed` | The path exists and does not take this method. The `Allow` header lists the ones it takes. Slots have no create or delete route. |
 | 413 | `payload_too_large` | The body is larger than the route takes. For an import, also elements that come to more than `max_scene_bytes` as segl stores them, or a file inside the document over `max_asset_bytes`. |
 | 415 | `unsupported_media_type` | An upload whose `Content-Type` is not one of the image types. |
@@ -87,14 +87,14 @@ A slot's history, from `/api/v1/slots/4/revisions`:
 ```json
 {
   "revisions": [
-    { "revision": 3, "epoch": 2, "authorLabel": "Bravo2", "createdAt": "2026-11-12T09:05:00.000Z" },
-    { "revision": 2, "epoch": 1, "authorLabel": "Alpha1", "createdAt": "2026-11-12T09:04:59.990Z" },
-    { "revision": 1, "epoch": 1, "authorLabel": "Alpha1", "createdAt": "2026-11-12T09:00:01.000Z" }
+    { "revision": 3, "epoch": 2, "authorLabel": "Bravo2", "createdAt": "2026-11-12T09:05:00.000Z", "kept": null },
+    { "revision": 2, "epoch": 1, "authorLabel": "Alpha1", "createdAt": "2026-11-12T09:04:59.990Z", "kept": "restore" },
+    { "revision": 1, "epoch": 1, "authorLabel": "Alpha1", "createdAt": "2026-11-12T09:00:01.000Z", "kept": null }
   ]
 }
 ```
 
-A revision is the slot's scene as it was at one moment (`DATA-MODEL.md`, flush and revision rules). `revision` counts up per slot from 1 and is not reused. `authorLabel` is the display name behind the newest change in that scene, or `System`. `epoch` is the epoch the scene belonged to. A restore and an import each start a new epoch, so a revision whose epoch is higher than that of the one before it was written by one of them: revision 3 above. Nothing stored says which of the two. A slot nobody has changed has an empty list.
+A revision is the slot's scene as it was at one moment (`DATA-MODEL.md`, flush and revision rules). `revision` counts up per slot from 1 and is not reused. `authorLabel` is the display name behind the newest change in that scene, or `System`. `epoch` is the epoch the scene belonged to. A restore and an import each start a new epoch, so a revision whose epoch is higher than that of the one before it was written by one of them: revision 3 above. `kept` says why segl kept a revision, or is null: `delete` for the board as it was before a flush that left fewer than 90% of its live elements, and `restore` or `import` for the board one of them replaced, revision 2 above. A kept revision stays a week, up to 20 a slot. A slot nobody has changed has an empty list.
 
 One revision, from `/api/v1/slots/4/revisions/2`, is the same object with `scene` and `files` as the scene route gives them. A `{revision}` is a whole number from 1, written without a sign or a leading zero. Anything else in its place, or a number the slot does not have, is a `404` with `revision_not_found`.
 

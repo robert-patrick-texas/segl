@@ -198,6 +198,16 @@ sudo apt install ./segl_<new version>_amd64.deb
 
 This keeps the settings and the boards, merges new statements as an update does, and restarts segl if it was running. It checks no signature and does not go back if the new version fails.
 
+## Clear a slot
+
+To empty a slot for good, with its history and the images no other slot uses:
+
+```bash
+sudo segl slot clear 3
+```
+
+It says what goes and asks you to type the number back. It stops segl, clears the slot, and starts segl again. A clear cannot be undone: only a backup brings the slot back. `journalctl -t segl` shows each clear.
+
 ## Stop and remove
 
 A stop writes every unsaved edit first:

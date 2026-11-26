@@ -15,7 +15,8 @@
 """The ``segl`` command: serve the application, or run one of its commands.
 
 ``segl --config PATH`` serves, as the unit runs it. ``segl check``,
-``segl config merge``, and ``segl update`` are in ``segl.update.command``.
+``segl config merge``, and ``segl update`` are in ``segl.update.command``, and
+``segl slot clear`` is in ``segl.clear``.
 """
 
 import argparse
@@ -26,6 +27,7 @@ from pathlib import Path
 
 import uvicorn
 
+from segl import clear
 from segl.access import PASS_AHEAD_SECONDS
 from segl.app import create_app
 from segl.assets import AssetsError
@@ -50,7 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="TOML configuration file (docs/DEPLOY.md). Without it, development defaults apply.",
     )
-    command.add_commands(parser)
+    clear.add_command(command.add_commands(parser))
     return parser
 
 
@@ -58,6 +60,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the command and return its exit status."""
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command == "slot":
+        return clear.run(args)
     if args.command is not None:
         return command.run(parser, args)
     return serve(args.config)

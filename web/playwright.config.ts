@@ -26,9 +26,11 @@
  * `npm run build`.
  *
  * Three specs are apart, and the three projects above leave them out.
- * `e2e/durability.spec.ts` and `e2e/expiry.spec.ts` are the `restart` project.
- * Each of their tests runs a segl of its own, on the next port: one kills the
- * server and starts it again, and the other needs passes that last seconds.
+ * `e2e/durability.spec.ts`, `e2e/expiry.spec.ts`, and `e2e/lasting.spec.ts`
+ * are the `restart` project. Each of their tests runs a segl of its own, on
+ * the next port: one kills the server and starts it again, one needs passes
+ * that last seconds, and one a short history and a slot cleared while the
+ * server is stopped.
  * `e2e/access.spec.ts` is the three `access-` projects (docs/TEST-PLAN.md
  * T-008 and T-019): a second segl, started here with `access_codes`, directly
  * and behind an nginx of its own at a host root and at `/board/`.
@@ -44,7 +46,7 @@ import { defineConfig, devices } from '@playwright/test';
 import { ACCESS_CODE, ACCESS_SECRET, PORTS, SITES } from './e2e/sites.ts';
 
 /** The specs whose tests each start a segl of their own. */
-const OWN_SERVER_SPECS = ['durability.spec.ts', 'expiry.spec.ts'];
+const OWN_SERVER_SPECS = ['durability.spec.ts', 'expiry.spec.ts', 'lasting.spec.ts'];
 const ACCESS_SPEC = 'access.spec.ts';
 /** The specs the three open projects leave out. */
 const APART = [...OWN_SERVER_SPECS, ACCESS_SPEC];

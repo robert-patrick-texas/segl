@@ -594,6 +594,23 @@ Acceptance: T-011 and T-023 pass, and T-001 through T-022 still pass by `scripts
 
 Out of scope: a setting for the tiers, a revision a person keeps by hand, a compressed head, a clear from the browser or on a timer, and Diagram mode's history (T17 and after).
 
+As built (2026-11-26), where the text above left a choice:
+
+- The saver works out a big delete from the room's elements, and keeps a count of the head's live elements. Counting from the JSON in the flush cost about 6 ms a flush on a slot of 1,024 elements, where the whole flush took 1 to 2 ms. The repository takes the answer as `before_delete`.
+- Clock minutes, hours, and days count back from the current one: the last 60 minutes are the current minute and the 59 before it. Newest means the highest revision number.
+- A kept revision is protected while it is less than a week old and one of the slot's 20 newest marked ones. Its mark stays when that ends, and History still shows it while another rule keeps the row.
+- The mark for a restore or an import is set in `replace_head`'s transaction, the second write, not in the flush before it. So a restore that fails after the flush marks nothing. `flush_head` takes `before_delete` alone.
+- The rules run at each write that adds or marks a revision. A slot nobody draws on keeps what it had.
+- The row kept before a delete has the time of the flush, as the delete's row does, and the head's own label.
+- The revision list and the single revision carry `kept`: `delete`, `restore`, `import`, or null. A page reads a reason it does not know as none.
+- `0003` renames the old table and makes the new one under its own name, so its `CREATE` text stays as `docs/DATA-MODEL.md` lists it. It calls `segl_zstd()`, a function segl gives the connection that runs the migrations. It does not `VACUUM`: SQLite uses the freed pages again.
+- `segl slot clear` uses the unit only with the package's settings, `/opt/segl/etc/segl.toml`, while `segl.service` runs. Otherwise it refuses while anything takes a connection on segl's port. So a test or a checkout never stops an installed segl. It needs root to stop the unit.
+- It reads the counts before it stops segl, asks for every number before it clears any, clears in number order, and stops and starts segl once. After the stop it runs the migrations, as a start does.
+- After a clear the slot's revision numbers start again from 1.
+- "segl's log" is the system log under the identifier `segl`, the unit's own (`journalctl -t segl`). `journalctl -u segl` does not show a line from the command, which runs outside the unit.
+- The browser test of `Before delete` runs a server of its own that keeps 5 revisions, not 50, in the `restart` project only. Drawing 50 revisions a second apart would add about a minute to the test.
+- The install test clears a slot on the package, as root, and checks that every file beside the database is still segl's and that segl writes it again.
+
 ## T17 — Diagram mode on slot 9
 
 - Status: pending
