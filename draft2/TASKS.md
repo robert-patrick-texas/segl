@@ -537,7 +537,7 @@ As built (2026-11-16):
 
 ## T16 — History that lasts, and clearing a slot
 
-- Status: next
+- Status: done
 - Requires: T15
 - Requirements: S-005, and a new row for clearing a slot
 - Read: `docs/DATA-MODEL.md` (flush and revision rules), `docs/DECISIONS.md` D2-011, D2-030, and D2-031, `docs/API.md` (the revision routes), `src/segl/repository.py`, `src/segl/saver.py`, `src/segl/migrations/`, `web/src/history.ts`, `tests/test_history.py`, `web/e2e/history.spec.ts`, and the STATUS entry of 2026-11-26
@@ -613,7 +613,7 @@ As built (2026-11-26), where the text above left a choice:
 
 ## T17 — Diagram mode on slot 9
 
-- Status: pending
+- Status: next
 - Requires: T16
 - Requirements: S-001 and S-003 (slot 9), and new rows for Diagram mode (D2-039)
 - Read: `docs/DECISIONS.md` D2-007, D2-017, D2-026, D2-037, and D2-039, `docs/ARCHITECTURE.md` (collaboration, the canvas adapter), `docs/API.md` (the WebSocket), `src/segl/room.py`, `src/segl/saver.py`, `web/src/SlotPage.tsx`, `web/src/collab/session.ts`, `web/e2e/pages.ts`, `deploy/debian/`, `scripts/release.py`, drawio's embed page (<https://www.drawio.com/doc/faq/embed-mode>), and the STATUS entry of 2026-11-26
