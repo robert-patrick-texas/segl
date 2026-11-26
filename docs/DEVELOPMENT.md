@@ -280,13 +280,13 @@ The runs are not part of the gate and hold no time to a limit. They fail when th
 
 ```bash
 deploy/debian/build-deb.sh        # dist/segl_<version>_amd64.deb
-deploy/debian/package-test.sh     # builds it, installs it, and updates it (T-017, T-021)
+deploy/debian/package-test.sh     # builds one of its own, installs it, and updates it (T-017, T-021)
 deploy/debian/package-test.sh dist/segl_<version>_amd64.deb   # installs one already built
 ```
 
 `build-deb.sh` builds the package in a clean `ubuntu:26.04` container, from the two lockfiles (`DEPLOY.md`, the package). It hands the container every tracked file and every untracked file git does not ignore, so work in progress builds too. The files in the package carry the last commit's time. The build ends with lintian, and a lintian error fails it. On the development host a build took 47 seconds, and 50 without the download caches (`SEGL_UV_CACHE=` and `SEGL_NPM_CACHE=`), once the builder image existed. Building that image the first time took 69 seconds. Three builds of one tree gave the same file, byte for byte.
 
-`package-test.sh` is T-017. It boots an `ubuntu:26.04` container with systemd as PID 1 (`deploy/debian/Containerfile.systemd`), with nginx, Ubuntu's `ssl-cert`, and curl, and no Python. The container's host name is `dev.example.com`, the name in `site-board.example.conf`, so the snakeoil certificate Ubuntu makes there is for that name. Then `deploy/debian/systemd-test.sh` runs in it and prints one `PASS` or `FAIL` line for each check:
+`package-test.sh` is T-017. Given no package, it builds one in a folder of its own, which goes when the test ends, and leaves `dist/` alone: `dist/` holds what was built there on purpose, such as a release's package, and a test of the same version would put its own in that place. To keep the package, build it into `dist/` first and give the test its path. It boots an `ubuntu:26.04` container with systemd as PID 1 (`deploy/debian/Containerfile.systemd`), with nginx, Ubuntu's `ssl-cert`, and curl, and no Python. The container's host name is `dev.example.com`, the name in `site-board.example.conf`, so the snakeoil certificate Ubuntu makes there is for that name. Then `deploy/debian/systemd-test.sh` runs in it and prints one `PASS` or `FAIL` line for each check:
 
 - The package installs with apt. The interpreter is under `/opt/segl/python` at the pin, the virtualenv runs it, and `segl --version` reads the packaged `versions.toml`. The settings are mode `0640` for root and segl's group, and user `segl` can write nothing but `/opt/segl/var`.
 - Nothing starts on install. `systemctl enable --now segl` starts the unit, as user `segl`, on loopback alone.

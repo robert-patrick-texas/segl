@@ -43,8 +43,9 @@ UNPUBLISHED = "0.0.0"
 BRANCH = "main"
 REMOTE = "origin"
 PASSING = frozenset({"success", "neutral", "skipped"})
-# Builds the .deb into dist/ and installs it in a container that booted with
-# systemd (docs/TEST-PLAN.md T-017). Given a .deb, it installs that one.
+# Installs a .deb in a container that booted with systemd (docs/TEST-PLAN.md
+# T-017). publish gives it the one in dist/. Given none, it builds one in a
+# folder of its own, and dist/ does not get it.
 PACKAGE_TEST = "deploy/debian/package-test.sh"
 # Builds the .deb into dist/ alone.
 BUILD = "deploy/debian/build-deb.sh"
@@ -298,37 +299,50 @@ class Preflight:
         return True, str(key)
 
     def package(self) -> tuple[bool, str]:
-        """Build the package, and see that it installs.
+        """Build the package into dist/, and see that it installs.
 
         The package build repeats: the same tree gives the same bytes. When CI
         built, installed, and tested the same bytes for HEAD, that test is this
         package's, and the install test does not run again here. Otherwise it
-        runs here, as it did before.
+        runs here, on the package in dist/. Given no package, the install test
+        builds one in a folder of its own, which it removes.
         """
         built = package_path(self.root, self.version)
         with tempfile.TemporaryDirectory(prefix="segl-ci-package-") as folder:
             tested, which = self.ci_package(Path(folder))
             if tested is None:
-                say(f"     the package builds and installs: {which}; running `{PACKAGE_TEST}`")
-                return self.install_test([PACKAGE_TEST], built)
-            say(
-                f"     the package builds and installs: CI tested its package for HEAD "
-                f"({which}); building it here to compare"
-            )
-            # Minutes of work: say each of its steps, and not only its end.
-            result = self.runner.run(
-                [BUILD, "dist"], check=False, progress=Progress(PACKAGE_STAGES)
-            )
-            if result.returncode != 0:
-                tail = "\n".join(result.output.strip().splitlines()[-15:])
-                print(f"  `{BUILD}` failed:\n{tail}")
-                return False, f"`{BUILD}` failed"
-            if not built.is_file():
-                return False, f"dist/{built.name} was not built"
-            if built.read_bytes() == tested.read_bytes():
-                return True, f"dist/{built.name} is the package CI installed and tested ({which})"
-        say(f"     dist/{built.name} is not the package CI tested: installing it here")
-        return self.install_test([PACKAGE_TEST, f"dist/{built.name}"], built)
+                say(
+                    f"     the package builds and installs: {which}; building it, "
+                    f"then running `{PACKAGE_TEST}` on it"
+                )
+            else:
+                say(
+                    f"     the package builds and installs: CI tested its package for HEAD "
+                    f"({which}); building it here to compare"
+                )
+            failed = self.build(built)
+            if failed is not None:
+                return False, failed
+            if tested is not None:
+                if built.read_bytes() == tested.read_bytes():
+                    return (
+                        True,
+                        f"dist/{built.name} is the package CI installed and tested ({which})",
+                    )
+                say(f"     dist/{built.name} is not the package CI tested: installing it here")
+        return self.install_test([PACKAGE_TEST, f"dist/{built.name}"])
+
+    def build(self, built: Path) -> str | None:
+        """Build the package into dist/. Return why it failed, or None."""
+        # Minutes of work: say each of its steps, and not only its end.
+        result = self.runner.run([BUILD, "dist"], check=False, progress=Progress(PACKAGE_STAGES))
+        if result.returncode != 0:
+            tail = "\n".join(result.output.strip().splitlines()[-15:])
+            print(f"  `{BUILD}` failed:\n{tail}")
+            return f"`{BUILD}` failed"
+        if not built.is_file():
+            return f"dist/{built.name} was not built"
+        return None
 
     def ci_package(self, folder: Path) -> tuple[Path | None, str]:
         """Download the package CI tested for HEAD into ``folder``.
@@ -355,16 +369,14 @@ class Preflight:
             return None, f"CI's package of run {run} could not be downloaded (it is kept 7 days)"
         return package, f"run {run}"
 
-    def install_test(self, argv: list[str], built: Path) -> tuple[bool, str]:
-        """Run the install test, and say each of its steps as it comes."""
+    def install_test(self, argv: list[str]) -> tuple[bool, str]:
+        """Run the install test on the package in dist/, and say each of its steps."""
         result = self.runner.run(argv, check=False, progress=Progress(PACKAGE_STAGES))
         if result.returncode != 0:
             tail = "\n".join(result.output.strip().splitlines()[-15:])
             print(f"  `{PACKAGE_TEST}` failed:\n{tail}")
             return False, f"`{PACKAGE_TEST}` failed"
-        if not built.is_file():
-            return False, f"dist/{built.name} was not built"
-        return True, f"dist/{built.name} passed the install test"
+        return True, f"{argv[-1]} passed the install test"
 
     def run(self) -> bool:
         """Run the checks and stop at the first failure."""

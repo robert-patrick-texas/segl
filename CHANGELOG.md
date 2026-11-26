@@ -14,6 +14,7 @@ History lasts a week: the newest 50 revisions, then one a minute, an hour, and a
 ### Changed
 
 - Revision scenes are stored compressed with zstd, from Python's own library. Migration `0003` compresses the revisions that exist and adds the mark, so a database from 0.5.0 opens and reads back the same scenes. It is the first migration a `segl update` runs. The database file keeps its size until a `VACUUM` (`docs/DATA-MODEL.md`).
+- The install test, given no package, builds one in a folder of its own, and leaves `dist/` alone. A test run is of the same version as the release whose package `dist/` may hold, and replaced it. CI and `publish` build into `dist/` on purpose and give the test that file (`docs/DEVELOPMENT.md`, the package).
 
 ## 0.5.0 — 2026-11-16
 

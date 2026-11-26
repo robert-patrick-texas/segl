@@ -161,8 +161,13 @@ jobs:
         if: steps.images.outputs.cache-hit == 'true'
         run: docker load --input ~/segl-images.tar
 
-      - name: Build the package and install it
-        run: deploy/debian/package-test.sh
+      # Into dist/, for the artifact that publish compares with. The install
+      # test, given no package, builds one in a folder of its own.
+      - name: Build the package
+        run: deploy/debian/build-deb.sh dist
+
+      - name: Install it
+        run: deploy/debian/package-test.sh dist/segl_*_amd64.deb
 
       - name: Keep the images for the next run
         if: steps.images.outputs.cache-hit != 'true'

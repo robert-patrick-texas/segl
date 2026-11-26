@@ -716,9 +716,31 @@ def test_the_build_and_the_install_test_wait_for_a_machine_that_is_busy() -> Non
 
     # The install test waits once, before anything else, and tells the build.
     assert install.count(f"\n{wait}export SEGL_CAPACITY_WAITED=1\n") == 1
-    assert install.index(wait) < install.index("deploy/debian/build-deb.sh dist")
+    assert install.index(wait) < install.index(BUILDS_ITS_OWN)
     assert f'\n[ -n "${{SEGL_CAPACITY_WAITED:-}}" ] || {wait}' in build
     assert (ROOT / "scripts" / "capacity.py").is_file()
+
+
+# How the install test builds a package when it is given none.
+BUILDS_ITS_OWN = '\n    deploy/debian/build-deb.sh "$work/build"\n'
+
+
+def test_the_install_test_builds_into_a_folder_of_its_own_and_leaves_dist_alone() -> None:
+    """dist/ holds what was built there on purpose, such as a release's package.
+
+    A test run is of the same version, and would put its own in that place.
+    """
+    install = read(DEBIAN / "package-test.sh")
+
+    assert install.count(BUILDS_ITS_OWN) == 1
+    assert "\n    deb=$work/build/$name\n" in install
+    # No command names dist/ as a place: a comment may.
+    commands = [line for line in install.splitlines() if not line.lstrip().startswith("#")]
+    assert [line for line in commands if re.search(r"(^|[\s\"'=])dist(/|\s|$)", line)] == []
+    # The folder is made, and its removal set, before the build.
+    assert install.index("work=$(mktemp -d)") < install.index("trap cleanup EXIT")
+    assert install.index("trap cleanup EXIT") < install.index(BUILDS_ITS_OWN)
+    assert '\n    rm -rf "$work"\n' in install
 
 
 def test_the_install_test_builds_its_image_while_the_package_builds() -> None:
@@ -727,7 +749,7 @@ def test_the_install_test_builds_its_image_while_the_package_builds() -> None:
         'deploy/debian/image.sh "$image" deploy/debian/Containerfile.systemd &\n'
     )
 
-    assert started < install.index("deploy/debian/build-deb.sh dist")
+    assert started < install.index(BUILDS_ITS_OWN)
     # And it is waited for, so a failed image build fails the test, before the container starts.
     assert started < install.index('\nwait "$image_build"\n') < install.index("docker run --detach")
 

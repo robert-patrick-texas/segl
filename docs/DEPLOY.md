@@ -134,7 +134,7 @@ The package installs the unit disabled. `systemctl enable --now segl` starts it,
 
 ```bash
 deploy/debian/build-deb.sh        # writes dist/segl_<version>_amd64.deb
-deploy/debian/package-test.sh     # builds it, installs it, and updates it: T-017, T-021
+deploy/debian/package-test.sh     # builds one of its own, installs it, and updates it: T-017, T-021
 ```
 
 Both need Docker, git, and the host's `python3`, which reads the version. `DEVELOPMENT.md` (the package) says what each does and how long it takes.

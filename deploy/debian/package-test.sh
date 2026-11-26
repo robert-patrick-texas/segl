@@ -13,7 +13,9 @@
 # keys in deploy/release-signers.
 #
 # Usage: deploy/debian/package-test.sh [DEB]
-#   DEB   a package to test. Without it, the script builds one into dist/.
+#   DEB   a package to test. Without it, the script builds one in a folder
+#         of its own, which goes when the test ends, and leaves dist/ alone.
+#         To keep the package, build it first: deploy/debian/build-deb.sh dist
 # Environment:
 #   SEGL_KEEP_CONTAINER   set to anything to leave the container running
 #                         afterwards, to look around in it. The script prints
@@ -38,15 +40,6 @@ python=$(tr -d '[:space:]' <.python-version)
 # The font segl ships in place of the editor's (web/licenses/README.md).
 liberation=$(sha256sum web/fonts/Liberation/LiberationSans-Regular.woff2 | cut -d" " -f1)
 name=segl_${version}_amd64.deb
-deb=${1:-}
-if [ -z "$deb" ]; then
-    deploy/debian/build-deb.sh dist
-    deb=dist/$name
-fi
-[ "$(basename "$deb")" = "$name" ] || {
-    echo "package-test: $deb is not $name, the package of versions.toml" >&2
-    exit 2
-}
 
 work=$(mktemp -d)
 container=segl-package-test-$$
@@ -59,6 +52,18 @@ cleanup() {
     rm -rf "$work"
 }
 trap cleanup EXIT
+
+deb=${1:-}
+if [ -z "$deb" ]; then
+    # Not into dist/: it holds the packages built there on purpose, such as a
+    # release's, and this one is of the same version.
+    deploy/debian/build-deb.sh "$work/build"
+    deb=$work/build/$name
+fi
+[ "$(basename "$deb")" = "$name" ] || {
+    echo "package-test: $deb is not $name, the package of versions.toml" >&2
+    exit 2
+}
 mkdir -p "$work/release" "$work/keys" "$work/pki"
 cp "$deb" "$work/release/$name"
 

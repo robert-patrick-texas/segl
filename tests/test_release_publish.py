@@ -360,6 +360,18 @@ def signers_line(key: Path) -> str:
     return f'{SIGNER} namespaces="{SIGNER}" {public}\n'
 
 
+def builds(repo: Path, version: str = "0.1.0") -> Callable[[Sequence[str]], Result]:
+    """A package build that writes this version's package into dist/, as build-deb.sh does."""
+
+    def build(argv: Sequence[str]) -> Result:
+        assert list(argv[1:]) == ["dist"], argv
+        (repo / "dist").mkdir(exist_ok=True)
+        (repo / "dist" / f"segl_{version}_amd64.deb").write_bytes(b"deb")
+        return Result(0, "==> lintian\n")
+
+    return build
+
+
 def add_package_test(repo: Path, run_git, signers: str | None = None) -> None:
     """Give the tree the install test, as a file the fake runner answers for,
     and a signers file that lists the test's release key."""
@@ -425,7 +437,7 @@ def add_package_test_and_lose_the_key(repo: Path, run_git) -> None:
         ),
         (
             add_package_test,
-            {(PACKAGE_TEST,): Result(0, "all checks passed\n")},
+            {(BUILD,): Result(0, "==> lintian\n")},
             {},
             "the package builds and installs: dist/segl_0.1.0_amd64.deb was not built",
         ),
@@ -447,6 +459,7 @@ def test_publish_stops_at_each_preflight_failure(
     cut_and_commit(repo, runner, fake_sources(runner), run_git)
     if spoil:
         spoil(repo, run_git)
+    runner.replies[(BUILD,)] = builds(repo)
     runner.replies.update(replies)
     tags_before = run_git(repo, "tag", "--list")
 
@@ -473,14 +486,19 @@ def test_a_successful_publish_tags_and_creates_the_release_with_the_notes(
     github = FakeGitHub(repo)
 
     def package_test(argv: Sequence[str]) -> Result:
-        # What the real script does: build this version's package into dist/.
-        (repo / "dist" / "segl_0.1.0_amd64.deb").write_bytes(b"deb")
-        said = "==> lintian\n== install\nPASS  the package installs with apt\n"
+        # Given the package in dist/, which the build wrote.
+        assert list(argv[1:]) == ["dist/segl_0.1.0_amd64.deb"]
+        said = "== install\nPASS  the package installs with apt\n"
         return Result(0, said + "systemd-test: all checks passed\n")
 
     runner = fake_runner(
         repo,
-        {("gh", "api"): json.dumps(GREEN), (PACKAGE_TEST,): package_test, **github.replies()},
+        {
+            ("gh", "api"): json.dumps(GREEN),
+            (BUILD,): builds(repo),
+            (PACKAGE_TEST,): package_test,
+            **github.replies(),
+        },
     )
     cut_and_commit(repo, runner, fake_sources(runner), run_git)
     add_package_test(repo, run_git)
@@ -496,7 +514,7 @@ def test_a_successful_publish_tags_and_creates_the_release_with_the_notes(
     # No CI run is known here, so the install test runs here.
     start = said.index(
         "     the package builds and installs: no passed CI run for HEAD was found; "
-        f"running `{PACKAGE_TEST}`"
+        f"building it, then running `{PACKAGE_TEST}` on it"
     )
     assert said[start - 1].startswith("ok   the release key is there: ")
     assert said[start + 1 : start + 5] == [
@@ -551,11 +569,14 @@ def test_a_successful_publish_tags_and_creates_the_release_with_the_notes(
         "### Versions\n\n| Item | Version |\n|---|---|\n| Python | 3.15.2 |\n| segl | 0.1.0 |"
         in github.made["body"]
     )
-    steps = ([PACKAGE_TEST], ["ssh-keygen", "-Y"], ["git", "tag"], ["git", "push"])
+    tested = [PACKAGE_TEST, "dist/segl_0.1.0_amd64.deb"]
+    steps = ([BUILD, "dist"], tested, ["ssh-keygen", "-Y"], ["git", "tag"], ["git", "push"])
     order = [call[:2] for call in runner.calls if call[:2] in (*steps, ["gh", "release"])]
-    # Signed and checked before the tag, so a failure leaves nothing published.
+    # Built into dist/, tested, signed, and checked before the tag, so a
+    # failure leaves nothing published.
     assert order == [
-        [PACKAGE_TEST],
+        [BUILD, "dist"],
+        tested,
         ["ssh-keygen", "-Y"],
         ["ssh-keygen", "-Y"],
         ["git", "tag"],
@@ -585,12 +606,14 @@ def test_a_signature_the_signers_file_does_not_vouch_for_is_not_published(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    def package_test(argv: Sequence[str]) -> Result:
-        (repo / "dist").mkdir(exist_ok=True)
-        (repo / "dist" / "segl_0.1.0_amd64.deb").write_bytes(b"deb")
-        return Result(0, "systemd-test: all checks passed\n")
-
-    runner = fake_runner(repo, {("gh", "api"): json.dumps(GREEN), (PACKAGE_TEST,): package_test})
+    runner = fake_runner(
+        repo,
+        {
+            ("gh", "api"): json.dumps(GREEN),
+            (BUILD,): builds(repo),
+            (PACKAGE_TEST,): Result(0, "systemd-test: all checks passed\n"),
+        },
+    )
     cut_and_commit(repo, runner, fake_sources(runner), run_git)
     # The tree lists another key than the one that signs.
     other = tmp_path / "other"
@@ -723,9 +746,9 @@ def ci_runs(*ids: int) -> Result:
     [
         (ci_runs(77), b"deb", None, "is the package CI installed and tested (run 77)"),
         (ci_runs(77), b"other", ["dist/{name}"], "passed the install test"),
-        (ci_runs(77), None, [], "passed the install test"),
-        (ci_runs(), None, [], "passed the install test"),
-        (Result(1, "", "gh: not logged in"), None, [], "passed the install test"),
+        (ci_runs(77), None, ["dist/{name}"], "passed the install test"),
+        (ci_runs(), None, ["dist/{name}"], "passed the install test"),
+        (Result(1, "", "gh: not logged in"), None, ["dist/{name}"], "passed the install test"),
     ],
     ids=["same-bytes", "other-bytes", "no-download", "no-run", "gh-fails"],
 )
@@ -755,8 +778,6 @@ def test_the_install_test_runs_here_unless_ci_tested_the_same_bytes(
         return Result(0, "==> lintian\n")
 
     def package_test(argv: Sequence[str]) -> Result:
-        if len(argv) == 1:  # with no package given, it builds one
-            build(argv)
         return Result(0, "== install\nsystemd-test: all checks passed\n")
 
     runner = fake_runner(
@@ -782,8 +803,9 @@ def test_the_install_test_runs_here_unless_ci_tested_the_same_bytes(
         (listed,) = runner.called("gh", "run", "list")
         assert listed[listed.index("--commit") + 1] == run_git(repo, "rev-parse", "HEAD").strip()
         assert "--status" in listed and "success" in listed
-    if ci_bytes is None:
-        assert not runner.called(BUILD), "the install test builds it"
+    # Built into dist/ each time, on purpose: the install test, given no
+    # package, would build one elsewhere.
+    assert runner.called(BUILD) == [[BUILD, "dist"]]
 
 
 def test_a_package_that_does_not_build_stops_the_preflight(
@@ -830,17 +852,13 @@ def publishable(
 ):
     """Cut 0.1.0 in ``repo``, with the install test and the update check, ready to publish."""
 
-    def package_test(_argv: Sequence[str]) -> Result:
-        (repo / "dist").mkdir(exist_ok=True)
-        (repo / "dist" / "segl_0.1.0_amd64.deb").write_bytes(b"deb")
-        return Result(0, "systemd-test: all checks passed\n")
-
     github = github or FakeGitHub(repo)
     runner = fake_runner(
         repo,
         {
             ("gh", "api"): json.dumps(GREEN),
-            (PACKAGE_TEST,): package_test,
+            (BUILD,): builds(repo),
+            (PACKAGE_TEST,): Result(0, "systemd-test: all checks passed\n"),
             **github.replies(),
             **replies,
         },
