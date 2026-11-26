@@ -20,7 +20,7 @@ On 2026-11-26 the user put collaboration first and queued three tasks before nam
 
 1. T16, history that lasts, and clearing a slot: the newest 50 revisions, then fewer as they age, for a week, and the board as it was before a big delete, a restore, or an import. `segl slot clear N` wipes a slot for good.
 2. T17, Diagram mode on slot 9: drawio's editor with live co-editing, and the pen for one editor at a time while the others watch (D2-039). It measures how well co-editing works.
-3. T18, follow mode on the whiteboards: click a name and follow that person's view.
+3. T18, follow mode: click a name and follow that person's view, on every slot. In Diagram mode, everyone else follows whoever takes the pen until they scroll, zoom, or click. It is not a presentation mode.
 
 Diagram mode's polish comes next, as a task written from T17's decision: History and restore on slot 9, `.drawio` import, and segl's device and link kinds in drawio's library. Then named interfaces, and then P2.
 

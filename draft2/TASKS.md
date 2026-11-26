@@ -640,7 +640,7 @@ The pen, built as well, at the user's word of 2026-11-26:
 - Slot 9 starts in co-editing. A person who may edit can take the pen. While someone holds it, only the holder changes the diagram, and everyone else watches it change live. Their frames go read-only, and come back when the pen is free.
 - The bar shows who holds the pen. Anyone who may edit can take it at any time, even from the holder: the users are honest, and a pen nobody else can take would strand a slot. The pen is free again when its holder gives it back or leaves slot 9. No timer frees it.
 - While the pen is held, the server takes diagram changes only from the holder. It refuses the others with a new error, `pen_held`. A viewer never gets the pen.
-- The pen sets who edits, not where anyone looks. A watcher's view stays where they put it, so a change the holder makes out of sight, or on another page of the diagram, shows only when the watcher looks there. Following the holder's view is follow mode's job, not this task's.
+- The pen sets who edits, not where anyone looks. A watcher's view stays where they put it, so a change the holder makes out of sight, or on another page of the diagram, shows only when the watcher looks there. T18 adds following the holder's view.
 - If the measures show co-editing loses or garbles edits that the design cannot fix, the pen is the only way to edit slot 9 until a fix. Say why in the decision.
 
 The old slot 9: a migration drops slot 9's Excalidraw scene, its revisions, and its rows in `slot_file`. Bytes another slot still names stay. The user accepted the break, since no site holds data to keep. `segl slot clear 9` (T16) clears the diagram, its history, and its pen. The tests that name slot 9 as a whiteboard move: the browser tests' `empty` slot (`web/e2e/pages.ts`), and the slot lists in `tests/test_slots.py` and `tests/test_repository.py`.
@@ -667,39 +667,46 @@ Documents: `docs/REQUIREMENTS.md` (S-001, S-003, and rows for Diagram mode), `do
 
 Acceptance: T-024 passes, and T-001 through T-023 still pass by `scripts/e2e.py`. T-017 and T-021 pass with drawio in the package. ruff, ty, and the web checks pass.
 
-Out of scope, for the next Diagram mode task or later: History and restore on slot 9, Import of `.drawio` files, segl's 12 device kinds and 5 link kinds in drawio's library, cursors and follow mode in Diagram mode (following the pen holder's view among them), a pen that frees itself after a time, a whiteboard sketch carried into a diagram, and a second diagram slot.
+Out of scope, for the next Diagram mode task or later: History and restore on slot 9, Import of `.drawio` files, segl's 12 device kinds and 5 link kinds in drawio's library, cursors, follow mode in Diagram mode (T18), a pen that frees itself after a time, a whiteboard sketch carried into a diagram, and a second diagram slot.
 
 ## T18 — Follow mode
 
 - Status: pending
 - Requires: T17
 - Requirements: S-010, and a new row for follow mode
-- Read: `docs/DECISIONS.md` D2-013 and D2-025, `docs/API.md` (the WebSocket, `presence`), `src/segl/room.py`, `web/src/bar/`, `web/src/canvas/`, `web/src/collab/session.ts`, the pinned editor's follow types (`onUserFollow`, `userToFollow`, `followedBy`), and the STATUS entry of 2026-11-26
+- Read: `docs/DECISIONS.md` D2-013, D2-025, and D2-039, `docs/API.md` (the WebSocket, `presence`), `src/segl/room.py`, `web/src/bar/`, `web/src/canvas/`, `web/src/diagram/`, `web/src/collab/session.ts`, the pinned editor's follow types (`onUserFollow`, `userToFollow`, `followedBy`) and its `maybeUnfollowRemoteUser`, drawio's embed page (the `viewbox` action and `zoomEvents`), and the STATUS entries of 2026-11-26
 
-Added on 2026-11-26 at the user's request. On a troubleshooting call one person leads, and the rest need to see what the leader sees. After this task a person clicks a name in the bar's list of who is here and follows that person's view.
+Added on 2026-11-26 at the user's request. On a troubleshooting call one person leads, and the rest need to see what the leader sees. After this task a person clicks a name in the bar's list of who is here and follows that person's view, on every slot. In Diagram mode, whoever takes the pen is followed by default. It is not a presentation mode: anyone can look away at any time.
 
 What a person can do after it:
 
-- On slots 1–8, click a name in who is here and follow that person: the canvas scrolls and zooms as theirs does.
-- See that they follow, and stop with one click. Following also stops when they click the name again, or the person leaves.
-- Keep drawing while they follow. Following locks nothing.
+- Click a name in who is here and follow that person: the canvas scrolls and zooms as theirs does. On slot 9 it also turns to the page of the diagram they are on.
+- See that they follow, and stop with one click.
+- Stop by looking away. Following ends when they scroll, zoom, or click on the canvas themselves, as the pinned editor does, so starting to draw ends it. It also ends when they click the name again, or the person leaves. Following never locks anyone.
+- On slot 9, follow whoever takes the pen without a click. Step away by scrolling, zooming, or clicking, and click the holder's name to follow again.
 
 The design:
 
-- The pinned editor 0.18.1 has the hooks: `onUserFollow` reports a follow and an unfollow, and its state holds `userToFollow` and `followedBy`. Use its own follow display. All of it goes through the canvas adapter (rule 5).
-- Two new messages on the socket. `follow` names the connection to follow, or `null` to stop. The server tells a connection how many follow it. Only while someone follows it does a page send `view`: its visible area, in canvas coordinates, at most a few times a second. The server sends `view` only to that connection's followers.
+- The pinned editor 0.18.1 has the hooks: `onUserFollow` reports a follow and an unfollow, and its state holds `userToFollow` and `followedBy`. It ends a follow on the follower's own scroll, zoom, or click on the canvas (`maybeUnfollowRemoteUser`). Use its own follow display. All of it goes through the canvas adapter (rule 5).
+- Two new messages on the socket. `follow` names the connection to follow, or `null` to stop. The server tells a connection how many follow it. Only while someone follows it does a page send `view`: its visible area, in canvas coordinates, at most a few times a second, and on slot 9 its page of the diagram. The server sends `view` only to that connection's followers.
 - The follower's canvas fits the leader's visible area, whatever the two screens' sizes.
 - A viewer may follow and be followed. Neither changes the scene, so the edit gate does not apply.
+
+In Diagram mode, at the user's word of 2026-11-26:
+
+- drawio's embed sets a view with its `viewbox` action. With `zoomEvents` on, it reports a change of zoom, with the scale and the page, but not a scroll. segl's own `js/PostConfig.js` (rule 6) reports the frame's scroll to the adapter, `web/src/diagram/`. The same report tells the page when a watcher scrolls or zooms on their own, and a click in the frame tells it they clicked. Each ends their follow, as on the whiteboards.
+- A page that learns of a new pen holder sends `follow` for the holder, unless it is the holder. So each take of the pen starts every other browser on slot 9 following the new holder, once. One who steps away stays away until they click the holder's name, or the pen moves again. When the pen is given back, the follow ends.
+- The risk, to try first: what drawio's own code lets `js/PostConfig.js` see of the frame's scroll. If it sees none, stop and say what it does see before the rest is built.
 
 Tests:
 
 - pytest: `follow` and its count, `view` only to followers, a follow that ends when the leader leaves, and a `follow` of a connection not on the slot refused.
-- Vitest: the adapter's follow and the fit.
-- Browser: one browser follows another. The leader scrolls and zooms, and the follower's view matches within a small margin. Stop works. The leader leaves, and the follow ends.
+- Vitest: the adapter's follow and the fit, on both canvases. A follow ends on the follower's own scroll, zoom, or click. A new pen holder starts a follow, except in the holder's own page.
+- Browser: one browser follows another on a whiteboard. The leader scrolls and zooms, and the follower's view matches within a small margin. The follower scrolls, and the follow ends. Stop works. The leader leaves, and the follow ends. On slot 9, a take of the pen starts the other browser following. The holder scrolls, zooms, and turns the page, and the watcher's view matches. The watcher scrolls away and stays away, and a click on the holder's name follows again.
 - A new row, T-025, in `docs/TEST-PLAN.md`, with its row in `tests/testplan.toml`.
 
-Documents: `docs/REQUIREMENTS.md` (a new row), `docs/TEST-PLAN.md` (T-025), `docs/API.md` (`follow`, `view`, and the count), `docs/ARCHITECTURE.md` (collaboration), a new decision D2-041 for the messages, the status in `README.md`, and `CHANGELOG.md`.
+Documents: `docs/REQUIREMENTS.md` (a new row), `docs/TEST-PLAN.md` (T-025), `docs/API.md` (`follow`, `view`, and the count), `docs/ARCHITECTURE.md` (collaboration, and Diagram mode's `js/PostConfig.js`), a new decision D2-041 for the messages, D2-039 amended as built, the status in `README.md`, and `CHANGELOG.md`.
 
 Acceptance: T-025 passes, and T-001 through T-024 still pass by `scripts/e2e.py`. ruff, ty, and the web checks pass.
 
-Out of scope: follow mode in Diagram mode, and a leader who brings everyone to their view at once.
+Out of scope: a presentation mode that locks screens to the leader, and a leader who brings everyone to their view at once.
