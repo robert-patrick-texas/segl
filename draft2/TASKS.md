@@ -534,3 +534,155 @@ As built (2026-11-16):
 - The panel sits at the top right of a wide page, left of the library while it is open, and on the left under the editor's top row in its narrow layout. A test measures it at 1280, 800, and 390 pixels.
 - A click on the empty middle of a device that is already selected clears the selection. The editor treats a click inside a selected group that misses its lines as a click on nothing. A second click selects it again. The pinned editor is not changed (rule 6).
 - T-022 uses slot 6, with the deleting tests. The viewer's test is in `web/e2e/access.spec.ts`, the only spec that runs against the server with a code.
+
+## T16 — History that lasts
+
+- Status: next
+- Requires: T15
+- Requirements: S-005
+- Read: `docs/DATA-MODEL.md` (flush and revision rules), `docs/DECISIONS.md` D2-011, D2-030, and D2-031, `docs/API.md` (the revision routes), `src/segl/repository.py`, `src/segl/saver.py`, `src/segl/migrations/`, `web/src/history.ts`, `tests/test_history.py`, `web/e2e/history.spec.ts`, and the STATUS entry of 2026-11-26
+
+Added on 2026-11-26 at the user's request: the first of three tasks the user put before the rest of P1. segl keeps the newest 50 revisions of a slot and writes at most one a second while people draw. So under a minute of steady drawing replaces every older revision. If someone clears a board by mistake and the call draws on for a minute, the board cannot come back. ExcaliDash always keeps a snapshot before a save that drops more than a tenth of a board, and limits its history by age as well as count. This task does the same, in segl's way.
+
+What a person can do after it:
+
+- Open History after a long call and find the board as it was in each minute of the last hour, each hour of the last day, and each day of the last 30.
+- Get a board back after someone deleted most of it, even after an hour more of drawing.
+- Get back what a restore or an import replaced, for 30 days.
+
+Which revisions stay:
+
+- The newest `history_limit` (50), as today.
+- Older than those: the newest revision of each minute for the last hour, of each hour for the last day, and of each day for the last 30 days. Clock minutes, hours, and days, in UTC. The rest go.
+- A kept revision stays 30 days, whatever the count. At most 20 per slot: the 21st drops the oldest kept one.
+
+What is kept:
+
+- The scene before a big delete. When a flush would leave fewer than 90% of the live elements (those not deleted) that the head holds, the saver first writes the head as a revision, whatever the age of the newest one, unless the newest holds it already. It marks that revision kept. The flush that deletes then writes its own revision, whatever the age.
+- The scene a restore or an import replaced. D2-030 and D2-031 already write it. Mark it kept.
+
+Storage:
+
+- Revision scenes are stored compressed with zstd, from Python's own library (`compression.zstd`, in the pinned 3.15.2). No new dependency. The head stays plain JSON.
+- A migration, `0003`, compresses the revisions that exist and adds the mark. A database from 0.5.0 opens and reads back the same scenes.
+- Measure one slot of 1,024 elements with a full history, before and after: the database's size and the time a flush takes.
+
+The History control:
+
+- A kept revision says why, in a short phrase: `Before delete`, `Before restore`, or `Before import`.
+- The revision list's answer names the reason (`docs/API.md`).
+
+Tests:
+
+- pytest, with a clock the test sets: a slot written once a second for two hours keeps the newest 50 and exactly the revisions the tiers name. A drop below 90% keeps the scene before it, which outlasts two more hours of drawing and is gone after 30 days. A drop that leaves 90% or more keeps nothing extra. A restore and an import keep the scene they replaced. The 21st kept revision drops the oldest kept one. A database from 0.5.0 migrates and reads back the same.
+- Vitest: the History list's phrases.
+- Browser: delete most of a board, draw until 50 newer revisions exist, find `Before delete` in History, restore it, and see the board return in both browsers.
+- T-011's last rule changes ("The 51st revision drops the oldest"). A new row, T-023, in `docs/TEST-PLAN.md`, with its row in `tests/testplan.toml`.
+
+Documents: `docs/REQUIREMENTS.md` (S-005), `docs/TEST-PLAN.md` (T-011, T-023), `docs/DATA-MODEL.md` (flush and revision rules, the migration), `docs/API.md` (the reason), a dated amendment on D2-011, the status in `README.md`, and `CHANGELOG.md`.
+
+Acceptance: T-011 and T-023 pass, and T-001 through T-022 still pass by `scripts/e2e.py`. ruff, ty, and the web checks pass.
+
+Out of scope: a setting for the tiers, a revision a person keeps by hand, a compressed head, and Diagram mode's history (T17 and after).
+
+## T17 — Diagram mode on slot 9
+
+- Status: pending
+- Requires: T16
+- Requirements: S-001 and S-003 (slot 9), and new rows for Diagram mode (D2-039)
+- Read: `docs/DECISIONS.md` D2-007, D2-017, D2-026, D2-037, and D2-039, `docs/ARCHITECTURE.md` (collaboration, the canvas adapter), `docs/API.md` (the WebSocket), `src/segl/room.py`, `src/segl/saver.py`, `web/src/SlotPage.tsx`, `web/src/collab/session.ts`, `web/e2e/pages.ts`, `deploy/debian/`, `scripts/release.py`, drawio's embed page (<https://www.drawio.com/doc/faq/embed-mode>), and the STATUS entry of 2026-11-26
+
+Added on 2026-11-26 at the user's request. Slot 9 becomes Diagram mode: drawio's editor, for formal diagrams and planning, beside the Excalidraw whiteboards on slots 1–8. The user wants to see drawio early, and how people work together in it. Collaboration comes first. So this task puts drawio on slot 9 with live editing for everyone on the slot, measures how well that works, and ends in a decision on how Diagram mode collaborates. The next Diagram mode task is written from that decision.
+
+What a person can do after it:
+
+- Open slot 9 and draw in drawio's editor under the segl bar, with its shape libraries, the network and Cisco sets among them. The bar says `Diagram mode`.
+- Work on one diagram with other people at the same time, and see their changes as they make them.
+- Close the browser, or restart segl, and find the diagram as they left it.
+
+drawio itself:
+
+- Pin drawio in `versions.toml`: 32.7.7, the newest release on 2026-11-25. `scripts/release.py check` learns where its releases are (`jgraph/drawio` on GitHub).
+- The build fetches the release's `draw.war`, checks its SHA-256 (`e84ac13ee1e6c2bded36b6e920a2e8abfa37df277a6d9697ae8dc28f7bbeb9f1` for 32.7.7), and unpacks its web files, unmodified, beside segl's web build. Not `WEB-INF`: segl runs none of drawio's Java. Git does not hold them. The war is 50.4 MiB. Its web files, without `WEB-INF` and `META-INF`, are 3,115 files and 121 MiB.
+- drawio ships two settings files for a site to replace, `js/PreConfig.js` and `js/PostConfig.js`. segl may lay its own over them. No other file changes.
+- segl serves drawio from its own origin, under the same mount (D2-007): at a host root and at `/board/`. The page loads nothing from another host (D2-026, S-014). drawio's `stealth=1` and `lockdown=1` turn off its cloud storage links and its logging: find which segl needs by a run. Do not pass `offline=1`, which turns on drawio's service worker. `pwa=0` keeps it off.
+- drawio keeps its settings in `localStorage`, on segl's origin. Check that it sets no cookie (rule 8), and that none of its keys is one of segl's.
+- Licenses: drawio's code is Apache-2.0, and the release carries no copy of that text, so segl ships one. The icon sets and stencils carry drawio's terms (no use in Atlassian products), which segl meets. `js/libavoid-js/` is under the LGPL 2.1. Say what it does in drawio and whether drawio works without it, and put the choice to the user before the package ships it, as the font was (D2-026).
+- The name: segl does not use drawio's name or logo for the mode. The documents credit draw.io, under its trademark rules.
+
+The page:
+
+- Slot 9 opens drawio's editor in a frame below the bar, in embed mode (`embed=1&proto=json`), and loads the diagram with `autosave` and `diffSync` on. Every message to and from the frame goes through one adapter, `web/src/diagram/` (rule 5). The adapter takes a message only from its own frame.
+- A viewer's frame loads read-only. drawio says read-only "is a view mode, not access control", so the server refuses a viewer's changes with `view_only`.
+- The bar works as on other slots: the title, who is here, the connection state, and saving and saved. History and Import stay hidden on slot 9 until the next Diagram mode task. The editor's own menu exports `.drawio`, PNG, and SVG. PDF goes through the browser's print dialog.
+
+Live editing, the design to build first:
+
+- An edit comes out of drawio as a patch and a checksum (its diff sync). The page sends the patch on the same `/collab` socket, with the number of the last patch it applied.
+- The server numbers each patch it takes, in the order it takes them, and sends it to every other browser on slot 9. Each browser applies the patches in that order, with the embed's `patch` action.
+- The server cannot read a patch: drawio's own code applies them. So a browser also sends the whole diagram, its XML, with the number of the last patch it holds. The server keeps a copy only when its sender held every patch before it. That copy is slot 9's head, and the saver writes it and its revisions by T16's rules.
+- After a patch, a checksum that does not match means a browser has drifted. Its page loads the head and the patches after it.
+- A page that opens slot 9 gets the head and the patches since, as D2-037 does for other slots.
+- The edit gate, the Origin check, `internal_networks`, and `max_scene_bytes` hold as for other slots. Name the new messages in `docs/API.md`.
+
+The fallback, the pen: if the measures below show lost or garbled edits that the design cannot fix, build the pen instead. One person edits at a time, and the bar shows who. A click takes the pen, and an idle pen frees itself. The others watch live. The server takes diagram changes only from the holder. Say why in the decision.
+
+The old slot 9: a migration drops slot 9's Excalidraw scene, its revisions, and its rows in `slot_file`. Bytes another slot still names stay. The user accepted the break, since no site holds data to keep. The tests that name slot 9 as a whiteboard move: the browser tests' `empty` slot (`web/e2e/pages.ts`), and the slot lists in `tests/test_slots.py` and `tests/test_repository.py`.
+
+The risk, to try first: drawio's embed mode runs from segl's own origin with nothing else reachable, at both mounts, and a patch made in one frame applies in another. drawio's page says embed mode "is only supported on https://embed.diagrams.net". If it does not run from segl, stop, set Blocked, and record what failed.
+
+Measures, for the STATUS entry and the decision:
+
+- Two browsers, then four, draw on slot 9 at once for five minutes, each a known number of shapes. Count what each browser and the head end with, the checksums that did not match, and how often the server got a copy it could keep.
+- The time from an edit in one browser to its showing in another, on one host.
+- The size of a patch and of a whole copy, for a diagram of 500 shapes.
+- The `.deb`'s size before and after.
+
+Tests:
+
+- pytest: the diagram messages at the socket: numbering and order, the copy rule, the gate, the size limit, a restart that keeps the head, and the migration.
+- Vitest: the adapter takes messages only from its frame, applies patches in order, and loads the head after a checksum that does not match.
+- Browser: two browsers on slot 9 see each other's shapes. Each draws a shape at the same time, and both remain in both. A reload and a restart keep the diagram. A viewer sees changes and makes none. No request leaves the origin, at both mounts.
+- A new row, T-024, in `docs/TEST-PLAN.md`, with its row in `tests/testplan.toml`.
+- A screenshot of two browsers on one diagram. Show it to the user in the recap.
+
+Documents: `docs/REQUIREMENTS.md` (S-001, S-003, and rows for Diagram mode), `docs/TEST-PLAN.md` (T-024), `docs/ARCHITECTURE.md` (Diagram mode, its adapter, and its collaboration), `docs/API.md` (the diagram messages and slot 9's head), `docs/DATA-MODEL.md` (slot 9's head and revisions), `docs/DEPLOY.md` and `deploy/OPERATOR.md` (what the package carries), a new decision D2-040 with the collaboration model and the measures, D2-039 amended as built, `docs/ROADMAP.md`, the status in `README.md`, and `CHANGELOG.md`.
+
+Acceptance: T-024 passes, and T-001 through T-023 still pass by `scripts/e2e.py`. T-017 and T-021 pass with drawio in the package. ruff, ty, and the web checks pass.
+
+Out of scope, for the next Diagram mode task or later: History and restore on slot 9, Import of `.drawio` files, segl's 12 device kinds and 5 link kinds in drawio's library, cursors and follow mode in Diagram mode, a whiteboard sketch carried into a diagram, and a second diagram slot.
+
+## T18 — Follow mode
+
+- Status: pending
+- Requires: T17
+- Requirements: S-010, and a new row for follow mode
+- Read: `docs/DECISIONS.md` D2-013 and D2-025, `docs/API.md` (the WebSocket, `presence`), `src/segl/room.py`, `web/src/bar/`, `web/src/canvas/`, `web/src/collab/session.ts`, the pinned editor's follow types (`onUserFollow`, `userToFollow`, `followedBy`), and the STATUS entry of 2026-11-26
+
+Added on 2026-11-26 at the user's request. On a troubleshooting call one person leads, and the rest need to see what the leader sees. After this task a person clicks a name in the bar's list of who is here and follows that person's view.
+
+What a person can do after it:
+
+- On slots 1–8, click a name in who is here and follow that person: the canvas scrolls and zooms as theirs does.
+- See that they follow, and stop with one click. Following also stops when they click the name again, or the person leaves.
+- Keep drawing while they follow. Following locks nothing.
+
+The design:
+
+- The pinned editor 0.18.1 has the hooks: `onUserFollow` reports a follow and an unfollow, and its state holds `userToFollow` and `followedBy`. Use its own follow display. All of it goes through the canvas adapter (rule 5).
+- Two new messages on the socket. `follow` names the connection to follow, or `null` to stop. The server tells a connection how many follow it. Only while someone follows it does a page send `view`: its visible area, in canvas coordinates, at most a few times a second. The server sends `view` only to that connection's followers.
+- The follower's canvas fits the leader's visible area, whatever the two screens' sizes.
+- A viewer may follow and be followed. Neither changes the scene, so the edit gate does not apply.
+
+Tests:
+
+- pytest: `follow` and its count, `view` only to followers, a follow that ends when the leader leaves, and a `follow` of a connection not on the slot refused.
+- Vitest: the adapter's follow and the fit.
+- Browser: one browser follows another. The leader scrolls and zooms, and the follower's view matches within a small margin. Stop works. The leader leaves, and the follow ends.
+- A new row, T-025, in `docs/TEST-PLAN.md`, with its row in `tests/testplan.toml`.
+
+Documents: `docs/REQUIREMENTS.md` (a new row), `docs/TEST-PLAN.md` (T-025), `docs/API.md` (`follow`, `view`, and the count), `docs/ARCHITECTURE.md` (collaboration), a new decision D2-041 for the messages, the status in `README.md`, and `CHANGELOG.md`.
+
+Acceptance: T-025 passes, and T-001 through T-024 still pass by `scripts/e2e.py`. ruff, ty, and the web checks pass.
+
+Out of scope: follow mode in Diagram mode, and a leader who brings everyone to their view at once.

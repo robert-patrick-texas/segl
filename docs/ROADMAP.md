@@ -14,7 +14,15 @@ The gate passed on 2026-11-13, on commit `00ea07f` (T13).
 
 Symbol palette and typed links from the draft1 baseline: cable, circuit, relationship, neighbor, connector. Drawing stays separate from any future inventory record. This phase still uses the open slots or, if P2's workspaces exist, the same canvas adapter. It does not query live network gear.
 
-T15 built the first part on 2026-11-16 (`REQUIREMENTS.md`, N-001 to N-005; D2-038): 12 device kinds and 5 link kinds in the editor's library, a small segl panel, and a letter tag for the state. segl sets no color. Each record rides in its element's `customData`. Named interfaces at a link's ends (draft1 N-006, L-001) come next.
+T15 built the first part on 2026-11-16 (`REQUIREMENTS.md`, N-001 to N-005; D2-038): 12 device kinds and 5 link kinds in the editor's library, a small segl panel, and a letter tag for the state. segl sets no color. Each record rides in its element's `customData`. Named interfaces at a link's ends (draft1 N-006, L-001) come later.
+
+On 2026-11-26 the user put collaboration first and queued three tasks before named interfaces (`draft2/TASKS.md`):
+
+1. T16, history that lasts: the newest 50 revisions, then fewer as they age, for 30 days, and the board as it was before a big delete, a restore, or an import.
+2. T17, Diagram mode on slot 9: drawio's editor with live editing for everyone on the slot (D2-039). It measures how well that works and decides how Diagram mode collaborates.
+3. T18, follow mode on the whiteboards: click a name and follow that person's view.
+
+Diagram mode's polish comes next, as a task written from T17's decision: History and restore on slot 9, `.drawio` import, and segl's device and link kinds in drawio's library. Then named interfaces, and then P2.
 
 ## P2 — Inventory files and protected workspaces (L-002, L-004)
 
@@ -42,7 +50,7 @@ Built in T14 (2026-11-16, D2-037). The scene route's answer carries a mark, `hel
 
 These product rules remain in force when their phase starts:
 
-- Excalidraw is the canvas. A network object's id is not an element id.
+- segl provides the canvas, and Excalidraw is no longer the only one (2026-11-26, D2-039). Slots 1–8 are Excalidraw whiteboards. Slot 9 is Diagram mode, drawio's editor, from T17. A network object's id is not an element id.
 - Observed topology and proposed plans stay distinct.
 - Editing a drawing never changes a production network or an upstream inventory system.
 - Imported inventory is read-only from the whiteboard.

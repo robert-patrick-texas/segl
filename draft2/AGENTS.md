@@ -16,7 +16,7 @@ If a task is blocked, leave Next task unchanged, set `Blocked: yes`, and log the
 
 - `docs/` is the product manual. `draft2/` is the workbook for the next task. Both override `draft1/`, which is frozen.
 - `STATUS.md` overrides any "suggested order" remembered from an older file.
-- A locked decision in `docs/DECISIONS.md` stays locked. If the pinned Excalidraw package cannot do what a decision requires, stop, set Blocked, and record the evidence. Do not add a Node collaboration process and do not fork Excalidraw.
+- A locked decision in `docs/DECISIONS.md` stays locked. If the pinned Excalidraw package or the pinned drawio cannot do what a decision requires, stop, set Blocked, and record the evidence. Do not add a Node collaboration process, and do not fork Excalidraw or drawio.
 
 ## Definition of done for a task
 
@@ -32,12 +32,12 @@ If a task is blocked, leave Next task unchanged, set `Blocked: yes`, and log the
 2. Pin dependencies. The Python project uses uv, ruff, and ty. The web package uses npm with exact versions and `web/package-lock.json` (D2-023).
 3. Python commands go through uv (`uv add`, `uv sync`, `uv run pytest`, `uv run ruff`, `uv run ty`). Do not add a `requirements.txt`. Do not use pip, poetry, or a system virtualenv created by hand.
 4. ruff lints and formats. ty type-checks. Both are dev dependencies. The production virtualenv does not need them.
-5. Keep Excalidraw calls inside `web/src/canvas/`. The rest of the UI talks to that adapter.
-6. Embed the upstream package. Do not modify or vendor its source.
+5. Keep Excalidraw calls inside `web/src/canvas/`, and messages to and from drawio's frame inside `web/src/diagram/` (D2-039). The rest of the UI talks to those adapters.
+6. Embed the upstream packages. Do not modify or vendor their source. drawio comes from its pinned release at build time, checked by its hash. Only its two settings files, `js/PreConfig.js` and `js/PostConfig.js`, may be segl's own (D2-039).
 7. Releases follow `docs/RELEASING.md`: every component moves to its newest release, and one is held back only after it fails the tests. Versions live only in `versions.toml`. Add a `CHANGELOG.md` bullet for a source or document change a contributor needs to know about. Write a `journal/YYYY-MM-DD-short-title.md` entry for a story or a lesson, not for every task.
 8. The browser application stores preferences in `localStorage`. It does not use cookies. Do not add `Set-Cookie`, session middleware, or credentialed CORS.
 9. Access codes and their secret, when configured, live in the server TOML file (D2-033). Do not put a code, the secret, or a pass in scene JSON, logs, the injected page config, or a query string. A pass is in one answer, the access route's, and nowhere else.
-10. Slot numbers 1–9 are the only workspaces. Do not add login, inventory, PostgreSQL, a base-path setting, or a production container image. P1's network objects live in the scene, in each element's `customData`, with no table, route, or service of their own (T15). The access page is not a login: it takes a code, knows no user, and keeps no account (D2-033).
+10. Slot numbers 1–9 are the only workspaces. Slots 1–8 are Excalidraw whiteboards, and from T17 slot 9 is Diagram mode (D2-039). Do not add login, inventory, PostgreSQL, a base-path setting, or a production container image. P1's network objects live in the scene, in each element's `customData`, with no table, route, or service of their own (T15). The access page is not a login: it takes a code, knows no user, and keeps no account (D2-033).
 11. Parameterized SQL only. Internal ids are allocated by the server. A hostname or an Excalidraw element id is not a domain identity. A P1 network object's id is a random UUID the page makes, since no server record holds one (T15).
 12. Node builds the frontend. It is not a runtime service. systemd starts Python only.
 13. Do not claim a test passed unless that command was run in this session.
