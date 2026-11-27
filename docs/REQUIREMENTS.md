@@ -7,7 +7,7 @@ Priority **M** is required for its phase's gate: P0's was the MVP gate. **L** is
 | ID | Pri | Requirement | Acceptance |
 |---|---|---|---|
 | S-001 | M | Embedded editors | The slot page shows an upstream editor under the segl bar: Excalidraw on slots 1–8, and drawio on slot 9, Diagram mode (D2-039, D-001). Each editor's tools remain usable. |
-| S-002 | M | Live collaboration | Two browsers on the same slot see each other's element edits and cursors. |
+| S-002 | M | Live collaboration | Two browsers on the same slot see each other's edits and cursors: element edits on slots 1–8, and diagram changes on slot 9 (D-003). Each cursor has its person's name beside it. On slot 9 a cursor shows only on the page of the diagram it is on. Slot 9 shows no cursors yet: T18 adds them. |
 | S-003 | M | Nine persistent slots | Slots 1–9 exist after first startup. Each has its own scene and title: slots 1–8 a whiteboard, and slot 9 a diagram. Users cannot create or delete slots. |
 | S-004 | M | Restart recovery | After the process is killed once the UI says saved, the head scene returns on reload. |
 | S-005 | M | History | A slot's history keeps its newest 50 revisions, and older ones as they age: the newest of each minute for an hour, of each hour for a day, and of each day for a week. The board as it was before a big delete, a restore, or an import is kept a week. Each can be listed and restored. Restore updates every connected browser and can itself be restored. |

@@ -20,7 +20,7 @@ On 2026-11-26 the user put collaboration first and queued three tasks before nam
 
 1. T16, history that lasts, and clearing a slot: the newest 50 revisions, then fewer as they age, for a week, and the board as it was before a big delete, a restore, or an import. `segl slot clear N` wipes a slot for good. Built on 2026-11-26.
 2. T17, Diagram mode on slot 9: drawio's editor with live co-editing, and the pen for one editor at a time while the others watch (D2-039). It measures how well co-editing works. Built on 2026-11-27: co-editing kept every shape in every run, and D2-040 records the measures and how a drifted browser is put right.
-3. T18, follow mode: click a name and follow that person's view, on every slot. In Diagram mode, everyone else follows whoever takes the pen until they scroll, zoom, or click. It is not a presentation mode.
+3. T18, follow mode: click a name and follow that person's view, on every slot. In Diagram mode, everyone else follows whoever takes the pen until they scroll, zoom, or click. It is not a presentation mode. Added on 2026-11-27: T18 also shows the others' cursors in Diagram mode, as on the whiteboards.
 
 Diagram mode's polish comes next, as a task written from T17's decision (D2-040): History and restore on slot 9, `.drawio` import, and segl's device and link kinds in drawio's library, with no color set by segl. D2-040 adds what T17 left: a browser put right after drift returns to the first page of a diagram with several pages, and what a load does to a drag under way was not measured. Then named interfaces, and then P2.
 

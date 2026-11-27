@@ -705,14 +705,14 @@ As built (2026-11-27):
 - Licenses: the war's `templates/LICENSE` is the Creative Commons Attribution 4.0 license, not the Atlassian terms of `img/`, `shapes/`, and `stencils/`. libavoid's compiled code is in `js/extensions.min.js`, which drawio loads at every start, and in `js/integrate.min.js` and `js/libavoid-js/libavoid.min.js`, which nothing loads. The owner chose on 2026-11-27 to ship it with a notice. segl ships drawio's Apache License from its repository at the tag.
 - The browser tests' empty slot is slot 1, which no test draws on. Slot 9 is `SLOTS.diagram`. The restart test is in `durability.spec.ts` and the viewer's in `access.spec.ts`, beside their kind.
 
-## T18 — Follow mode
+## T18 — Follow mode, and cursors in Diagram mode
 
 - Status: next
 - Requires: T17
-- Requirements: S-010, and a new row for follow mode
-- Read: `docs/DECISIONS.md` D2-013, D2-025, and D2-039, `docs/API.md` (the WebSocket, `presence`), `src/segl/room.py`, `web/src/bar/`, `web/src/canvas/`, `web/src/diagram/`, `web/src/collab/session.ts`, the pinned editor's follow types (`onUserFollow`, `userToFollow`, `followedBy`) and its `maybeUnfollowRemoteUser`, drawio's embed page (the `viewbox` action and `zoomEvents`), and the STATUS entries of 2026-11-26
+- Requirements: S-002 (cursors on slot 9), S-010, and a new row for follow mode
+- Read: `docs/DECISIONS.md` D2-013, D2-025, D2-027, and D2-039, `docs/API.md` (the WebSocket, `presence`), `src/segl/room.py`, `web/src/bar/`, `web/src/canvas/`, `web/src/diagram/`, `web/src/collab/session.ts`, `web/drawio/js/PostConfig.js`, the pinned editor's follow types (`onUserFollow`, `userToFollow`, `followedBy`), its `maybeUnfollowRemoteUser`, and its `getClientColor`, drawio's embed page (the `viewbox` action and `zoomEvents`), drawio's `js/diagramly/P2PCollab.js` (`sendCursor` and `updateCursor`), and the STATUS entries of 2026-11-26 and 2026-11-27
 
-Added on 2026-11-26 at the user's request. On a troubleshooting call one person leads, and the rest need to see what the leader sees. After this task a person clicks a name in the bar's list of who is here and follows that person's view, on every slot. In Diagram mode, whoever takes the pen is followed by default. It is not a presentation mode: anyone can look away at any time.
+Added on 2026-11-26 at the user's request. On a troubleshooting call one person leads, and the rest need to see what the leader sees. After this task a person clicks a name in the bar's list of who is here and follows that person's view, on every slot. In Diagram mode, whoever takes the pen is followed by default. It is not a presentation mode: anyone can look away at any time. Added to on 2026-11-27 at the user's request: on slot 9 each person sees the others' cursors, as on the whiteboards.
 
 What a person can do after it:
 
@@ -720,6 +720,7 @@ What a person can do after it:
 - See that they follow, and stop with one click.
 - Stop by looking away. Following ends when they scroll, zoom, or click on the canvas themselves, as the pinned editor does, so starting to draw ends it. It also ends when they click the name again, or the person leaves. Following never locks anyone.
 - On slot 9, follow whoever takes the pen without a click. Step away by scrolling, zooming, or clicking, and click the holder's name to follow again.
+- On slot 9, see where each other person's pointer is on the diagram, with their name beside it, as on the whiteboards.
 
 The design:
 
@@ -734,15 +735,24 @@ In Diagram mode, at the user's word of 2026-11-26:
 - A page that learns of a new pen holder sends `follow` for the holder, unless it is the holder. So each take of the pen starts every other browser on slot 9 following the new holder, once. One who steps away stays away until they click the holder's name, or the pen moves again. When the pen is given back, the follow ends.
 - The risk, to try first: what drawio's own code lets `js/PostConfig.js` see of the frame's scroll. If it sees none, stop and say what it does see before the rest is built.
 
+Cursors in Diagram mode, at the user's word of 2026-11-27:
+
+- Why: on slots 1–8 the pinned editor draws the others' cursors from `presence`. Slot 9 shows none (`web/src/diagram/session.ts`), so S-002 holds there for edits only. drawio's embed messages have no cursor action. drawio draws the others' cursors only in its own real-time sessions (`js/diagramly/P2PCollab.js`), which go through drawio's relay server. segl runs no such server, and the page asks no other host (D-002).
+- segl's `js/PostConfig.js` reports this browser's pointer to the adapter: the point on the diagram and the id of the page it is on, worked out from the view's scale and translate and the frame's scroll, as `P2PCollab.js`'s `sendCursor` does. The page sends it as `presence`, at most once every 50 ms, as on the whiteboards.
+- On slot 9 a cursor also names its page: `{ "x", "y", "page" }`. The server checks the page id as it checks `x` and `y`, and passes it on. Slots 1–8 keep `{ "x", "y" }`.
+- The adapter hands the others' cursors to the frame. `js/PostConfig.js` takes them only from its parent page, on segl's origin, and draws each in drawio's graph container, placed as `P2PCollab.js`'s `updateCursor` places one. So a cursor stays on its point of the diagram as this browser scrolls and zooms, and shows only on the page it names. Each has its person's display name beside it, and the color the pinned editor gives that connection on the whiteboards, worked out from the connection id (its `getClientColor`, which the package does not export). The protocol still carries no color (D2-027), and segl still sets no color on the diagram.
+- A cursor stays where its person last moved it, as on the whiteboards, and goes when they leave slot 9. A viewer's cursor shows too, as on the whiteboards. The pen changes no cursor: it sets who edits, not who is seen.
+- The risk, to try with the scroll's: that `js/PostConfig.js` can see drawio's pointer and draw in its graph container. If it cannot, stop and say what it does see before the rest is built.
+
 Tests:
 
-- pytest: `follow` and its count, `view` only to followers, a follow that ends when the leader leaves, and a `follow` of a connection not on the slot refused.
-- Vitest: the adapter's follow and the fit, on both canvases. A follow ends on the follower's own scroll, zoom, or click. A new pen holder starts a follow, except in the holder's own page.
-- Browser: one browser follows another on a whiteboard. The leader scrolls and zooms, and the follower's view matches within a small margin. The follower scrolls, and the follow ends. Stop works. The leader leaves, and the follow ends. On slot 9, a take of the pen starts the other browser following. The holder scrolls, zooms, and turns the page, and the watcher's view matches. The watcher scrolls away and stays away, and a click on the holder's name follows again.
-- A new row, T-025, in `docs/TEST-PLAN.md`, with its row in `tests/testplan.toml`.
+- pytest: `follow` and its count, `view` only to followers, a follow that ends when the leader leaves, and a `follow` of a connection not on the slot refused. On slot 9, a cursor with its page reaches the others, and one whose page is not a short string is refused with `bad_message`.
+- Vitest: the adapter's follow and the fit, on both canvases. A follow ends on the follower's own scroll, zoom, or click. A new pen holder starts a follow, except in the holder's own page. On slot 9, the adapter sends the frame's pointer as `presence` at most once every 50 ms, hands the others' cursors to the frame with their names and colors, shows a cursor only on its own page, and drops it when its person leaves.
+- Browser: one browser follows another on a whiteboard. The leader scrolls and zooms, and the follower's view matches within a small margin. The follower scrolls, and the follow ends. Stop works. The leader leaves, and the follow ends. On slot 9, a take of the pen starts the other browser following. The holder scrolls, zooms, and turns the page, and the watcher's view matches. The watcher scrolls away and stays away, and a click on the holder's name follows again. On slot 9, each browser shows the other's cursor with its name, on the point of the diagram under the other's pointer within a small margin, while the two are scrolled and zoomed differently. A cursor on another page does not show. The other leaves, and its cursor goes.
+- Two new rows in `docs/TEST-PLAN.md`, each with its row in `tests/testplan.toml`: T-025 for follow mode, and T-026 for S-002's cursors on slot 9.
 
-Documents: `docs/REQUIREMENTS.md` (a new row), `docs/TEST-PLAN.md` (T-025), `docs/API.md` (`follow`, `view`, and the count), `docs/ARCHITECTURE.md` (collaboration, and Diagram mode's `js/PostConfig.js`), a new decision D2-041 for the messages, D2-039 amended as built, the status in `README.md`, and `CHANGELOG.md`.
+Documents: `docs/REQUIREMENTS.md` (a new row, and S-002 as built), `docs/TEST-PLAN.md` (T-025 and T-026), `docs/API.md` (`follow`, `view`, the count, and a cursor's page on slot 9), `docs/ARCHITECTURE.md` (collaboration, and Diagram mode's `js/PostConfig.js` and cursors), a new decision D2-041 for the messages, D2-039 amended as built, the status in `README.md`, and `CHANGELOG.md`.
 
-Acceptance: T-025 passes, and T-001 through T-024 still pass by `scripts/e2e.py`. ruff, ty, and the web checks pass.
+Acceptance: T-025 and T-026 pass, and T-001 through T-024 still pass by `scripts/e2e.py`. ruff, ty, and the web checks pass.
 
-Out of scope: a presentation mode that locks screens to the leader, and a leader who brings everyone to their view at once.
+Out of scope: a presentation mode that locks screens to the leader, a leader who brings everyone to their view at once, and the others' selections in Diagram mode, which drawio's own sessions outline.
