@@ -8,7 +8,7 @@
 
 segl releases the way vakr and Sunstone do:
 
-- Every component moves to its newest stable release: Python (patch or minor, from what `uv python list` offers), each direct Python and web dependency, Node's newest LTS release, the GitHub Actions the workflows pin, and the images and the Go tool the container files in `deploy/` pin. A release's age is never a reason to wait. One published an hour ago counts.
+- Every component moves to its newest stable release: Python (patch or minor, from what `uv python list` offers), each direct Python and web dependency, Node's newest LTS release, the GitHub Actions the workflows pin, the images and the Go tool the container files in `deploy/` pin, and drawio's release, which Diagram mode serves. A release's age is never a reason to wait. One published an hour ago counts.
 - Pre-releases (`a`, `b`, `rc`, `dev`, and SemVer suffixes such as `-beta.1`) never count as the newest release.
 - A component is held back only after its newest release fails the tests and the fix is not a straightforward correction in this repository. The hold is a `[held.<name>]` entry in `versions.toml` (the version kept, the version skipped, the reason, the date) and an Additional Notes bullet in the release notes. Other components still move.
 - A hold lasts until the component publishes a release newer than the one that failed. Then it is tried again.
@@ -34,6 +34,7 @@ The script needs only the host's `python3` (3.11 or newer). It runs `uv`, `gh`, 
   - Each action the workflows in `.github/workflows/` pin, from `gh api`. A tag pin such as `actions/checkout@v7` is current while 7.y.z is the newest series. A commit pin is compared by the version in its trailing comment (`# v10.3.3`). A branch pin, or a commit pin without that comment, cannot be checked.
   - Each image a container file under `deploy/` pins by digest (`FROM name:tag@sha256:...`), by the version its tag starts with: uv's from PyPI, Go's from go.dev. Node's image carries `runtime.node` and is not listed on its own. An image named by tag alone, as the base `ubuntu:26.04` is, is not a pin. An image with no source in `IMAGE_RELEASES` (`scripts/release_components.py`), or a tag that does not start with a version, cannot be checked. A new build of the same tag is not a release, and is not reported.
   - Each Go tool a container file builds at an exact version (`go install github.com/...@vX.Y.Z`), nfpm among them, from its GitHub releases. A module that is not on GitHub cannot be checked.
+  - drawio, `[drawio]` in `versions.toml`, from `jgraph/drawio`'s GitHub releases, without the tag's `v`. `upgrade` moves it with the whole suite, and writes the new release's `draw.war` SHA-256 beside its version, as GitHub reports it: the web build checks the war by that hash (D2-039). drawio releases about once a week.
 - `check --gate` exits 1 when a component has a newer release and no hold, when a component could not be checked, or when a hold is stale because a release newer than the skipped one exists.
 - `upgrade` moves every outdated component and holds the one that fails. It does not run the whole suite for each:
   - The components that can break anything move together, and the suite runs once. A pass keeps them all. That is the usual case, and it costs one run.
@@ -93,7 +94,7 @@ The install test does not use the release key. It makes a throwaway key, and its
 
 ## Release note shape
 
-The summary is one to three sentences. Then only the headings that have bullets, in this order: New, Changed, Fixed, Additional Notes. After those headings, two tables, each under a heading of its own. Lines of code comes first: segl's own lines by language, with a statement that they are this project's and do not count the dependencies (lines of code, below). Versions is the second table: the application, runtimes, and direct dependencies from `versions.toml`. Transitive dependencies, when a lockfile exists, follow it inside a collapsed details block.
+The summary is one to three sentences. Then only the headings that have bullets, in this order: New, Changed, Fixed, Additional Notes. After those headings, two tables, each under a heading of its own. Lines of code comes first: segl's own lines by language, with a statement that they are this project's and do not count the dependencies (lines of code, below). Versions is the second table: the application, runtimes, drawio, and direct dependencies from `versions.toml`. Transitive dependencies, when a lockfile exists, follow it inside a collapsed details block.
 
 ```markdown
 ## 0.1.0 — 2026-11-11

@@ -39,6 +39,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Self
 
+from segl.diagram import DIAGRAM_SLOT, empty_diagram
 from segl.reconcile import live_count
 from segl.retention import REASONS, Row, staying
 
@@ -75,6 +76,15 @@ def pack_scene(scene_json: str) -> bytes:
 def unpack_scene(packed: bytes) -> str:
     """Return the scene text a revision stores."""
     return zstd.decompress(packed).decode("utf-8")
+
+
+def empty_head(n: int) -> str:
+    """Return the head a new or cleared slot starts with.
+
+    Slot 9 is Diagram mode, and starts with the empty diagram (D2-039). The
+    others start with the editor's empty scene.
+    """
+    return empty_diagram() if n == DIAGRAM_SLOT else load_empty_scene()
 
 
 def load_empty_scene() -> str:
@@ -267,8 +277,9 @@ def apply_migrations(connection: sqlite3.Connection, migrations: Sequence[Migrat
         sqlite3.Error: When a migration fails.
     """
     newest = len(migrations)
-    # The one function of segl's own a migration may call (0003).
+    # The functions of segl's own a migration may call: 0003 and 0004.
     connection.create_function("segl_zstd", 1, pack_scene, deterministic=True)
+    connection.create_function("segl_empty_diagram", 0, empty_diagram, deterministic=True)
     # The write lock first: a second process starting now waits, then finds nothing to do.
     connection.execute("BEGIN IMMEDIATE")
     try:
@@ -374,6 +385,7 @@ class Repository:
         Rows that already exist are left alone, so this runs at every startup.
         The one exception is a head that still holds the placeholder segl
         wrote before it had the editor's empty scene: it gets that scene.
+        Slot 9's head starts as the empty diagram (``empty_head``).
 
         Raises:
             StorageError: When a migration fails, or a newer segl wrote the database.
@@ -393,7 +405,12 @@ class Repository:
                 db.execute(
                     "INSERT INTO slot_head (slot, epoch, scene_json, editor_label, saved_at) "
                     "VALUES (?, 1, ?, ?, ?) ON CONFLICT (slot) DO NOTHING",
-                    (number, empty_scene, SYSTEM_LABEL, now),
+                    (
+                        number,
+                        empty_diagram() if number == DIAGRAM_SLOT else empty_scene,
+                        SYSTEM_LABEL,
+                        now,
+                    ),
                 )
             # A head written before T04, by a bootstrap, that nobody has saved
             # since: the exact placeholder text, still labelled System. Its
@@ -693,15 +710,15 @@ class Repository:
         """Empty a slot for good, in one transaction: the write behind ``segl slot clear``.
 
         Its history and its file rows are deleted. It gets the empty scene,
-        its first title, and the next epoch, as a slot that was just made
-        but for the epoch. segl must not be running: a room holds the scene
-        in memory and would write it back.
+        or slot 9 the empty diagram, its first title, and the next epoch, as
+        a slot that was just made but for the epoch. segl must not be
+        running: a room holds the scene in memory and would write it back.
 
         Raises:
             InvalidSlot: When ``n`` is not 1 to 9.
         """
         _check_slot(n)
-        empty = load_empty_scene()
+        empty = empty_head(n)
         now = self._now()
         with self._transaction() as db:
             named = {

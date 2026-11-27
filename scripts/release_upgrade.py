@@ -34,6 +34,7 @@ from pathlib import Path
 import release_edits as edits
 from release_components import (
     CURRENT,
+    DRAWIO_ASSET,
     NEWER,
     NODE_IMAGE,
     STALE,
@@ -236,6 +237,11 @@ def apply_move(root: Path, status: Status, sources: Sources) -> None:
         move_image(root, sources, NODE_IMAGE, old, new)
     elif component.kind == "image":
         move_image(root, sources, component.name, old, new)
+    elif component.kind == "drawio":
+        # The build checks the war by this hash: the two move together.
+        digest = sources.release_digest(component.name, f"v{new}", DRAWIO_ASSET)
+        rewrite(versions, lambda t: edits.set_entry(t, "drawio", "version", new))
+        rewrite(versions, lambda t: edits.set_entry(t, "drawio", "sha256", digest))
     elif component.kind == "go":
         old_major, new_major = (parse_version(v) for v in (old, new))
         if old_major is None or new_major is None or old_major.release[0] != new_major.release[0]:

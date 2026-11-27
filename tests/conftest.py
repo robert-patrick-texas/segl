@@ -287,6 +287,10 @@ class FakeSources(Sources):
     def action_commit(self, repo: str, tag: str) -> str:
         return SHA_NEW
 
+    def release_digest(self, repo: str, tag: str, asset: str) -> str:
+        self.digests_asked.append(f"{repo}:{tag}:{asset}")
+        return "d" * 64
+
     def image_digest(self, name: str, tag: str) -> str:
         self.digests_asked.append(f"{name}:{tag}")
         error = self.digest_errors.get(f"{name}:{tag}")

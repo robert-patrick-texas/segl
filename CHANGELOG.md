@@ -4,9 +4,18 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
-Release and test tooling only: a stopped install test cleans up, `upgrade` leaves `cut` nothing to run again, and a test never gets a port another test has.
+Slot 9 is Diagram mode: drawio's editor, which several people edit at once, or one at a time with the pen. Slot 9's whiteboard goes, and the package carries drawio. Release and test tooling: a stopped install test cleans up, and `upgrade` leaves `cut` nothing to run again.
+
+### New
+
+- Slot 9 is Diagram mode, drawio's editor (`jgraph/drawio` 32.7.7, Apache-2.0) under the segl bar, for formal diagrams and planning, with drawio's Network and Cisco sets shown at first. segl serves drawio from its own origin, at a host root and under `/board/`, and the page asks no other host for anything. People on slot 9 edit one diagram at the same time and see each other's changes as they are made. The server numbers each patch and keeps a browser's whole diagram as the head when that browser held every patch before it, and a browser whose diagram drifts loads the whole of it again, after any label being typed and keeping its view. The diagram is saved, with history rows, as the whiteboards are (S-001, D-001 to D-005; `docs/ARCHITECTURE.md`, Diagram mode; D2-040).
+- The pen, on slot 9. Anyone who may edit can take it, even from its holder, to edit alone while the others watch the diagram change. It is free again when its holder gives it back or leaves. A viewer never gets it (D-003; `docs/API.md`, Diagram mode).
 
 ### Changed
+
+- Breaking: migration `0004` drops slot 9's whiteboard, its revisions, and its file rows, and gives it the empty diagram at a new epoch. Its title stays. No file under `assets_dir` is removed. History and Import are hidden on slot 9 until a later task, and its restore and import routes answer `409` with `diagram_mode`.
+- The web build fetches drawio's release, checks its `draw.war` by the SHA-256 in `versions.toml`, and unpacks its web files into the build, as released, but for drawio's two settings files, which are segl's (`web/drawio/`). The cache is `~/.cache/segl/drawio`. The `.deb` grows by drawio's 121 MiB of web files, and carries drawio's license files, libavoid's LGPL 2.1 text among them (`web/licenses/README.md`). drawio's files are served with `Cache-Control: no-cache`.
+- `scripts/release.py check` checks drawio's GitHub releases, and `upgrade` moves its version and its war's hash together.
 
 - `scripts/release.py upgrade` moves the tools that only their own check covers before the components the whole suite covers, and checks each once with its move. The suite's one run then covers every move, and `cut` has nothing to run again: after 0.6.0's upgrade, `cut` ran all of the suite and the install test again, 11 minutes (`docs/RELEASING.md`).
 - A stopped install test, by Ctrl+C or by the suite when a check beside it fails, ends at once and removes its containers and its folders under `/tmp`. Before, `docker run` held the stop, and the script was killed 30 seconds later with its container still running and its folder left behind.

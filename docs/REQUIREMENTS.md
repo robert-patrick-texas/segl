@@ -6,9 +6,9 @@ Priority **M** is required for its phase's gate: P0's was the MVP gate. **L** is
 
 | ID | Pri | Requirement | Acceptance |
 |---|---|---|---|
-| S-001 | M | Embedded Excalidraw | The slot page shows the upstream editor inside the segl bar. Canvas tools remain usable. |
+| S-001 | M | Embedded editors | The slot page shows an upstream editor under the segl bar: Excalidraw on slots 1–8, and drawio on slot 9, Diagram mode (D2-039, D-001). Each editor's tools remain usable. |
 | S-002 | M | Live collaboration | Two browsers on the same slot see each other's element edits and cursors. |
-| S-003 | M | Nine persistent slots | Slots 1–9 exist after first startup. Each has its own scene and title. Users cannot create or delete slots. |
+| S-003 | M | Nine persistent slots | Slots 1–9 exist after first startup. Each has its own scene and title: slots 1–8 a whiteboard, and slot 9 a diagram. Users cannot create or delete slots. |
 | S-004 | M | Restart recovery | After the process is killed once the UI says saved, the head scene returns on reload. |
 | S-005 | M | History | A slot's history keeps its newest 50 revisions, and older ones as they age: the newest of each minute for an hour, of each hour for a day, and of each day for a week. The board as it was before a big delete, a restore, or an import is kept a week. Each can be listed and restored. Restore updates every connected browser and can itself be restored. |
 | S-006 | M | Mount path | The same build works at a host root (`/s/1`) and under a path a proxy strips (`https://dev.example.com/board/s/1`). No setting names the path, and the page requests nothing outside it. |
@@ -38,6 +38,18 @@ Draft1's N-001 to N-005, built in T15 (D2-038). A record rides in its element's 
 | N-003 | M | Object id and name | Each object has a random UUID the page makes when it is placed. It is not an element id. A copy gets a new one, and a cut and a paste keeps it. A device's name is its label. |
 | N-004 | M | Existing, planned, to remove | segl's panel sets the state. Planned shows `P` and To remove shows `R`, at a device's top right and at the start of a link's label. Existing shows none. segl never sets a color. Every browser on the slot sees the state, and it is kept. |
 | N-005 | M | Drawing and data apart | A record is the drawing's own. Deleting a shape deletes only the drawing: no inventory record exists for it to change. |
+
+## P1 — Diagram mode on slot 9
+
+Built in T17 (D2-039, D2-040). drawio's editor on slot 9, for formal diagrams and planning, beside the whiteboards on slots 1–8.
+
+| ID | Pri | Requirement | Acceptance |
+|---|---|---|---|
+| D-001 | M | drawio on slot 9 | Slot 9 shows drawio's editor under the segl bar, which says `Diagram mode`, with drawio's shape sets, the Network and Cisco sets among them. History and Import are not on slot 9 yet. drawio's own menu exports `.drawio`, PNG, and SVG. |
+| D-002 | M | drawio from segl | segl serves drawio's pinned release, checked by its hash, from its own origin under the same mount, as released but for its two settings files. The page asks no other host for anything, sets no cookie, and registers no service worker. segl does not use drawio's name or logo for the mode. |
+| D-003 | M | Co-editing | Two or more browsers change one diagram at the same time, and each sees the others' changes as they are made. What each draws remains in every browser and in the stored diagram. A browser whose diagram drifts loads the whole of it again, after any label being typed, and keeping its view. |
+| D-004 | M | The pen | Anyone who may edit can take the pen, even from its holder. While someone holds it, only the holder changes the diagram, every other browser's drawio is read-only, and they watch it change. The pen is free again when the holder gives it back or leaves. A viewer never gets it. |
+| D-005 | M | The diagram is kept | The diagram is saved as it changes, with history rows by the rules of S-005, and is there after the browsers close and after a restart. `segl slot clear 9` empties it. |
 
 ## Later — do not implement in P0
 

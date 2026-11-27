@@ -73,6 +73,18 @@ carry that file. It carries Liberation Sans 2.1.5 in its place
 Digitized data copyright (c) 2010 Google Corporation, Copyright (c) 2012 Red
 Hat, Inc., under the SIL Open Font License 1.1.
 
+Diagram mode, on slot 9, serves drawio's editor (https://github.com/jgraph/drawio),
+Copyright (c) 2006-2026 JGraph Holdings Ltd and draw.io AG, licensed under the
+Apache License, Version 2.0. The build fetches the web files of drawio's
+release and ships them as released, but for its two settings files,
+js/PreConfig.js and js/PostConfig.js, which are segl's (web/drawio). draw.io
+is a trademark of JGraph Holdings Ltd, and segl uses neither its name nor its
+logo for the mode. drawio's icon sets and stencils carry drawio's terms: no use
+in Atlassian products. Its templates are under the Creative Commons Attribution
+4.0 International Public License. Its files carry libavoid, from Adaptagrams
+(https://github.com/mjwybrow/adaptagrams), under the GNU Lesser General Public
+License version 2.1. web/licenses/README.md says which file holds what.
+
 The web build also bundles React, React Router, and the npm packages that
 Excalidraw and they depend on, each under its own license. The build lists them
 (web/scripts/bundled-packages.ts).

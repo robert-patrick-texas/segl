@@ -50,6 +50,11 @@ IMAGE_RELEASES = {
 # Node's image carries runtime.node, and moves with it.
 NODE_IMAGE = "docker.io/library/node"
 
+# drawio's releases, on GitHub. Diagram mode serves the web files of its war
+# (D2-039), pinned with the war's SHA-256 in versions.toml's [drawio] table.
+DRAWIO_REPO = "jgraph/drawio"
+DRAWIO_ASSET = "draw.war"
+
 CURRENT = "current"
 NEWER = "newer"
 HELD = "held"
@@ -88,7 +93,8 @@ class Component:
 
     ``kind`` is ``runtime`` (Python or Node), ``python`` or ``web`` (a direct
     dependency), ``action``, ``image`` (a container image pinned by digest),
-    or ``go`` (a tool a container file builds with ``go install``). ``name``
+    ``go`` (a tool a container file builds with ``go install``), or
+    ``drawio`` (drawio's release, whose ``name`` is its GitHub repository). ``name``
     is also the ``[held.<name>]`` key. ``table`` is the versions.toml table of
     a dependency. ``ref`` is the text after ``@`` in a workflow, and
     ``version`` is then the tag, or the version in the comment after a commit
@@ -163,8 +169,11 @@ class Sources:
                 found = self._npm(component.name)
             elif component.kind == "image":
                 found = self._image(component.name)
-            else:  # an action, or a Go tool: their GitHub releases
+            else:  # an action, a Go tool, or drawio: their GitHub releases
                 found = self._github(component.name)
+                if found and component.kind == "drawio":
+                    # Its tags start with v, and versions.toml's pin does not.
+                    found = found.removeprefix("v")
         except (urllib.error.URLError, TimeoutError, CommandError, ValueError) as exc:
             raise LookupFailed(str(exc)) from exc
         except (KeyError, TypeError, AttributeError) as exc:
@@ -189,6 +198,23 @@ class Sources:
         if not _SHA.match(sha):
             raise LookupFailed(f"cannot resolve {repo}@{tag}: {sha!r} is not a commit")
         return sha
+
+    def release_digest(self, repo: str, tag: str, asset: str) -> str:
+        """Return the SHA-256 GitHub reports for one file of a release, in hex.
+
+        Raises:
+            LookupFailed: When the release or the file is missing, or has no digest.
+        """
+        try:
+            out = self.runner.run(["gh", "api", f"repos/{repo}/releases/tags/{tag}"]).stdout
+            assets = json.loads(out)["assets"]
+        except (CommandError, ValueError, KeyError, TypeError) as exc:
+            raise LookupFailed(f"{repo} {tag}: {exc}") from exc
+        for entry in assets:
+            digest = str(entry.get("digest") or "")
+            if entry.get("name") == asset and re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+                return digest.removeprefix("sha256:")
+        raise LookupFailed(f"{repo} {tag} has no {asset} with a SHA-256")
 
     def image_digest(self, name: str, tag: str) -> str:
         """Return the digest an image's tag points at now: its index, for every platform.
@@ -347,6 +373,9 @@ def discover(root: Path) -> list[Component]:
         Component(ecosystem, name, version, table=table)
         for ecosystem, table, name, version in direct_rows(doc)
     )
+    drawio = doc.get("drawio", {})
+    if drawio.get("version"):
+        found.append(Component("drawio", DRAWIO_REPO, str(drawio["version"])))
     found.extend(action_components(root))
     found.extend(container_components(root))
     return found

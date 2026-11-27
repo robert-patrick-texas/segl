@@ -18,7 +18,8 @@
  * the connection (S-013), the slot's history (S-005), JSON import (S-011),
  * this browser's display name (S-009), and the notice that the workspace is
  * shared (S-016), with the way to the access page for a browser that may not
- * edit (S-008).
+ * edit (S-008). On slot 9, Diagram mode, it shows the pen in place of History
+ * and Import, which come to Diagram mode later (D2-039).
  */
 import { Link, NavLink } from 'react-router';
 import type { Participant } from '../collab/protocol.ts';
@@ -30,6 +31,7 @@ import './bar.css';
 import { HistoryControl } from './HistoryControl.tsx';
 import { ImportControl } from './ImportControl.tsx';
 import { NameControl } from './NameControl.tsx';
+import { PenControl } from './PenControl.tsx';
 import { ENTER_CODE, offersAccess, sharedNotice, type Editing } from './notice.ts';
 import { PresenceControl } from './PresenceControl.tsx';
 import { statusLabel } from './status.ts';
@@ -68,6 +70,8 @@ export interface SeglBarProps {
 	onChooseImport: (file: File | null) => void;
 	/** Put the scene of an exported file in place of this slot's, for everyone. */
 	onImport: (file: File) => Promise<void>;
+	/** Slot 9's pen: who holds it, by display name or null, and whether this browser does. */
+	diagram?: { holder: string | null; mine: boolean; onPen: (take: boolean) => void };
 }
 
 export function SeglBar({
@@ -87,7 +91,8 @@ export function SeglBar({
 	onRestore,
 	importFile,
 	onChooseImport,
-	onImport
+	onImport,
+	diagram
 }: SeglBarProps) {
 	// In the slot's room: a restore or an import reaches this canvas over the socket.
 	const connected = status === 'live' || status === 'saving' || status === 'saved';
@@ -124,23 +129,34 @@ export function SeglBar({
 			<span className="segl-bar__status" data-state={status} role="status">
 				{statusLabel(status)}
 			</span>
-			{/* Keyed by the slot too: an open list is of the slot it was opened on. */}
-			<HistoryControl
-				key={`history-${slot}`}
-				epoch={epoch}
-				canRestore={canEdit}
-				connected={connected}
-				onLoad={onLoadHistory}
-				onRestore={onRestore}
-			/>
-			<ImportControl
-				key={`import-${slot}`}
-				file={importFile}
-				onChoose={onChooseImport}
-				canImport={canEdit}
-				connected={connected}
-				onImport={onImport}
-			/>
+			{diagram !== undefined ? (
+				<PenControl
+					holder={diagram.holder}
+					mine={diagram.mine}
+					canTake={canEdit && connected}
+					onPen={diagram.onPen}
+				/>
+			) : (
+				<>
+					{/* Keyed by the slot too: an open list is of the slot it was opened on. */}
+					<HistoryControl
+						key={`history-${slot}`}
+						epoch={epoch}
+						canRestore={canEdit}
+						connected={connected}
+						onLoad={onLoadHistory}
+						onRestore={onRestore}
+					/>
+					<ImportControl
+						key={`import-${slot}`}
+						file={importFile}
+						onChoose={onChooseImport}
+						canImport={canEdit}
+						connected={connected}
+						onImport={onImport}
+					/>
+				</>
+			)}
 			<div className="segl-bar__you">
 				{/* The button's own label says the same to a screen reader. */}
 				<span aria-hidden="true">You:</span>

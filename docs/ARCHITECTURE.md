@@ -6,9 +6,9 @@ How the MVP processes run together. Contracts are in `API.md` and `DATA-MODEL.md
 
 | Piece | Role |
 |---|---|
-| Browser | React application. Excalidraw is the canvas. A segl bar handles slots, title, presence, history, and the shared-workspace notice. |
+| Browser | React application. segl provides the canvas: Excalidraw on slots 1–8, the whiteboards, and drawio's editor on slot 9, Diagram mode (D2-039). A segl bar handles slots, title, presence, history, the pen on slot 9, and the shared-workspace notice. |
 | nginx | TLS termination and reverse proxy. Gives segl a host name of its own or a path on an existing site, such as `/board/`, which it strips before forwarding (`deploy/nginx/`). |
-| `segl` Python process | FastAPI on `127.0.0.1`. Serves the built web assets, REST, and the WebSocket at its own root. Owns SQLite, uploaded files, and the display-name file. |
+| `segl` Python process | FastAPI on `127.0.0.1`. Serves the built web assets, drawio's web files, REST, and the WebSocket at its own root. Owns SQLite, uploaded files, and the display-name file. It runs none of drawio's Java. |
 | SQLite | Head scene, revisions, each slot's file list, name counter. One file, WAL mode. |
 | Uploaded files | The bytes of the images on the canvases, one file to a SHA-256 under `assets_dir`. |
 | Display-name file | Plain text list on disk. Sites replace the file to change future labels. |
@@ -133,6 +133,21 @@ P1's devices and links are elements of the scene with a record in `customData` (
 - The editor keeps `customData` on every copy it makes. It hands each copy this browser places to the page before the copy reaches the canvas (`onDuplicate`): from the library, a paste, its duplicate, and Alt-drag. A copy that came from the library, or whose source is still on the canvas, gets a new object id there, in the same undo step. A cut and a paste keeps the id. An element from the socket never passes through it, so it keeps the id it came with.
 - segl's panel shows for one selected object: its kind, its name, and its state, which it sets, and a link's kind. A state change touches only the record and the tag. A kind change sets the line's style, width, and ends. Neither touches a color: the team colors links by speed and devices by owner or vendor, and red means trouble to them. A device's tag is drawn under its card, so a link's end near the corner still finds the card. A viewer selects nothing, so the panel never shows for one.
 - The panel floats over the canvas, clear of the editor's tools: at the top right on a wide page, left of the library while it is open, and under the editor's top row, on the left, in its narrow layout.
+
+## Diagram mode
+
+Slot 9 is drawio's editor (`jgraph/drawio`), for formal diagrams and planning (D2-039). The build fetches drawio's pinned release, checks it by its SHA-256, and unpacks its web files into the build as `drawio/`, as released, but for its two settings files (`web/scripts/drawio.ts`). segl serves them from its own origin, under its own root, so Diagram mode works at a host root and under any path a proxy strips, and asks no other host for anything (S-014). The page passes `stealth=1` and `lockdown=1`, so drawio offers nothing that reaches another site, and `pwa=0`, so it registers no service worker.
+
+- The slot page shows drawio's page in a frame under the bar, in embed mode with its JSON protocol. Every message to and from the frame goes through one adapter, `web/src/diagram/frame.ts`, which takes a message only from its own frame and from segl's origin, and posts one action at a time (rule 5). drawio's diff sync is on: an edit comes out as an `autosave` with a patch, a checksum, and the whole diagram.
+- segl's two settings files, `web/drawio/js/PreConfig.js` and `PostConfig.js`, keep what drawio's set. `PreConfig.js` shows the Network and Cisco sets at first. `PostConfig.js` tells the page what drawio's messages do not: when the read-only view turns on or off, when a label editor opens and closes, and where the diagram is scrolled.
+- The server cannot read a patch. `src/segl/diagram.py`, slot 9's room, numbers each patch it takes and sends it to every connection, the sender too (`API.md`, Diagram mode). Each page applies the others' patches in that order, and knows its own by the id it gave it. A page also sends its whole diagram with each patch, and the number of the newest patch it held. The room keeps that copy only when its sender held every patch before it. The copy is slot 9's head, and the saver writes it as it writes a whiteboard's scene.
+- Two people who draw at once can leave the new shapes in another order in each browser: drawio's insert names the shape it goes after, and each browser applied its own first. The next patch whose checksum is the whole diagram's shows it, and that page loads the whole diagram again: the copy, and the patches after it. It waits for a label being typed to be finished, and keeps the person's scale and scroll. It does not keep the page of a diagram with several pages.
+- The pen: anyone who may edit can take it, even from its holder. While someone holds it, the room takes changes from the holder alone, and every other page turns drawio's read-only view on. The pen sets who edits, not where anyone looks.
+- drawio's read-only view is a view, not access control. The server refuses a viewer's changes with `view_only`, and a change from anyone but the pen's holder with `pen_held`, and the page then loads the whole diagram, so it never keeps what the server did not take.
+- drawio keeps its own settings in `localStorage` on segl's origin, under `.drawio-config`, apart from segl's keys. It sets no cookie.
+- History and Import come to Diagram mode later: the bar hides them on slot 9, and the restore and import routes answer `diagram_mode`. drawio's own menu exports `.drawio`, PNG, and SVG, and PDF goes through the browser's print dialog.
+
+D2-040 records how well co-editing works, from the measures of T17.
 
 ## Edit gate
 

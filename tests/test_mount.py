@@ -116,7 +116,7 @@ def test_health_and_config_reach_segl(mount: Mount, site: str, prefix: str) -> N
 )
 def test_the_slot_routes_reach_segl(mount: Mount, site: str, prefix: str) -> None:
     slots = mount.get(site, f"{prefix}/api/v1/slots")
-    scene = mount.get(site, f"{prefix}/api/v1/slots/9/scene")
+    scene = mount.get(site, f"{prefix}/api/v1/slots/8/scene")
     invalid = mount.get(site, f"{prefix}/api/v1/slots/10")
 
     assert slots.status == 200

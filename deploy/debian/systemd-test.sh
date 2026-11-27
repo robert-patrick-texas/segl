@@ -221,6 +221,12 @@ script=$(printf '%s' "$page" | grep -o 'assets/index-[A-Za-z0-9_-]*\.js' | head 
 check "the page names its script" test -n "$script"
 check "the script comes through nginx" https -o /dev/null "$SITE/board/$script"
 check "so does a font of the canvas" https -o /dev/null "$SITE/board/fonts/Virgil/Virgil-Regular.woff2"
+# Diagram mode on slot 9: drawio's files, from the package, with segl's own
+# settings file in drawio's place, and slot 9's empty diagram (D2-039).
+check "drawio's page comes through nginx" https -o /dev/null "$SITE/board/drawio/index.html"
+check "drawio's settings file is segl's" \
+    contains "$(https "$SITE/board/drawio/js/PostConfig.js")" "segl contributors"
+check "slot 9 is an empty diagram" contains "$(scene 9)" '"diagram":"<mxfile>'
 check "/board goes to /board/" \
     equals "$(https -o /dev/null -w '%{http_code} %{redirect_url}' "$SITE/board")" "301 $SITE/board/"
 check "the API answers through nginx" equals "$(https "$SITE/board/api/v1/health")" '{"status":"ok"}'

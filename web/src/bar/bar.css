@@ -105,7 +105,8 @@
 .segl-bar__title-input:focus-visible,
 .segl-bar__count:focus-visible,
 .segl-bar__history-button:focus-visible,
-.segl-bar__import-button:focus-visible {
+.segl-bar__import-button:focus-visible,
+.segl-bar__pen-button:focus-visible {
 	outline: 2px solid #7fd1ae;
 	outline-offset: 2px;
 }
@@ -565,4 +566,38 @@
 		flex-basis: 100%;
 		text-align: left;
 	}
+}
+
+/* Diagram mode on slot 9: the mode, who holds the pen, and the pen's button. */
+.segl-bar__mode {
+	flex: 0 0 auto;
+	padding: 0 0.375rem;
+	border-radius: 0.25rem;
+	background: rgb(244 241 232 / 15%);
+	font-size: 0.8125rem;
+	white-space: nowrap;
+}
+
+.segl-bar__pen {
+	display: flex;
+	flex: 0 0 auto;
+	align-items: center;
+	gap: 0.375rem;
+	font-size: 0.8125rem;
+	white-space: nowrap;
+}
+
+.segl-bar__pen-button {
+	height: 1.75rem;
+	padding: 0 0.5rem;
+	border: 1px solid rgb(244 241 232 / 35%);
+	border-radius: 0.375rem;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+}
+
+.segl-bar__pen-button:hover {
+	background: rgb(244 241 232 / 15%);
 }

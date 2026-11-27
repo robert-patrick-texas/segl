@@ -14,7 +14,8 @@
 
 /**
  * One slot: the segl bar, and under it the canvas with that slot's scene,
- * shared live with everyone else on the slot.
+ * shared live with everyone else on the slot. Slot 9 is Diagram mode, with
+ * drawio's editor in place of the canvas (D2-039).
  */
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import {
@@ -32,14 +33,19 @@ import type { WireElement } from './collab/elements.ts';
 import type { FileRef } from './collab/files.ts';
 import { useCollab } from './collab/useCollab.ts';
 import { storageKey, type AppConfig } from './config.ts';
+import { penHolder } from './bar/pen.ts';
+import type { DiagramFrameLike } from './diagram/frame.ts';
+import { diagramOf } from './diagram/protocol.ts';
+import { useDiagram } from './diagram/useDiagram.ts';
 import { exportName } from './importing.ts';
 import { loadedScene, type Load } from './load.ts';
-import { browserStorage, writeLastSlot } from './slots.ts';
+import { browserStorage, DIAGRAM_SLOT, writeLastSlot } from './slots.ts';
 import type { DisplayName } from './useDisplayName.ts';
 import type { Pass } from './usePass.ts';
 
 // Its own chunk: the bar paints before the editor has arrived.
 const Canvas = lazy(() => import('./canvas/Canvas.tsx'));
+const DiagramPane = lazy(() => import('./diagram/DiagramPane.tsx'));
 
 const NO_TITLES: ReadonlyMap<number, string> = new Map();
 const NO_FILES: readonly FileRef[] = [];
@@ -61,18 +67,34 @@ export function SlotPage({ config, slot, displayName, editPass }: SlotPageProps)
 	const [attempt, setAttempt] = useState(0);
 	// Null on the way to another slot too, while `load` is still the old slot's.
 	const scene = loadedScene(load, slot);
+	const isDiagram = slot === DIAGRAM_SLOT;
+	const board = isDiagram ? null : scene;
 	const collab = useCollab({
 		config,
 		slot,
-		epoch: scene === null ? null : scene.epoch,
-		elements: scene === null ? NO_ELEMENTS : scene.elements,
-		files: scene === null ? NO_FILES : scene.files,
-		mark: scene === null ? null : scene.mark,
+		epoch: board === null ? null : board.epoch,
+		elements: board === null ? NO_ELEMENTS : board.elements,
+		files: board === null ? NO_FILES : board.files,
+		mark: board === null ? null : board.mark,
 		name: displayName.name,
 		pass
 	});
+	const [frame, setFrame] = useState<DiagramFrameLike | null>(null);
+	const diagramHead = isDiagram ? scene : null;
+	const diagram = useDiagram({
+		config,
+		slot,
+		epoch: diagramHead === null ? null : diagramHead.epoch,
+		xml: diagramHead === null ? null : diagramOf(diagramHead.scene),
+		mark: diagramHead === null ? null : diagramHead.mark,
+		name: displayName.name,
+		pass,
+		frame: isDiagram ? frame : null
+	});
+	// What the bar shows of the slot's room, a whiteboard's or the diagram's.
+	const room = isDiagram ? diagram.state : collab.state;
 	// Until the server has said, a browser may edit unless a code is needed.
-	const viewOnly = collab.state.viewOnly ?? config.editRequired;
+	const viewOnly = room.viewOnly ?? config.editRequired;
 
 	useEffect(() => {
 		writeLastSlot(browserStorage(), storageKey(config, 'lastSlot'), slot);
@@ -101,7 +123,7 @@ export function SlotPage({ config, slot, displayName, editPass }: SlotPageProps)
 	}, []);
 
 	// The room's title: in `welcome`, and again whenever someone changes it.
-	const roomTitle = collab.state.title;
+	const roomTitle = room.title;
 	useEffect(() => {
 		if (roomTitle !== null) setTitle(slot, roomTitle);
 	}, [roomTitle, slot, setTitle]);
@@ -159,30 +181,50 @@ export function SlotPage({ config, slot, displayName, editPass }: SlotPageProps)
 				titles={titles}
 				editing={editingState({
 					editRequired: config.editRequired,
-					viewOnly: collab.state.viewOnly,
+					viewOnly: room.viewOnly,
 					hasPass: pass !== ''
 				})}
 				version={__SEGL_VERSION__}
 				displayName={displayName.name}
 				onRename={displayName.rename}
-				status={collab.state.status}
-				participants={collab.state.participants}
-				self={collab.state.connectionId}
+				status={room.status}
+				participants={room.participants}
+				self={room.connectionId}
 				canEdit={!viewOnly}
 				onRetitle={retitle}
-				epoch={collab.state.epoch}
+				epoch={room.epoch}
 				onLoadHistory={loadHistory}
 				onRestore={restore}
 				importFile={importFile}
 				onChooseImport={chooseImport}
 				onImport={importFrom}
+				diagram={
+					isDiagram
+						? {
+								holder: penHolder(diagram.state.pen, diagram.state.participants),
+								mine:
+									diagram.state.pen !== null && diagram.state.pen === diagram.state.connectionId,
+								onPen: diagram.onPen
+							}
+						: undefined
+				}
 			/>
 			<main className="segl__canvas">
-				{scene !== null && (
+				{diagramHead !== null && (
+					<Suspense fallback={<p className="segl__status">Loading the editor…</p>}>
+						<DiagramPane
+							key={slot}
+							rootUrl={config.rootUrl}
+							onFrame={setFrame}
+							onEdit={diagram.onEdit}
+						/>
+					</Suspense>
+				)}
+				{board !== null && (
 					<Suspense fallback={<p className="segl__status">Loading the editor…</p>}>
 						<Canvas
 							key={slot}
-							document={scene.scene}
+							document={board.scene}
 							exportName={exportName(title, slot)}
 							viewOnly={viewOnly}
 							onSceneFile={chooseImport}

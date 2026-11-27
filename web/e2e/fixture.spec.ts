@@ -24,7 +24,7 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { expect } from '@playwright/test';
-import { openSlot, sceneDocument, test } from './pages.ts';
+import { openSlot, sceneDocument, SLOTS, test } from './pages.ts';
 
 const FIXTURE = new URL('../../src/segl/empty_scene.json', import.meta.url);
 
@@ -50,9 +50,12 @@ test('a new slot starts with the fixture, and the editor keeps it as it is', asy
 	request
 }) => {
 	const fixture: unknown = JSON.parse(readFileSync(FIXTURE, 'utf8'));
-	const head = (await (await request.get('api/v1/slots/9/scene')).json()) as { scene: unknown };
+	const slot = SLOTS.empty;
+	const head = (await (await request.get(`api/v1/slots/${slot}/scene`)).json()) as {
+		scene: unknown;
+	};
 	expect(head.scene).toEqual(fixture);
 
-	await openSlot(page, 's/9');
+	await openSlot(page, `s/${slot}`);
 	expect(await sceneDocument(page)).toEqual(fixture);
 });

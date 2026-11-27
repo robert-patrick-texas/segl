@@ -145,6 +145,7 @@ The build runs in a clean `ubuntu:26.04` container (`deploy/debian/Containerfile
 - The virtualenv gets the packages `uv.lock` lists for segl, as wheels, each checked against its hash. No development tool is installed.
 - The `segl` wheel is built there with hatchling. `uv.lock` holds hatchling and its own dependencies too, as the `build` dependency group in `pyproject.toml`, and the build checks their hashes.
 - `npm ci --ignore-scripts` and `npm run build` make `web/dist` from `web/package-lock.json`. Node is not packaged.
+- The web build fetches drawio's release from GitHub and checks its `draw.war` by the SHA-256 in `versions.toml` (D2-039). Its web files, without `WEB-INF` and `META-INF`, go into `web/dist/drawio/` as released, but for drawio's two settings files, which are segl's (`web/drawio/`). That is 3,115 files and 121 MiB. The build keeps the war in a docker volume, `segl-drawio-cache`, so the next build fetches nothing. segl runs none of drawio's Java.
 - nfpm writes the package (`deploy/debian/nfpm.yaml`), and lintian reads it. A lintian error fails the build. `deploy/debian/lintian-overrides` lists the findings that are meant, each with its reason.
 
 What the package does on a machine:
@@ -163,10 +164,11 @@ The package carries the license text of every part it bundles (`deploy/debian/co
 - CPython's is in `/opt/segl/python`, and each Python package's is in its own `dist-info/licenses` folder. The build fails when one is missing.
 - The web build is minified and keeps no license comments. The build lists the npm packages whose code is in it (`web/scripts/bundled-packages.ts`), and `web/scripts/collect-licenses.ts` copies each one's license text to `/usr/share/doc/segl/web-licenses/`.
 - The editor ships nine font families and no license text for any. `web/licenses/` keeps those texts, and the texts of the few npm packages that ship none, with the source of each (`web/licenses/README.md`). They go to `/usr/share/doc/segl/font-licenses/`.
+- drawio's code is under the Apache License 2.0, and its release carries no copy of it. segl ships the one in drawio's repository as `/usr/share/doc/segl/drawio-licenses/LICENSE`, and the license files the release carries beside it, at their paths: drawio's terms for its icon sets and stencils (no use in Atlassian products), the Creative Commons Attribution 4.0 license of its templates, and the GNU Lesser General Public License 2.1 of libavoid, which drawio compiles into its files. The owner chose on 2026-11-27 to ship libavoid with this notice (`web/licenses/README.md`, drawio).
 
 The collector fails when a bundled package or a font has no license text. pytest runs it against the real build, so a new editor version that adds one fails the suite.
 
-All nine fonts in the package are under the SIL Open Font License or MIT. Eight are the editor's own files. The ninth is not: the editor ships Liberation Sans 1.05, which is under the GNU General Public License version 2 with a font exception, and segl ships Liberation Sans 2.1.5 in its place, under the Open Font License (`web/licenses/README.md`, the font segl replaces). No font in the package is under the GPL.
+The LGPL 2.1 of libavoid is the one license in the package of the GNU family. All nine fonts in the package are under the SIL Open Font License or MIT. Eight are the editor's own files. The ninth is not: the editor ships Liberation Sans 1.05, which is under the GNU General Public License version 2 with a font exception, and segl ships Liberation Sans 2.1.5 in its place, under the Open Font License (`web/licenses/README.md`, the font segl replaces). No font in the package is under the GPL.
 
 ## nginx
 

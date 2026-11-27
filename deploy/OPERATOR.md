@@ -4,7 +4,7 @@ How to install segl on Ubuntu 26.04, put nginx in front of it, and run it. The p
 
 ## What segl is, and is not
 
-- segl serves nine shared drawing boards, slots 1 to 9. Everyone who can open a slot sees it live.
+- segl serves nine shared drawing boards, slots 1 to 9: whiteboards on slots 1 to 8, and drawio's editor, Diagram mode, on slot 9. Everyone who can open a slot sees it live.
 - The slots are shared. There are no accounts and no private boards. Do not put anything on a slot that not everyone who can reach segl may see.
 - Protected inventory is not available on the slots. It belongs to a later release, behind a login.
 - segl is for an internal network. Do not put it on the open internet, except as a demo with no real data.
@@ -15,7 +15,7 @@ How to install segl on Ubuntu 26.04, put nginx in front of it, and run it. The p
 |---|---|
 | `/opt/segl/python` | CPython, pinned and installed by uv when the package was built. segl does not use the system's Python. |
 | `/opt/segl/venv` | The virtualenv, from `uv.lock`, with the `segl` command. |
-| `/opt/segl/app/web/dist` | The built web application. |
+| `/opt/segl/app/web/dist` | The built web application, with drawio's editor for Diagram mode on slot 9 in `drawio/`. |
 | `/opt/segl/share` | The nginx files, the two files `/opt/segl/etc` starts from, and the keys a release may be signed with. |
 | `/opt/segl/etc/segl.toml` | The settings. Mode `0640`, owner `root`, group `segl`. |
 | `/opt/segl/etc/display-names.txt` | The words new visitors are named from. |

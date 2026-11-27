@@ -1,12 +1,14 @@
 # Data model (MVP)
 
-SQLite, WAL mode, foreign keys on. Migrations are numbered SQL files in `src/segl/migrations/`, applied in order at startup: `0001_slots.sql`, `0002_slot_files.sql` for the files of images, and `0003_lasting_history.sql`, which compresses each revision's scene and adds its mark (T16). The repository module, `src/segl/repository.py`, is the only code that runs SQL. A later PostgreSQL implementation must satisfy the same method list.
+SQLite, WAL mode, foreign keys on. Migrations are numbered SQL files in `src/segl/migrations/`, applied in order at startup: `0001_slots.sql`, `0002_slot_files.sql` for the files of images, `0003_lasting_history.sql`, which compresses each revision's scene and adds its mark (T16), and `0004_diagram_slot.sql`, which makes slot 9 Diagram mode (T17). The repository module, `src/segl/repository.py`, is the only code that runs SQL. A later PostgreSQL implementation must satisfy the same method list.
 
 ## Database file and migrations
 
 segl opens the `database` file when it starts, before it listens, and creates the file and its folder when they are missing. The connection uses WAL mode, foreign keys, and `synchronous = FULL`, so a head the UI calls saved is on the disk.
 
-A migration is a file named `NNNN_name.sql`, such as `0001_slots.sql`. The numbers start at `0001` and have no gap. The database keeps the number of the newest file applied to it in `PRAGMA user_version`. Startup applies the files above that number, all in one transaction, so a migration that fails leaves the database as it was. A migration file has no `BEGIN` or `COMMIT` of its own. A released migration is never edited. A schema change is a new file. The connection that runs them has one function of segl's own, `segl_zstd(text)`, which returns the text compressed as a revision stores it. `0003` calls it on every revision that exists.
+A migration is a file named `NNNN_name.sql`, such as `0001_slots.sql`. The numbers start at `0001` and have no gap. The database keeps the number of the newest file applied to it in `PRAGMA user_version`. Startup applies the files above that number, all in one transaction, so a migration that fails leaves the database as it was. A migration file has no `BEGIN` or `COMMIT` of its own. A released migration is never edited. A schema change is a new file. The connection that runs them has two functions of segl's own. `segl_zstd(text)` returns the text compressed as a revision stores it, and `0003` calls it on every revision that exists. `segl_empty_diagram()` returns slot 9's empty head, and `0004` calls it.
+
+`0004` drops slot 9's whiteboard: its revisions and its rows in `slot_file` are deleted, and its head gets the empty diagram, with the label `System`, at the next epoch. Its title stays. It removes no file under `assets_dir`, since a migration changes only the database: bytes another slot still names stay, and so do bytes only slot 9 named, which no slot names afterwards. No site held data to keep (D2-039).
 
 `0003` builds the revision table again: it renames the old one, makes the new one, copies each row with its scene compressed, and drops the old one. SQLite keeps the pages it freed in the file and uses them again, so the file does not shrink by itself. A `VACUUM`, with segl stopped, gives them back to the disk.
 
@@ -62,7 +64,7 @@ CREATE TABLE slot_file (
 
 `revision.scene_zstd` is the scene's text, compressed with zstd from Python's own library (`compression.zstd`). The head stays plain JSON text. `revision.kept` is why segl kept that revision ("Which revisions stay", below), or null.
 
-Startup inserts slots 1–9 with title `Workspace N`, epoch 1, the editor's empty scene, editor label `System`, and `name_counter.next_value = 1`. Rows that already exist are left alone.
+Startup inserts slots 1–9 with title `Workspace N`, epoch 1, the editor's empty scene, editor label `System`, and `name_counter.next_value = 1`. Slot 9's head is the empty diagram in its place ("Slot 9's diagram", below). Rows that already exist are left alone.
 
 The empty scene is `src/segl/empty_scene.json`, which the wheel carries. It is the document the pinned editor itself serializes for storage when its canvas is empty, captured from the running editor in T04, not written by hand:
 
@@ -86,6 +88,12 @@ That is the shape of every stored scene: an Excalidraw JSON document, with the e
 Before T04, a new head held the placeholder `{"elements":[]}` (`PLACEHOLDER_SCENE`). Startup gives the empty scene to a head that still holds exactly that text with the label `System`, and leaves its epoch as it is. Every other head is left alone.
 
 Times are text in UTC to the millisecond, such as `2026-11-12T09:00:00.000Z`. `slot.updated_at` changes when the title or the epoch does. `slot_head.saved_at` changes when the head is written, and is the `savedAt` the API returns.
+
+## Slot 9's diagram
+
+Slot 9 is Diagram mode (D2-039). Its head, and each of its revisions, is a JSON document that holds drawio's XML: `{"diagram":"<mxfile>…</mxfile>"}`, as ASCII JSON text, with no elements and no files. The server never reads the XML. A new or cleared slot 9 holds the empty diagram, `segl.diagram.EMPTY_DIAGRAM`: one page, whose id is `segl-page-1`. Every browser loads the same text, so a patch names a page each one has.
+
+slot 9's room keeps a copy of the diagram, which a browser sent, and the number of the newest patch it holds (`ARCHITECTURE.md`, Diagram mode). The saver writes that copy as it writes a whiteboard's scene, by the rules below, with the display name behind the newest change. A copy is dirty from the moment the room keeps it until a flush takes it. A diagram has no elements, so no flush keeps the board before a big delete, and the head's `max_scene_bytes` is the copy's size as JSON text.
 
 ## The files of images
 
@@ -157,7 +165,7 @@ At most, a slot that is drawn on all week keeps 50 + 60 + 24 + 7 revisions, fewe
 `segl slot clear N` empties slots for good (`DEPLOY.md`, clearing a slot). `clear_slot(n)` does it in one transaction for each slot:
 
 - The slot's revisions and its rows in `slot_file` are deleted.
-- The head gets the empty scene, with the label `System`.
+- The head gets the empty scene, or slot 9 the empty diagram, with the label `System`.
 - The title goes back to `Workspace N`, and the epoch goes up by one, as a restore's does.
 
 It returns the new epoch, and the hashes no row of any slot names now. The command then deletes those files under `assets_dir`. So a file another slot names stays, and slots cleared in one command take the files only they named.

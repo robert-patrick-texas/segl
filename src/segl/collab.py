@@ -40,6 +40,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from segl.access import Access
 from segl.assets import AssetStore
 from segl.config import Settings
+from segl.diagram import DIAGRAM_SLOT, DiagramRoom
 from segl.origin import refuse_websocket
 from segl.reconcile import Element
 from segl.repository import SLOT_NUMBERS, Replacement, Repository, Slot
@@ -185,9 +186,22 @@ class Rooms:
         return await asyncio.shield(work)
 
     def _load(self, slot: int) -> tuple[Room, str]:
-        """Return the room of a slot as it is stored, and when its head was written."""
+        """Return the room of a slot as it is stored, and when its head was written.
+
+        Slot 9's is Diagram mode's room (D2-039).
+        """
         found = self._repository.get_slot(slot)
         head = self._repository.get_head(slot)
+        if slot == DIAGRAM_SLOT:
+            diagram = DiagramRoom.from_stored(
+                slot,
+                found.title,
+                head.epoch,
+                head.scene_json,
+                max_scene_bytes=self._settings.max_scene_bytes,
+                start=self._starts[slot],
+            )
+            return diagram, head.saved_at
         files = [
             {"id": file.file_id, "hash": file.hash, "mimeType": file.media_type}
             for file in self._repository.list_files(slot)

@@ -27,6 +27,7 @@ from pathlib import Path
 import pytest
 from harness import EMPTY_SCENE, EMPTY_SCENE_FILE
 
+from segl.diagram import EMPTY_DIAGRAM, empty_diagram
 from segl.repository import (
     PLACEHOLDER_SCENE,
     SYSTEM_LABEL,
@@ -41,6 +42,7 @@ from segl.repository import (
     SlotFile,
     StorageError,
     apply_migrations,
+    empty_head,
     load_empty_scene,
     load_migrations,
 )
@@ -138,12 +140,21 @@ def test_bootstrap_creates_nine_slots(repo: Repository) -> None:
 
 
 def test_a_new_slot_has_the_editors_empty_scene(repo: Repository) -> None:
-    for n in range(1, 10):
+    for n in range(1, 9):
         head = repo.get_head(n)
 
         assert (head.slot, head.epoch, head.editor_label) == (n, 1, "System")
         assert head.scene_json == EMPTY
         assert head.saved_at == STARTED
+
+
+def test_a_new_slot_9_has_the_empty_diagram(repo: Repository) -> None:
+    head = repo.get_head(9)
+
+    assert (head.slot, head.epoch, head.editor_label) == (9, 1, "System")
+    assert head.scene_json == empty_diagram()
+    assert json.loads(head.scene_json) == {"diagram": EMPTY_DIAGRAM}
+    assert head.saved_at == STARTED
 
 
 def test_the_empty_scene_is_the_captured_file_without_its_whitespace() -> None:
@@ -377,7 +388,7 @@ def test_save_head_writes_one_slot(repo: Repository, clock: Clock) -> None:
     assert head.saved_at == saved_at
     assert repo.get_slot(2).saved_at == saved_at
     for other in (1, 3, 4, 5, 6, 7, 8, 9):
-        assert repo.get_head(other).scene_json == EMPTY
+        assert repo.get_head(other).scene_json == empty_head(other)
         assert repo.get_head(other).saved_at == STARTED
 
 

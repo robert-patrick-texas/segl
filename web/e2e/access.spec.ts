@@ -28,6 +28,7 @@
  * shown with an answer the test puts in the server's place.
  */
 import { expect, type APIRequestContext, type Page } from '@playwright/test';
+import { drawShape, expectVertices, openDiagram, shapes, vertices } from './diagram.ts';
 import {
 	canvasImages,
 	chooseImport,
@@ -682,6 +683,50 @@ test('a browser without a pass sees the tags of network objects and changes noth
 	await expect(page.locator('.default-sidebar-trigger')).toHaveCount(0);
 	expect(await versions(page)).toEqual(before);
 	expect(await seen(editor, ids)).toEqual(shown);
+});
+
+test('a browser without a pass watches Diagram mode change and changes nothing', async ({
+	page,
+	person,
+	baseURL
+}) => {
+	// T-024, the viewer. drawio's read-only view is a view, not access
+	// control: the server refuses a viewer's changes.
+	const editor = await person('Edna', { editor: true });
+	await openDiagram(page);
+	await openDiagram(editor);
+	await expectLocked(page);
+	await expect(page.getByRole('button', { name: 'Take pen' })).toHaveCount(0);
+	const before = await vertices(editor);
+
+	await drawShape(editor);
+	await expectVertices(page, before + 1);
+	await shapes(page).first().click();
+	await expectSaved(editor);
+	await drawShape(editor);
+
+	await expectVertices(page, before + 2);
+	await expectVertices(editor, before + 2);
+	// A script on the viewer's page, with the socket, is refused too.
+	const refused = await page.evaluate(
+		(url) =>
+			new Promise<string>((resolve) => {
+				const socket = new WebSocket(url);
+				socket.onopen = () =>
+					socket.send(
+						JSON.stringify({ type: 'hello', clientId: 'x', displayName: null, editToken: '' })
+					);
+				socket.onmessage = (event) => {
+					const message = JSON.parse(String(event.data)) as { type: string; error?: string };
+					if (message.type === 'diagram') {
+						socket.send(JSON.stringify({ type: 'pen', take: true }));
+					}
+					if (message.type === 'error') resolve(message.error ?? '');
+				};
+			}),
+		collabUrl(baseURL, SLOTS.diagram)
+	);
+	expect(refused).toBe('view_only');
 });
 
 test('a browser without a pass is still someone on the slot, with a name of its own', async ({

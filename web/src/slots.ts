@@ -16,6 +16,9 @@
 
 export const SLOT_NUMBERS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
 
+/** Slot 9 is Diagram mode, drawio's editor (D2-039). Slots 1 to 8 are whiteboards. */
+export const DIAGRAM_SLOT = 9;
+
 export const FIRST_SLOT = 1;
 
 /**

@@ -75,8 +75,8 @@ export const STORED_NAME = 'Tester';
  * Which slot a test may change (docs/DEVELOPMENT.md, "What the browser tests
  * start"). The slots are shared and outlast a test: the three projects run
  * against one server, and a room keeps what was drawn. So a test asserts on
- * what it drew itself, and slot 9 is never drawn on, for the tests about an
- * empty slot.
+ * what it drew itself, and slot 1 is never drawn on, for the tests about an
+ * empty slot. Slot 9 is Diagram mode, drawio's editor (T-024).
  */
 export const SLOTS = {
 	/** The canvas tools, and the mount test's text. */
@@ -106,7 +106,9 @@ export const SLOTS = {
 	 */
 	importing: 8,
 	/** Never drawn on. */
-	empty: 9
+	empty: 1,
+	/** Diagram mode. Each test draws its own shapes and counts them. */
+	diagram: 9
 } as const;
 
 /** Put a value in a context's `localStorage` before any of its pages loads. */

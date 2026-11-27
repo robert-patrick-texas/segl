@@ -37,6 +37,7 @@ import {
 	type SceneDocument
 } from './pages.ts';
 import { RestartableServer } from './server.ts';
+import { drawShape, expectVertices, openDiagram, vertexCount } from './diagram.ts';
 
 const test = base.extend<{ server: RestartableServer }>({
 	server: async ({ baseURL }, use) => {
@@ -154,4 +155,37 @@ test('an image is there after the server is killed and restarted', async ({
 	});
 	// The image renders: the canvas shows its color where the image is.
 	await expectPainted(fresh, placed.id, color);
+});
+
+test('slot 9’s diagram is there after the server is killed and restarted', async ({
+	page,
+	person,
+	request,
+	server
+}) => {
+	// T-024: "A reload and a restart keep the diagram."
+	await openDiagram(page, 's/9');
+	await drawShape(page);
+	await drawShape(page);
+	await expectSaved(page);
+	const stored = async () => {
+		const response = await request.get('api/v1/slots/9/scene');
+		return ((await response.json()) as { scene: { diagram: string } }).scene.diagram;
+	};
+	const before = await stored();
+	expect(vertexCount(before)).toBe(2);
+
+	await server.kill();
+	await expect(connectionStatus(page)).toHaveText('Disconnected');
+	await server.start();
+
+	expect(await stored()).toBe(before);
+	const fresh = await person('Bea');
+	await openDiagram(fresh, 's/9');
+	await expectVertices(fresh, 2);
+	// The page that was open finds the server again, and drawing goes on.
+	await expectLive(page);
+	await drawShape(page);
+	await expectVertices(fresh, 3);
+	await expectSaved(page);
 });

@@ -336,3 +336,21 @@ def test_the_stand_in_matches_what_vite_writes() -> None:
     assert urls
     assert all(url.startswith("./") for url in urls), urls
     assert "</head>" in built.read_text(encoding="utf-8")
+
+
+def test_drawios_files_are_asked_for_again_each_time(repository: Repository, web_dir: Path) -> None:
+    # drawio's file names carry no hash (D2-039): after an update, a browser
+    # must never run an old drawio file beside new ones.
+    (web_dir / "drawio" / "js").mkdir(parents=True)
+    (web_dir / "drawio" / "js" / "app.min.js").write_text("var app;\n", encoding="utf-8")
+    client = TestClient(create_app(make_settings(web_dir=web_dir), repository))
+
+    drawio = client.get("/drawio/js/app.min.js")
+    again = client.get("/drawio/js/app.min.js", headers={"If-None-Match": drawio.headers["ETag"]})
+    vite = client.get("/assets/index-Dw_CZwxO.js")
+
+    assert (drawio.status_code, drawio.text) == (200, "var app;\n")
+    assert drawio.headers["Cache-Control"] == "no-cache"
+    assert (again.status_code, again.headers["Cache-Control"]) == (304, "no-cache")
+    # Vite's files are named by their hash, and keep the plain answer.
+    assert "cache-control" not in vite.headers

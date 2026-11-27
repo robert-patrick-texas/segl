@@ -27,6 +27,7 @@ from harness import DISPLAY_NAMES_FILE, EMPTY_SCENE, MarkOf, make_settings, runn
 
 from segl import cli
 from segl.app import create_app
+from segl.diagram import EMPTY_DIAGRAM
 from segl.repository import Repository, StorageError
 
 SAVED_AT = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z")
@@ -58,15 +59,18 @@ def test_a_new_database_serves_nine_isolated_slots(tmp_path: Path) -> None:
         ]
 
         # Every slot starts empty, and a scene written to one slot stays in it.
-        for n in range(1, 10):
+        # Slot 9 is Diagram mode, and starts with the empty diagram.
+        for n in range(1, 9):
             assert client.get(f"/api/v1/slots/{n}/scene").json()["scene"] == EMPTY_SCENE
+        assert client.get("/api/v1/slots/9/scene").json()["scene"] == {"diagram": EMPTY_DIAGRAM}
         repository.save_head(2, 1, DRAWN, "Bravo2")
         assert client.get("/api/v1/slots/2/scene").json()["scene"] == {
             "elements": [{"id": "a", "version": 1}],
             "appState": {"viewBackgroundColor": "#fff"},
         }
-        for n in (1, 3, 4, 5, 6, 7, 8, 9):
+        for n in (1, 3, 4, 5, 6, 7, 8):
             assert client.get(f"/api/v1/slots/{n}/scene").json()["scene"] == EMPTY_SCENE
+        assert client.get("/api/v1/slots/9/scene").json()["scene"] == {"diagram": EMPTY_DIAGRAM}
 
         for n in (0, 10):
             for path in (f"/api/v1/slots/{n}", f"/api/v1/slots/{n}/scene"):
@@ -119,7 +123,7 @@ def test_the_scene_route_returns_the_head(client: TestClient, repository: Reposi
 
 
 def test_a_new_slots_scene_is_the_editors_empty_scene(client: TestClient) -> None:
-    body = client.get("/api/v1/slots/9/scene").json()
+    body = client.get("/api/v1/slots/8/scene").json()
 
     assert body["scene"] == EMPTY_SCENE
     assert body["scene"]["elements"] == []

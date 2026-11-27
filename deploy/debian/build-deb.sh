@@ -6,10 +6,11 @@
 # Usage: deploy/debian/build-deb.sh [OUTPUT_DIR]        (default: dist)
 # Environment:
 #   BUILDER_IMAGE   tag for the builder image (default: segl-deb-builder)
-#   SEGL_UV_CACHE, SEGL_NPM_CACHE
-#                   docker volumes that keep uv's and npm's downloads between
-#                   builds. Set one empty to do without it. Every download is
-#                   checked against a hash, so a cache cannot change the result.
+#   SEGL_UV_CACHE, SEGL_NPM_CACHE, SEGL_DRAWIO_CACHE_VOLUME
+#                   docker volumes that keep uv's, npm's, and drawio's
+#                   downloads between builds. Set one empty to do without it.
+#                   Every download is checked against a hash, so a cache
+#                   cannot change the result.
 #   SEGL_BUILD_TRACE
 #                   set to anything to trace the build inside the container.
 #   SEGL_TEST_WAIT  the most seconds to wait for a machine that is busy with
@@ -30,6 +31,7 @@ out_dir=$(cd "$out_dir" && pwd)
 image=${BUILDER_IMAGE:-segl-deb-builder}
 uv_cache=${SEGL_UV_CACHE-segl-uv-cache}
 npm_cache=${SEGL_NPM_CACHE-segl-npm-cache}
+drawio_cache=${SEGL_DRAWIO_CACHE_VOLUME-segl-drawio-cache}
 
 # versions.toml is the only version list (D2-020). A Debian version is the
 # same text while it is three plain numbers. Anything else needs a mapping
@@ -69,6 +71,8 @@ echo "==> building in a clean ubuntu:26.04 container: the paths below are inside
 mounts=()
 if [ -n "$uv_cache" ]; then mounts+=(--volume "$uv_cache:/root/.cache/uv"); fi
 if [ -n "$npm_cache" ]; then mounts+=(--volume "$npm_cache:/root/.npm"); fi
+# drawio's war, which the web build fetches and checks by its hash (D2-039).
+if [ -n "$drawio_cache" ]; then mounts+=(--volume "$drawio_cache:/root/.cache/segl"); fi
 docker run --rm --name "$build" \
     --mount "type=bind,source=$stage,target=/in,readonly" \
     --mount "type=bind,source=$out_dir,target=/out" "${mounts[@]}" \

@@ -118,6 +118,14 @@ install_web() {
     )
     mkdir -p "$OPT/app/web"
     cp -R web/dist "$OPT/app/web/dist"
+    # drawio's license texts (D2-039): the Apache License of its code, which
+    # its release does not carry, and the license files the release carries,
+    # at their paths in it.
+    install -D -m 0644 web/licenses/drawio/LICENSE "$DOC/drawio-licenses/LICENSE"
+    local path
+    while IFS= read -r -d '' path; do
+        install -D -m 0644 "web/dist/drawio/$path" "$DOC/drawio-licenses/$path"
+    done < <(cd web/dist/drawio && find . -type f -name LICENSE -printf '%P\0')
 }
 
 install_share() {

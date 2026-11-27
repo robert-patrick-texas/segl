@@ -36,6 +36,7 @@ from segl.access import LOCK_SECONDS, Access, CodeLimit
 from segl.assets import MEDIA_TYPES, AssetStore
 from segl.collab import Rooms, serve
 from segl.config import Settings
+from segl.diagram import DIAGRAM_SLOT
 from segl.importing import ImportedFile, InvalidDocument, NotJson, TooLarge, read_document
 from segl.names import AllocationLimit, load_display_names, retry_after
 from segl.networks import InternalNetworks
@@ -50,7 +51,7 @@ from segl.repository import (
 )
 from segl.room import NEEDS_CODE, FileEntry, encode, named_files, stored_name
 from segl.versions import app_version
-from segl.web import ROOT_PAGE, SLOT_PAGE, WebBuild, load_web_build, render_page
+from segl.web import DRAWIO_FOLDER, ROOT_PAGE, SLOT_PAGE, WebBuild, load_web_build, render_page
 
 logger = logging.getLogger("segl.access")
 
@@ -85,6 +86,24 @@ _ASSET_HEADERS = {
     "Content-Security-Policy": "default-src 'none'; sandbox",
     "Cache-Control": "max-age=31536000, immutable",
 }
+
+
+# What a restore or an import of slot 9 is told: History and Import come to
+# Diagram mode in a later task (D2-039).
+_DIAGRAM_MODE = "Slot 9 is Diagram mode, which has no restore or import yet."
+
+
+class _AskAgain(StaticFiles):
+    """Static files whose names carry no hash: drawio's.
+
+    A browser asks again each time, and gets 304 while a file is unchanged,
+    so after an update it never runs an old drawio file beside new ones.
+    """
+
+    async def get_response(self, path: str, scope: Any) -> Response:
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 def _error(status: int, code: str, message: str, headers: Any = None) -> JSONResponse:
@@ -267,7 +286,8 @@ def _add_web_routes(app: FastAPI, build: WebBuild, edit_required: bool) -> None:
             include_in_schema=False,
         )
     for name in build.folders:
-        app.mount(f"/{name}", StaticFiles(directory=build.folder / name), name=f"web-{name}")
+        files = (_AskAgain if name == DRAWIO_FOLDER else StaticFiles)(directory=build.folder / name)
+        app.mount(f"/{name}", files, name=f"web-{name}")
 
 
 def create_app(
@@ -498,6 +518,8 @@ def create_app(
         number = _slot_number(n)
         if not may_edit(request):
             return _error(403, "view_only", NEEDS_CODE)
+        if number == DIAGRAM_SLOT:
+            return _error(409, "diagram_mode", _DIAGRAM_MODE)
         body = await _json_object(request, _RESTORE_BODY_BYTES)
         if isinstance(body, JSONResponse):
             return body
@@ -527,6 +549,8 @@ def create_app(
         number = _slot_number(n)
         if not may_edit(request):
             return _error(403, "view_only", NEEDS_CODE)
+        if number == DIAGRAM_SLOT:
+            return _error(409, "diagram_mode", _DIAGRAM_MODE)
         # The file as the editor exported it, with the files of its images inside.
         body = await _body(request, settings.max_scene_bytes)
         if isinstance(body, JSONResponse):

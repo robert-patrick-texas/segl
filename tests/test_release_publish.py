@@ -282,6 +282,18 @@ def test_notes_have_the_shape_in_the_manual(tree: Path, fake_runner) -> None:
     assert "| starlette | 1.10.0 |" in lines
 
 
+def test_the_versions_table_names_drawio_after_segl() -> None:
+    doc = {
+        "project": {"name": "segl", "version": "0.7.0"},
+        "runtime": {"python": "3.15.2"},
+        "drawio": {"version": "32.7.7", "sha256": "e" * 64},
+    }
+
+    table = release_notes.version_table(doc)
+
+    assert table[4:7] == ["| Python | 3.15.2 |", "| segl | 0.7.0 |", "| drawio | 32.7.7 |"]
+
+
 def test_notes_command_prints_the_preview(
     tree: Path, monkeypatch: pytest.MonkeyPatch, fake_runner, capsys: pytest.CaptureFixture[str]
 ) -> None:

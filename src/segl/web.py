@@ -15,7 +15,8 @@
 """The built web application, and the pages segl makes from it.
 
 ``web_dir`` holds what ``npm --prefix web run build`` writes: ``index.html``,
-Vite's ``assets/``, the editor's ``fonts/``, and the favicon. Vite builds with
+Vite's ``assets/``, the editor's ``fonts/``, drawio's ``drawio/``, and the
+favicon. Vite builds with
 ``base: './'``, so ``index.html`` names its files ``./assets/...``. That is
 right for a page at segl's root. A slot page, ``/s/N``, is one level down, so
 for it every ``./`` becomes ``../`` (docs/ARCHITECTURE.md, "Mount and
@@ -29,6 +30,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 INDEX = "index.html"
+
+# drawio's web files, which the build unpacks beside the application (D2-039).
+DRAWIO_FOLDER = "drawio"
 
 # The path from a page to segl's root.
 ROOT_PAGE = "./"

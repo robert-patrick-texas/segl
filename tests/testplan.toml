@@ -184,3 +184,11 @@ browser = [
 [rows.T-023]
 pytest = ["tests/test_retention.py", "tests/test_clear.py"]
 browser = ["lasting.spec.ts"]
+
+[rows.T-024]
+pytest = ["tests/test_diagram.py"]
+browser = [
+    "diagram.spec.ts",
+    "durability.spec.ts > slot 9’s diagram is there after the server is killed and restarted",
+    "access.spec.ts > a browser without a pass watches Diagram mode change and changes nothing",
+]

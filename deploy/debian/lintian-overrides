@@ -54,3 +54,16 @@ segl: privacy-breach-generic * [opt/segl/app/web/dist/assets/*]
 # operator types `sudo segl update`. `segl --help` and the operator notes in
 # /usr/share/doc/segl are its manual.
 segl: no-manual-page [usr/bin/segl]
+
+# drawio's release, Diagram mode on slot 9, ships as released (D2-039). It
+# bundles its own jQuery and JSZip, which its pages load from beside them.
+segl: embedded-javascript-library * [opt/segl/app/web/dist/drawio/js/*]
+
+# drawio's OneDrive page names Microsoft's script. Diagram mode never opens
+# it: the page passes stealth=1 and lockdown=1, which turn drawio's cloud
+# storage off, and web/e2e/diagram.spec.ts holds that slot 9 asks no other
+# host for anything.
+segl: privacy-breach-generic * [opt/segl/app/web/dist/drawio/onedrive3.html]
+
+# A text file in drawio's release, as released.
+segl: national-encoding [opt/segl/app/web/dist/drawio/mxgraph/src/index.txt]

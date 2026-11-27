@@ -57,6 +57,13 @@ typescript = "7.0.2"
 vite = "8.4.0"
 vitest = "5.1.2"
 
+# drawio's editor, Diagram mode on slot 9 (D2-039), from its GitHub
+# release (jgraph/drawio). The web build fetches the release's draw.war,
+# checks it by this SHA-256, and unpacks its web files (web/scripts/drawio.ts).
+[drawio]
+version = "32.7.7"
+sha256 = "e84ac13ee1e6c2bded36b6e920a2e8abfa37df277a6d9697ae8dc28f7bbeb9f1"
+
 # Filled by scripts/release.py when a newer release fails tests.
 # Example:
 # [held.fastapi]

@@ -19,11 +19,11 @@ A mutation, or a WebSocket upgrade, whose `Origin` header is present and does no
 | GET | `/api/v1/slots` | `{ "slots": [ ... ] }` with nine entries in number order: number, title, epoch, savedAt. |
 | GET | `/api/v1/slots/{n}` | One slot's metadata, the same object as its entry in the list. |
 | PATCH | `/api/v1/slots/{n}` | Body `{ "title" }`, a JSON object of at most 4096 bytes. The title is trimmed, and is 1–80 characters on one line. Returns the slot's metadata with the title as stored. A pass when codes are set. Sends a `slot` message to the slot's room. |
-| GET | `/api/v1/slots/{n}/scene` | Head scene, epoch, savedAt, editorLabel, the head's file list (`id`, `hash`, `mimeType`): the files its images name, and the head's mark, which `hello` hands back. |
+| GET | `/api/v1/slots/{n}/scene` | Head scene, epoch, savedAt, editorLabel, the head's file list (`id`, `hash`, `mimeType`): the files its images name, and the head's mark, which `hello` hands back. Slot 9's scene is `{ "diagram": "<mxfile>…</mxfile>" }`, drawio's XML, and its file list is empty (Diagram mode, below). |
 | GET | `/api/v1/slots/{n}/revisions` | `{ "revisions": [ ... ] }`, the slot's history, newest first: the revisions the rules in `DATA-MODEL.md` keep, with revision, epoch, authorLabel, createdAt, and kept. Scene bodies stay on the single-revision route. No pass. |
 | GET | `/api/v1/slots/{n}/revisions/{revision}` | One revision: the same five fields, its stored scene, and the scene's file list. No pass. |
-| POST | `/api/v1/slots/{n}/restore` | Body `{ "revision", "displayName" }`, a JSON object of at most 4096 bytes. Records the scene being replaced, puts the revision's scene in the head at the next epoch, appends a revision for it, and sends `scene` to the slot's room. Returns `{ "revision", "epoch", "savedAt" }`. A pass when codes are set. |
-| POST | `/api/v1/slots/{n}/import` | The body is an Excalidraw scene document, the file the editor's export writes, of at most `max_scene_bytes`. Records the scene being replaced, puts the document's elements in the head at the next epoch, with the files of its images, appends a revision for it, and sends `scene` to the slot's room. Returns `{ "revision", "epoch", "savedAt" }`. A pass when codes are set. |
+| POST | `/api/v1/slots/{n}/restore` | Body `{ "revision", "displayName" }`, a JSON object of at most 4096 bytes. Records the scene being replaced, puts the revision's scene in the head at the next epoch, appends a revision for it, and sends `scene` to the slot's room. Returns `{ "revision", "epoch", "savedAt" }`. A pass when codes are set. Slot 9 has no restore yet: `409` with `diagram_mode`. |
+| POST | `/api/v1/slots/{n}/import` | The body is an Excalidraw scene document, the file the editor's export writes, of at most `max_scene_bytes`. Records the scene being replaced, puts the document's elements in the head at the next epoch, with the files of its images, appends a revision for it, and sends `scene` to the slot's room. Returns `{ "revision", "epoch", "savedAt" }`. A pass when codes are set. Slot 9 has no import yet: `409` with `diagram_mode`. |
 | POST | `/api/v1/display-name` | Allocates the next `WordN` and returns `{ "displayName" }`. No body and no pass. At most 30 names per minute per client address (`SECURITY.md`). The next call gets `429` with `rate_limited` and a `Retry-After` header. |
 
 Paths are exact. A trailing slash, as in `/api/v1/health/`, is a `404` and is not redirected.
@@ -43,6 +43,7 @@ Errors that no route names:
 | 404 | `not_found` | No route has this path. |
 | 404 | `revision_not_found` | The slot has no revision with that number. It was never made, or the rules in `DATA-MODEL.md` have dropped it. |
 | 405 | `method_not_allowed` | The path exists and does not take this method. The `Allow` header lists the ones it takes. Slots have no create or delete route. |
+| 409 | `diagram_mode` | A restore or an import of slot 9. Diagram mode has neither yet (D2-039). |
 | 413 | `payload_too_large` | The body is larger than the route takes. For an import, also elements that come to more than `max_scene_bytes` as segl stores them, or a file inside the document over `max_asset_bytes`. |
 | 415 | `unsupported_media_type` | An upload whose `Content-Type` is not one of the image types. |
 | 422 | `invalid_title` | A slot title that is not text, is empty once trimmed, is longer than 80 characters, or has a control character, such as a line break. |
@@ -236,6 +237,40 @@ Limits:
 - A browser that stops reading is not waited for. When 1024 messages, or 16 MiB, are waiting for it, the server closes its connection with code 1013. It reconnects and is sent what changed since its last `scene`.
 - The server answers nothing but JSON: a message with `NaN` or `Infinity` in it is `bad_message`. So is one with a number too large for the server to hold, such as `1e999`: it is JSON, and Python would read it as infinity and write `Infinity` to the other browsers and into the stored scene.
 
+### Diagram mode, slot 9
+
+Slot 9 is drawio's editor (D2-039, D2-040). Its socket is the same `/collab?slot=9`, with the same handshake, `hello`, gate, Origin check, and `internal_networks`. `presence`, `rename`, `slot`, `presence-end`, and `saved` are as above. Its scene is drawio's XML, which the server cannot read: drawio applies a patch, in each browser. So the server numbers each patch it takes, in the order it takes them, and sends it to every connection on the slot, the sender too.
+
+Client → server:
+
+- `patch` — `{ "type": "patch", "epoch", "base", "pid", "patch", "checksum", "xml", "seq" }`. `patch` is the object drawio's diff sync made for one edit. `checksum` is drawio's checksum of the sender's diagram after it, a whole number, or `null`. `xml` is the sender's whole diagram after it. `base` is the number of the newest patch the sender held: its own included once their number came back. `pid` is the page's own id for the patch, 1–64 letters, digits, `_`, and `-`, so that it knows the patch when it comes back. `seq` is optional, as in `elements`.
+- `copy` — `{ "type": "copy", "epoch", "base", "xml" }`: the sender's whole diagram, holding every patch up to `base`. A page sends one when its own patch came back with `exact` false, and for a change drawio makes outside the pages, which comes with no patch.
+- `reload` — `{ "type": "reload" }`: send me the whole diagram. A page asks after a checksum that did not match, after a patch drawio could not apply, and after the server refused one of its changes. A viewer may ask.
+- `pen` — `{ "type": "pen", "take": true }` takes the pen, and `"take": false` gives it back. Only the holder gives it back: from anyone else it is ignored.
+
+Server → client:
+
+- `welcome` — as above, with `"pen"`: the connection id that holds the pen, or `null`.
+- `diagram` — `{ "type": "diagram", "epoch", "whole", "mark", "count", "patches": [ ... ], "xml" }`, after `welcome`, and to a connection that sent `reload`. A whole one has `xml`, the server's copy, holding every patch up to `count`, and every patch after it. One that is not whole has no `xml`: `count` is the count `hello`'s mark named, and `patches` is every patch after it. Each patch in the list is `{ "n", "pid", "patch", "checksum", "exact" }`. It is not whole when `hello`'s mark has this process's value for the slot, the room's epoch, and a count the room has reached and still holds the patches after. Any other mark, or none, gets the whole diagram.
+- `patch` — `{ "type": "patch", "epoch", "mark", "n", "pid", "patch", "checksum", "exact" }`: one patch, with its number `n`, to every connection, the sender included. `exact` is true when its sender held every patch before it: the server then kept the sender's `xml` as the copy, and `checksum` is the whole diagram's. `mark` names the room after it.
+- `pen` — `{ "type": "pen", "holder" }`: the connection id that holds the pen now, or `null` when it is free. To every connection, after a take, a give-back, and the holder leaving.
+
+The copy rule: the server keeps the `xml` of a `patch` or a `copy` only when every patch numbered after its `base` came from the same connection. That copy is slot 9's head, and the saver writes it, with history rows, by the rules in `DATA-MODEL.md`. A `patch` whose copy was not kept waits for one that is: `saved` with its `seq` comes when a kept copy holds it, from its sender's next `copy` or from any connection's.
+
+A page applies another page's patches in number order. After a patch that is `exact`, while it holds every patch before it and waits on none of its own, it hands drawio the checksum. One that does not match means its diagram has drifted, and it sends `reload` and loads what comes back.
+
+The pen: anyone who may edit can take it, even from its holder. A viewer's `pen` is `view_only`. While someone holds it, a `patch` or `copy` from anyone else is `pen_held`, and nothing is applied. The pen is free again when its holder gives it back or leaves. No timer frees it. A restart frees it, and so does `segl slot clear 9`.
+
+| `error` | When, on slot 9 |
+|---|---|
+| `bad_message` | A `patch`, `copy`, or `pen` with a field of the wrong shape, or a `base` past the room's count. |
+| `unknown_type` | A whiteboard's message, such as `elements` or `files`, or any other type. |
+| `view_only` | A `patch`, `copy`, or `pen` take from a connection that may not edit. |
+| `pen_held` | A `patch` or `copy` while another connection holds the pen. |
+| `scene_too_large` | A `patch` or `copy` whose `xml` is larger than `max_scene_bytes` as JSON text, unless it is smaller than the copy the server holds. The patch is not numbered. |
+
+A `patch` or `copy` of another epoch is answered with the whole diagram, and nothing is applied.
+
 ## Pages and the build's files
 
 Served when `web_dir` holds a build (`DEPLOY.md`). Without one, these paths are `404` with `not_found`, and the API still answers.
@@ -246,9 +281,10 @@ Served when `web_dir` holds a build (`DEPLOY.md`). Without one, these paths are 
 | GET | `/access` | The same page at segl's root. The application shows the access page, where a person enters an access code (`ARCHITECTURE.md`, edit gate). `/access/` and anything under it are not pages. |
 | GET | `/s/{n}` and `/s/` | The same page one level down: `../assets/...`, and `root` is `../`. Any one segment gets it. The page, not this route, sends a segment that is not `1` to `9` to slot 1. |
 | GET | `/assets/...`, `/fonts/...`, `/favicon.svg` | The files of the build, with `ETag` and `Last-Modified`. A file the build lacks is `404` with `not_found`. |
+| GET | `/drawio/...` | drawio's web files, which Diagram mode loads in a frame (D2-039), with `ETag`, `Last-Modified`, and `Cache-Control: no-cache`: their names carry no hash, so a browser asks again each time and gets `304` while a file is unchanged. |
 
 A page is `text/html` with `Cache-Control: no-cache`. It carries `window.SEGL_CONFIG = { "root", "editRequired" }` (`ARCHITECTURE.md`, mount and navigation) and never an access code, the secret, or a pass. No URL in it starts with `/`. A deeper path, such as `/s/1/x`, is not a page.
 
 ## Reserved paths
 
-segl registers only these first segments: `s`, `access`, `api`, `collab`, and the folders and files at the top of the Vite build (`assets`, `fonts`, and `favicon.svg`). They are registered after the others, so a build cannot shadow them. Do not register `/{team}/{project}/{board}`.
+segl registers only these first segments: `s`, `access`, `api`, `collab`, and the folders and files at the top of the Vite build (`assets`, `fonts`, `drawio`, and `favicon.svg`). They are registered after the others, so a build cannot shadow them. Do not register `/{team}/{project}/{board}`.

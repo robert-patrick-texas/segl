@@ -32,6 +32,7 @@ import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 import { readProjectVersion } from './scripts/app-version.ts';
 import { bundledPackages } from './scripts/bundled-packages.ts';
+import { drawio } from './scripts/drawio.ts';
 import { editorFonts } from './scripts/editor-fonts.ts';
 
 const backend = process.env['SEGL_API_URL'] ?? 'http://127.0.0.1:8888';
@@ -39,7 +40,7 @@ const version = readProjectVersion(new URL('../versions.toml', import.meta.url))
 
 export default defineConfig({
 	base: './',
-	plugins: [react(), editorFonts(), bundledPackages()],
+	plugins: [react(), editorFonts(), drawio(), bundledPackages()],
 	define: {
 		__SEGL_VERSION__: JSON.stringify(version)
 	},

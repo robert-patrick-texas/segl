@@ -110,6 +110,68 @@ Comment:
  its place, from https://github.com/liberationfonts/liberation-fonts, under
  the SIL Open Font License.
 
+Files: opt/segl/app/web/dist/drawio/*
+Copyright: 2006-2026 JGraph Holdings Ltd and draw.io AG; 2026 segl contributors
+ for js/PreConfig.js and js/PostConfig.js
+License: Apache-2.0
+Comment:
+ drawio's editor, Diagram mode on slot 9 (https://github.com/jgraph/drawio):
+ the web files of its release's draw.war, as released, but for its two
+ settings files, js/PreConfig.js and js/PostConfig.js, which are segl's.
+ The release carries no copy of the Apache License. segl ships the one in
+ drawio's repository as /usr/share/doc/segl/drawio-licenses/LICENSE, and the
+ release's own license files beside it, at their paths. draw.io is a
+ trademark of JGraph Holdings Ltd. segl does not use its name or logo for
+ the mode, which segl calls Diagram mode.
+ .
+ drawio's files bundle libraries of others, with their notices inside the
+ files as drawio ships them: DOMPurify (Apache-2.0 or MPL-2.0, of which segl
+ takes Apache-2.0), pako (MIT and Zlib), and Bridge.NET (Apache-2.0), among
+ others.
+
+Files: opt/segl/app/web/dist/drawio/img/* opt/segl/app/web/dist/drawio/shapes/*
+ opt/segl/app/web/dist/drawio/stencils/*
+Copyright: 2006-2026 JGraph Holdings Ltd and draw.io AG
+License: Apache-2.0
+Comment:
+ drawio's icon sets and stencil libraries. Each folder's LICENSE file adds
+ drawio's terms: they may not be used in, distributed for use with, or
+ incorporated into Atlassian products or the Atlassian marketplace, without
+ written permission. segl is none of those.
+
+Files: opt/segl/app/web/dist/drawio/templates/*
+Copyright: 2006-2026 JGraph Holdings Ltd and draw.io AG
+License: CC-BY-4.0
+Comment:
+ drawio's diagram templates. Their LICENSE file is the Creative Commons
+ Attribution 4.0 International Public License, also in
+ /usr/share/doc/segl/drawio-licenses/templates/LICENSE.
+
+Files: opt/segl/app/web/dist/drawio/js/libavoid-js/*
+ opt/segl/app/web/dist/drawio/js/extensions.min.js
+ opt/segl/app/web/dist/drawio/js/integrate.min.js
+Copyright: Monash University and the Adaptagrams authors
+License: LGPL-2.1
+Comment:
+ libavoid, from Adaptagrams (https://github.com/mjwybrow/adaptagrams), which
+ drawio compiles to JavaScript. It routes connector lines around shapes:
+ Arrange > Layout > Orthogonal Routing. The compiled library is in
+ js/libavoid-js/libavoid.min.js, which nothing loads, and inside
+ js/extensions.min.js, which drawio loads at every start, and
+ js/integrate.min.js, which no page of the release loads. The other code of
+ those two files is drawio's (Apache-2.0). js/libavoid-js/README.md says how
+ drawio builds it, and js/libavoid-js/LICENSE is the text, also in
+ /usr/share/doc/segl/drawio-licenses/js/libavoid-js/LICENSE. segl ships the
+ files as drawio releases them (D2-039), at the owner's word of 2026-11-27.
+
+License: CC-BY-4.0
+ The full text is in /usr/share/doc/segl/drawio-licenses/templates/LICENSE.
+
+License: LGPL-2.1
+ On Debian systems, the full text of the GNU Lesser General Public License
+ version 2.1 is in /usr/share/common-licenses/LGPL-2.1. The package also
+ carries it as /usr/share/doc/segl/drawio-licenses/js/libavoid-js/LICENSE.
+
 License: Apache-2.0
  On Debian systems, the full text of the Apache License 2.0 is in
  /usr/share/common-licenses/Apache-2.0. The package also carries it as

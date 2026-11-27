@@ -628,3 +628,18 @@ def test_the_pass_upgrade_records_is_of_the_tree_it_leaves(
     kept = recorded_pass(repo)
     assert kept is not None
     assert kept[0] == work_tree(repo)
+
+
+def test_a_drawio_move_writes_its_version_and_the_new_wars_hash(
+    tree: Path, fake_runner, fake_sources
+) -> None:
+    path = tree / "versions.toml"
+    path.write_text(path.read_text() + f'\n[drawio]\nversion = "32.7.7"\nsha256 = "{"e" * 64}"\n')
+    runner = fake_runner(tree)
+    sources = fake_sources(runner, {"jgraph/drawio": "32.7.8"})
+
+    assert upgrade(tree, runner, sources, TODAY) == 0
+
+    pin = tomllib.loads(path.read_text())["drawio"]
+    assert pin == {"version": "32.7.8", "sha256": "d" * 64}
+    assert sources.digests_asked == ["jgraph/drawio:v32.7.8:draw.war"]

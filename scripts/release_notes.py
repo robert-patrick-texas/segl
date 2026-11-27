@@ -104,6 +104,10 @@ def version_table(doc: dict[str, Any]) -> list[str]:
     if node:
         rows.append(("Node", node))
     rows.append((str(project.get("name", "segl")), str(project.get("version", ""))))
+    # drawio's editor, which the package ships for Diagram mode (D2-039).
+    drawio = doc.get("drawio", {})
+    if drawio.get("version"):
+        rows.append(("drawio", str(drawio["version"])))
     seen: set[str] = set()
     for _ecosystem, _table, name, version in direct_rows(doc):
         if name not in seen:

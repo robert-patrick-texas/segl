@@ -686,6 +686,25 @@ Acceptance: T-024 passes, and T-001 through T-023 still pass by `scripts/e2e.py`
 
 Out of scope, for the next Diagram mode task or later: History and restore on slot 9, Import of `.drawio` files, segl's 12 device kinds and 5 link kinds in drawio's library, cursors, follow mode in Diagram mode (T18), a pen that frees itself after a time, a whiteboard sketch carried into a diagram, and a second diagram slot.
 
+As built (2026-11-27):
+
+- The risk did not happen. drawio 32.7.7's embed mode ran from a scratch server's own origin, at its root and under `/board/`, with every other origin refused, and a patch made in one frame applied in another. One thing had to change: a frame given an empty `xml` makes a page with an id of its own, so another frame's patch named a page it lacked. Every browser loads the same text, and slot 9's empty diagram has one page with the fixed id `segl-page-1`.
+- Loading and drawing asked no other host with or without `stealth=1` and `lockdown=1`. Either one makes drawio's `isOffline()` true, which drops Help's search, support, desktop, and video links, File's Embed formats, and Import from URL. `lockdown` also stops drawio's real-time cache. drawio's logging runs only on drawio's own hosts. The page passes both, with `pwa=0`, `noSaveBtn=1`, `noExitBtn=1`, and `saveAndExit=0`.
+- drawio keeps one `localStorage` key, `.drawio-config`, and sets no cookie. No service worker is registered.
+- Slot 9's head is `{"diagram": xml}`. The room is `DiagramRoom` (`src/segl/diagram.py`), a `Room` that numbers patches and keeps a copy, so the saver writes it unchanged.
+- A patch message carries the page's whole diagram, as drawio's `autosave` hands it over, so the server holds the newest copy it may keep without asking. A patch is `exact` when every patch after its `base` is the sender's own. When it is not, the sender sends a `copy` once its own patch comes back, and `saved` waits for a kept copy that holds the patch. A `copy` that holds every patch is kept even with no new patch: drawio sends one for a change outside the pages.
+- A page knows its own patches by an id it makes (`pid`), not by its connection, so a patch that comes back after a reconnect is still its own. The ones the server never took are sent again at the next join, applied again after a whole diagram.
+- The checksum is compared only after an `exact` patch, while the page holds every patch before it and waits on none of its own. Otherwise it is the sender's alone.
+- Drift: two people who draw at once leave the new shapes in another order in each browser, since drawio's insert names the shape it goes after. A page then loads the whole diagram. Found while measuring: a load resets the view and ends a label being typed, losing the text. So segl's `PostConfig.js` tells the page when a label editor opens and closes and where the diagram is scrolled, and the page asks for the whole diagram only once no label is being edited, then loads it with the same scale and the same point at the top left. A load still shows the first page of a diagram with several pages: drawio's embed messages cannot select another.
+- segl's `PostConfig.js` also tells the page when drawio's read-only view turns on or off, by segl or by drawio's View menu, so the page turns it back where it should be. `PreConfig.js` shows drawio's Network and Cisco sets at first. Both keep what drawio's own files set.
+- The pen: `pen {take}`. Taking it twice tells nobody again. A give-back from anyone but the holder is ignored. A viewer's take is `view_only`. A refused change makes the page load the whole diagram, so it never keeps what the server did not take.
+- Restore and import answer `409` with `diagram_mode` on slot 9. The single-revision and history routes still answer for slot 9.
+- Migration `0004` deletes rows and writes the head. It removes no file under `assets_dir`. It calls `segl_empty_diagram()`, a second function of segl's own beside `segl_zstd`.
+- drawio's files are served with `Cache-Control: no-cache`: their names carry no hash.
+- The build keeps the war and its unpacked files in `~/.cache/segl/drawio` (`SEGL_DRAWIO_CACHE`), and the package build in the docker volume `segl-drawio-cache`.
+- Licenses: the war's `templates/LICENSE` is the Creative Commons Attribution 4.0 license, not the Atlassian terms of `img/`, `shapes/`, and `stencils/`. libavoid's compiled code is in `js/extensions.min.js`, which drawio loads at every start, and in `js/integrate.min.js` and `js/libavoid-js/libavoid.min.js`, which nothing loads. The owner chose on 2026-11-27 to ship it with a notice. segl ships drawio's Apache License from its repository at the tag.
+- The browser tests' empty slot is slot 1, which no test draws on. Slot 9 is `SLOTS.diagram`. The restart test is in `durability.spec.ts` and the viewer's in `access.spec.ts`, beside their kind.
+
 ## T18 — Follow mode
 
 - Status: pending

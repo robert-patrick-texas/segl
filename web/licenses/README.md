@@ -75,3 +75,15 @@ To move to a newer Liberation Sans: fetch the release, check the license record 
 ## When the editor moves
 
 A new `@excalidraw/excalidraw` can bundle a package with no license file, ship another font, or move the font segl replaces. The build stops when `web/fonts/` holds a file the editor no longer ships. `collect-licenses.ts` then fails and names it. Add the text here, with its source in the tables above. For a font, read the `name` table of the shipped file first: records 0 (copyright), 13 (license), and 14 (license address).
+
+## drawio
+
+Diagram mode on slot 9 serves the web files of drawio's release, as released, but for its two settings files (D2-039, `web/scripts/drawio.ts`). The release carries no copy of the Apache License 2.0, under which drawio's code is. `drawio/LICENSE` is `LICENSE` in <https://github.com/jgraph/drawio> at tag `v32.7.7`, SHA-256 `43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1`, fetched on 2026-11-27. The package build installs it as `/usr/share/doc/segl/drawio-licenses/LICENSE`, with the license files the release carries beside it, at their paths in the release:
+
+| Path in the release | What it says |
+|---|---|
+| `img/LICENSE`, `shapes/LICENSE`, `stencils/LICENSE` | drawio's terms for its icon sets and stencils: no use in Atlassian products or the Atlassian marketplace without written permission. End-user diagram output is not restricted. |
+| `templates/LICENSE` | The Creative Commons Attribution 4.0 International Public License, for drawio's templates. |
+| `js/libavoid-js/LICENSE` | The GNU Lesser General Public License version 2.1, for libavoid (Adaptagrams), which drawio compiles to JavaScript. Its code is in `js/libavoid-js/libavoid.min.js`, which nothing loads, in `js/extensions.min.js`, which drawio loads at every start, and in `js/integrate.min.js`, which no page of the release loads. It routes connector lines around shapes (Arrange > Layout > Orthogonal Routing). segl cannot leave it out without changing drawio's files, and the owner chose on 2026-11-27 to ship it with this notice. |
+
+drawio's bundles carry other libraries with their notices inside, as drawio ships them: DOMPurify (Apache-2.0 or MPL-2.0), pako (MIT and Zlib), and Bridge.NET (Apache-2.0), among others. A search of the release's JavaScript on 2026-11-27 found no GPL, AGPL, EPL, or other LGPL text in it.

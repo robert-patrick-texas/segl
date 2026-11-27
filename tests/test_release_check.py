@@ -383,3 +383,48 @@ def test_a_failed_command_names_the_program(tree: Path) -> None:
     with pytest.raises(CommandError, match="status 3"):
         Runner(tree).run(["sh", "-c", "exit 3"])
     assert Runner(tree).run(["sh", "-c", "echo out; echo err >&2"]) == Result(0, "out\n", "err\n")
+
+
+DRAWIO = f'\n[drawio]\nversion = "32.7.7"\nsha256 = "{"e" * 64}"\n'
+
+
+def test_discover_lists_drawio_by_its_github_repository(tree: Path) -> None:
+    path = tree / "versions.toml"
+    path.write_text(path.read_text() + DRAWIO)
+
+    assert Component("drawio", "jgraph/drawio", "32.7.7") in discover(tree)
+    assert Component("drawio", "jgraph/drawio", "32.7.7").label == "drawio jgraph/drawio 32.7.7"
+
+
+def test_drawio_is_read_from_its_github_releases_without_the_v(tree: Path, fake_runner) -> None:
+    release = {
+        "tag_name": "v32.7.8",
+        "assets": [
+            {"name": "draw.war", "digest": "sha256:" + "a" * 64},
+            {"name": "drawio.zip", "digest": "sha256:" + "b" * 64},
+        ],
+    }
+    runner = fake_runner(
+        tree,
+        {
+            ("gh", "api", "repos/jgraph/drawio/releases/latest"): json.dumps(release),
+            ("gh", "api", "repos/jgraph/drawio/releases/tags/v32.7.8"): json.dumps(release),
+            ("gh", "api", "repos/jgraph/drawio/releases/tags/v0.0.1"): json.dumps({"assets": []}),
+            ("gh", "api", "repos/jgraph/drawio/releases/tags/v9"): CommandError("Not Found"),
+        },
+    )
+    sources = Sources(runner)
+
+    assert sources.latest(Component("drawio", "jgraph/drawio", "32.7.7")) == "32.7.8"
+    assert sources.release_digest("jgraph/drawio", "v32.7.8", "draw.war") == "a" * 64
+    for tag in ("v0.0.1", "v9"):
+        with pytest.raises(LookupFailed):
+            sources.release_digest("jgraph/drawio", tag, "draw.war")
+
+
+def test_a_newer_drawio_fails_the_gate(tree: Path, fake_runner, fake_sources) -> None:
+    path = tree / "versions.toml"
+    path.write_text(path.read_text() + DRAWIO)
+    sources = fake_sources(fake_runner(tree), {"jgraph/drawio": "32.7.8"})
+
+    assert state_of(tree, sources, "jgraph/drawio") == NEWER
