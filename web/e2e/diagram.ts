@@ -32,11 +32,17 @@ export function shapes(page: Page): Locator {
 	return drawio(page).locator('.geSidebarContainer .geSidebar a');
 }
 
+/**
+ * How long drawio may take to start in its frame. It loads 22 MB of script,
+ * which took over 5 seconds on a busy CI runner (run 46038213846).
+ */
+export const DRAWIO_START_MS = 30_000;
+
 /** Open slot 9, or another path to it, and wait until drawio and the room are ready. */
 export async function openDiagram(page: Page, path = `s/${SLOTS.diagram}`): Promise<void> {
 	await page.goto(path);
 	await page.waitForFunction(() => window.SEGL_DIAGRAM !== undefined);
-	await expect(shapes(page).first()).toBeVisible();
+	await expect(shapes(page).first()).toBeVisible({ timeout: DRAWIO_START_MS });
 	await expectLive(page);
 }
 
