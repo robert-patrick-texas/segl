@@ -15,6 +15,8 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { beats, type WireElement } from './elements.ts';
 import { RETRY_MS, type CanvasFile, type FileRef, type FileTransport } from './files.ts';
+import { VIEW_INTERVAL_MS } from './follow.ts';
+import type { Participant, View } from './protocol.ts';
 import {
 	CollabSession,
 	CURSOR_INTERVAL_MS,
@@ -130,6 +132,19 @@ class FakeEditor implements SceneEditor {
 
 	showPeers(peers: readonly Peer[]): void {
 		this.peers = [...peers];
+	}
+
+	/** The editor's sign of a follow: whom, or null. */
+	followed: Participant | null = null;
+	/** The views shown, in order. */
+	shown: View[] = [];
+
+	showFollow(person: Participant | null): void {
+		this.followed = person;
+	}
+
+	showView(view: View): void {
+		this.shown.push(view);
 	}
 
 	/** The person drew or changed these. */
@@ -311,7 +326,8 @@ describe('joining', () => {
 			title: 'Workspace 3',
 			// Not until the scene has come: the canvas is still the page's own load.
 			epoch: null,
-			participants: [OTHER, ME]
+			participants: [OTHER, ME],
+			following: null
 		});
 	});
 
@@ -2171,5 +2187,160 @@ describe('what the server sends that is not a message', () => {
 		};
 
 		expect(() => harness.session.rename('Ada')).not.toThrow();
+	});
+});
+
+describe('follow mode (T18)', () => {
+	const THIRD = { connectionId: 'third', displayName: 'Guest3' };
+	const AREA = { x: 10, y: 20, width: 800, height: 600 };
+
+	/** Live on a slot with two others, the scene empty. */
+	function together(): { harness: Harness; socket: FakeSocket } {
+		const harness = start();
+		const socket = harness.socket();
+		socket.open();
+		welcome(socket, { participants: [ME, OTHER, THIRD] });
+		socket.receive({ type: 'scene', epoch: 1, elements: [], files: [] });
+		socket.take();
+		return { harness, socket };
+	}
+
+	test('following someone tells the server and shows the editor’s own sign', () => {
+		const { harness, socket } = together();
+
+		harness.session.follow('other');
+
+		expect(socket.take()).toEqual([{ type: 'follow', connectionId: 'other' }]);
+		expect(harness.editor.followed).toEqual(OTHER);
+		expect(harness.state().following).toBe('other');
+	});
+
+	test('someone not on the slot, or this browser, is not followed', () => {
+		const { harness, socket } = together();
+
+		harness.session.follow('gone');
+		harness.session.follow('me');
+
+		expect(socket.take()).toEqual([]);
+		expect(harness.state().following).toBeNull();
+	});
+
+	test('the view of the one followed is shown, and anyone else’s is not', () => {
+		const { harness, socket } = together();
+		harness.session.follow('other');
+
+		socket.receive({ type: 'view', connectionId: 'third', view: AREA });
+		socket.receive({ type: 'view', connectionId: 'other', view: AREA });
+
+		expect(harness.editor.shown).toEqual([AREA]);
+	});
+
+	test('when the editor ends the follow, the server is told to stop', () => {
+		const { harness, socket } = together();
+		harness.session.follow('other');
+		socket.take();
+
+		// The person scrolled, zoomed, clicked, or pressed the editor's own stop.
+		harness.session.unfollowed('third');
+		expect(socket.take()).toEqual([]);
+		harness.session.unfollowed('other');
+
+		expect(socket.take()).toEqual([{ type: 'follow', connectionId: null }]);
+		expect(harness.state().following).toBeNull();
+		socket.receive({ type: 'view', connectionId: 'other', view: AREA });
+		expect(harness.editor.shown).toEqual([]);
+	});
+
+	test('following another ends the first, and the editor’s end of it is not sent again', () => {
+		const { harness, socket } = together();
+		harness.session.follow('other');
+		harness.session.follow('third');
+		harness.session.unfollowed('other');
+
+		expect(socket.take()).toEqual([
+			{ type: 'follow', connectionId: 'other' },
+			{ type: 'follow', connectionId: 'third' }
+		]);
+		expect(harness.editor.followed).toEqual(THIRD);
+	});
+
+	test('stopping from the bar clears the editor’s sign', () => {
+		const { harness, socket } = together();
+		harness.session.follow('other');
+		harness.session.follow(null);
+
+		expect(socket.take()).toEqual([
+			{ type: 'follow', connectionId: 'other' },
+			{ type: 'follow', connectionId: null }
+		]);
+		expect(harness.editor.followed).toBeNull();
+	});
+
+	test('the follow ends when the one followed leaves', () => {
+		const { harness, socket } = together();
+		harness.session.follow('other');
+		socket.take();
+
+		socket.receive({ type: 'presence-end', connectionId: 'other' });
+
+		expect(harness.state().following).toBeNull();
+		expect(harness.editor.followed).toBeNull();
+		// The server ended it already.
+		expect(socket.take()).toEqual([]);
+	});
+
+	test('a refused follow ends here and at the server', () => {
+		const { harness, socket } = together();
+		harness.session.follow('other');
+		socket.take();
+
+		socket.receive({ type: 'error', error: 'cannot_follow', message: 'No.' });
+
+		expect(socket.take()).toEqual([{ type: 'follow', connectionId: null }]);
+		expect(harness.state().following).toBeNull();
+		expect(harness.editor.followed).toBeNull();
+	});
+
+	test('the view goes out only while someone follows: at once, then five a second', () => {
+		const { harness, socket } = together();
+		const later = { ...AREA, x: 30 };
+		const last = { ...AREA, x: 50 };
+
+		harness.session.viewChanged(AREA);
+		expect(socket.take()).toEqual([]);
+
+		socket.receive({ type: 'followers', count: 1 });
+		expect(socket.take()).toEqual([{ type: 'view', view: AREA }]);
+		harness.session.viewChanged(later);
+		harness.session.viewChanged(last);
+		expect(socket.take()).toEqual([]);
+		vi.advanceTimersByTime(VIEW_INTERVAL_MS);
+		expect(socket.take()).toEqual([{ type: 'view', view: last }]);
+
+		socket.receive({ type: 'followers', count: 0 });
+		harness.session.viewChanged(AREA);
+		vi.advanceTimersByTime(VIEW_INTERVAL_MS);
+		expect(socket.take()).toEqual([]);
+	});
+
+	test('a dropped socket ends a follow either way', () => {
+		const { harness, socket } = together();
+		harness.session.follow('other');
+		socket.receive({ type: 'followers', count: 1 });
+		harness.session.viewChanged(AREA);
+
+		socket.drop();
+		expect(harness.state().following).toBeNull();
+		expect(harness.editor.followed).toBeNull();
+
+		vi.advanceTimersByTime(RETRY_DELAYS_MS[0]!);
+		const next = harness.socket();
+		next.open();
+		welcome(next, { participants: [ME, OTHER] });
+		next.take();
+		// The new connection has nobody following it.
+		harness.session.viewChanged({ ...AREA, x: 99 });
+		vi.advanceTimersByTime(VIEW_INTERVAL_MS);
+		expect(next.take()).toEqual([]);
 	});
 });

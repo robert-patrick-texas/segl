@@ -18,8 +18,9 @@
  * drawio draws in its own frame, so the browser tests and the measures of
  * D2-040 read the diagram through this: `xml()` asks the frame for its whole
  * diagram, and `counts()` says how often this page found its diagram had
- * drifted and loaded the whole of it again. It changes nothing, and shows
- * nothing the page's own user cannot already see.
+ * drifted and loaded the whole of it again. `view()` is the area the frame
+ * shows, as it last said, for follow mode (T18). It changes nothing, and
+ * shows nothing the page's own user cannot already see.
  */
 import type { DiagramFrameLike } from './frame.ts';
 import type { DiagramSession } from './session.ts';
@@ -29,6 +30,8 @@ export interface DiagramHandle {
 	xml(): Promise<string>;
 	/** `{ mismatches, reloads }`, as JSON text. */
 	counts(): string;
+	/** `{ x, y, width, height, page }` of the frame, as JSON text, or `null`. */
+	view(): string;
 }
 
 declare global {
@@ -41,7 +44,8 @@ declare global {
 export function installDiagramHandle(frame: DiagramFrameLike, session: DiagramSession): () => void {
 	const handle: DiagramHandle = {
 		xml: () => frame.xml(),
-		counts: () => JSON.stringify(session.counts)
+		counts: () => JSON.stringify(session.counts),
+		view: () => JSON.stringify(session.view())
 	};
 	window.SEGL_DIAGRAM = handle;
 	return () => {

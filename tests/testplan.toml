@@ -192,3 +192,26 @@ browser = [
     "durability.spec.ts > slot 9’s diagram is there after the server is killed and restarted",
     "access.spec.ts > a browser without a pass watches Diagram mode change and changes nothing",
 ]
+
+[rows.T-025]
+pytest = ["tests/test_follow.py"]
+browser = [
+    "follow.spec.ts > on a whiteboard > a follower’s view matches the leader’s as the leader scrolls and zooms",
+    "follow.spec.ts > on a whiteboard > the follower scrolls, and the follow ends",
+    "follow.spec.ts > on a whiteboard > pressing the name again, or the editor’s own stop, ends the follow",
+    "follow.spec.ts > on a whiteboard > the leader leaves, and the follow ends",
+    "follow.spec.ts > on slot 9 > a take of the pen starts a follow of the holder, who leads until the watcher looks away",
+    "follow.spec.ts > on slot 9 > the bar’s stop ends a follow",
+]
+
+[rows.T-026]
+pytest = [
+    "tests/test_follow.py::test_on_slot_9_a_cursor_reaches_the_others_with_its_page",
+    "tests/test_follow.py::test_on_slot_9_a_cursor_whose_page_is_not_a_short_text_is_refused",
+    "tests/test_follow.py::test_on_slot_9_a_page_of_the_longest_length_is_taken",
+    "tests/test_follow.py::test_a_cursor_on_slot_9_names_its_page_at_the_socket",
+]
+browser = [
+    "follow.spec.ts > cursors on slot 9 > each browser shows the other’s cursor with its name, on the point under the other’s pointer",
+    "follow.spec.ts > cursors on slot 9 > a cursor on another page of the diagram does not show, and one who leaves takes theirs",
+]

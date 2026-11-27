@@ -13,7 +13,9 @@
 // limitations under the License.
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { RETRY_DELAYS_MS, type SocketLike } from '../collab/session.ts';
+import type { View } from '../collab/protocol.ts';
+import { CURSOR_INTERVAL_MS, RETRY_DELAYS_MS, type SocketLike } from '../collab/session.ts';
+import { cursorColor, type FrameCursor } from './cursors.ts';
 import type { DiagramFrameLike, DiagramView, PatchResult } from './frame.ts';
 import type { DrawioPatch, NumberedPatch } from './protocol.ts';
 import { DiagramSession, type DiagramState } from './session.ts';
@@ -106,6 +108,18 @@ class FakeFrame implements DiagramFrameLike {
 
 	setReadOnly(value: boolean): void {
 		this.readOnly = value;
+	}
+
+	/** The views shown, and the cursors drawn each time, in order. */
+	readonly shown: (View | null)[] = [];
+	readonly drawn: FrameCursor[][] = [];
+
+	showView(view: View | null): void {
+		this.shown.push(view);
+	}
+
+	showCursors(cursors: readonly FrameCursor[]): void {
+		this.drawn.push([...cursors]);
 	}
 }
 
@@ -557,5 +571,212 @@ describe('the status', () => {
 		socket.receive({ type: 'presence-end', connectionId: 'b' });
 
 		expect(states.at(-1)?.participants).toEqual([{ connectionId: 'me', displayName: 'Ann' }]);
+	});
+});
+
+describe('follow mode and cursors (T18)', () => {
+	const ME = { connectionId: 'me', displayName: 'Alpha1' };
+	const OTHER = { connectionId: 'other', displayName: 'Bravo2' };
+	const THIRD = { connectionId: 'third', displayName: null };
+	const AREA = { x: 10, y: 20, width: 800, height: 600, page: 'segl-page-1' };
+
+	/** Live on slot 9 with the others, and the pen where `pen` says. */
+	function together(pen: string | null = null): FakeSocket {
+		const socket = start();
+		socket.receive(welcome('me', { participants: [ME, OTHER, THIRD], pen }));
+		return socket;
+	}
+
+	test('the others’ cursors are drawn on their page, and go when they leave', () => {
+		const socket = together();
+		socket.take();
+
+		socket.receive({ type: 'presence', ...OTHER, cursor: { x: 5, y: 6, page: 'segl-page-1' } });
+		socket.receive({ type: 'presence', ...THIRD, cursor: { x: 7, y: 8, page: null } });
+		// This browser's own presence, after a rename, draws no cursor.
+		socket.receive({ type: 'presence', ...ME, cursor: null });
+
+		expect(frame.drawn.at(-1)).toEqual([
+			{ id: 'other', name: 'Bravo2', color: cursorColor('other'), x: 5, y: 6, page: 'segl-page-1' },
+			{ id: 'third', name: 'Unnamed', color: cursorColor('third'), x: 7, y: 8, page: null }
+		]);
+
+		socket.receive({ type: 'presence-end', connectionId: 'other' });
+		expect(frame.drawn.at(-1)?.map((cursor) => cursor.id)).toEqual(['third']);
+		socket.drop();
+		expect(frame.drawn.at(-1)).toEqual([]);
+	});
+
+	test('this browser’s pointer goes as presence, at most once every 50 ms', () => {
+		vi.useFakeTimers();
+		const socket = together();
+		socket.take();
+
+		session.pointer({ x: 1, y: 1, page: 'segl-page-1' });
+		session.pointer({ x: 2, y: 2, page: 'segl-page-1' });
+		session.pointer({ x: 3, y: 3, page: 'segl-page-1' });
+		expect(socket.take()).toEqual([
+			{ type: 'presence', cursor: { x: 1, y: 1, page: 'segl-page-1' } }
+		]);
+		vi.advanceTimersByTime(CURSOR_INTERVAL_MS);
+		expect(socket.take()).toEqual([
+			{ type: 'presence', cursor: { x: 3, y: 3, page: 'segl-page-1' } }
+		]);
+	});
+
+	test('a take of the pen by someone else starts a follow of the holder, once', () => {
+		const socket = together();
+		socket.take();
+
+		socket.receive({ type: 'pen', holder: 'other' });
+		socket.receive({ type: 'pen', holder: 'other' });
+
+		expect(socket.take()).toEqual([{ type: 'follow', connectionId: 'other' }]);
+		expect(states.at(-1)?.following).toBe('other');
+	});
+
+	test('one who looks away stays away until they press the name, or the pen moves', () => {
+		const socket = together();
+		socket.receive({ type: 'pen', holder: 'other' });
+		socket.take();
+
+		session.looked();
+		expect(socket.take()).toEqual([{ type: 'follow', connectionId: null }]);
+		session.looked();
+		expect(socket.take()).toEqual([]);
+
+		session.follow('other');
+		expect(socket.take()).toEqual([{ type: 'follow', connectionId: 'other' }]);
+		session.looked();
+		socket.receive({ type: 'pen', holder: 'third' });
+		expect(socket.take()).toEqual([
+			{ type: 'follow', connectionId: null },
+			{ type: 'follow', connectionId: 'third' }
+		]);
+	});
+
+	test('one who looked away stays away after a reconnect, while the same person holds the pen', () => {
+		vi.useFakeTimers();
+		const socket = together('other');
+		session.looked();
+		socket.take();
+
+		socket.drop();
+		vi.advanceTimersByTime(RETRY_DELAYS_MS[0]!);
+		const next = sockets.at(-1)!;
+		expect(next).not.toBe(socket);
+		next.open();
+		next.receive(welcome('me', { participants: [ME, OTHER, THIRD], pen: 'other' }));
+
+		expect(next.take()).toEqual([]);
+		expect(states.at(-1)?.following).toBeNull();
+	});
+
+	test('when the pen comes back, the follow it started ends', () => {
+		const socket = together();
+		socket.receive({ type: 'pen', holder: 'other' });
+		socket.receive({ type: 'pen', holder: null });
+
+		expect(socket.take()).toEqual([
+			{ type: 'follow', connectionId: 'other' },
+			{ type: 'follow', connectionId: null }
+		]);
+		expect(states.at(-1)?.following).toBeNull();
+	});
+
+	test('a follow the person chose stays when the pen comes back', () => {
+		const socket = together();
+		session.follow('third');
+		socket.receive({ type: 'pen', holder: 'other' });
+		session.follow('third');
+		socket.receive({ type: 'pen', holder: null });
+
+		expect(socket.take()).toEqual([
+			{ type: 'follow', connectionId: 'third' },
+			{ type: 'follow', connectionId: 'other' },
+			{ type: 'follow', connectionId: 'third' }
+		]);
+	});
+
+	test('the one who takes the pen follows nobody: their own follow ends first', () => {
+		const socket = together();
+		session.follow('other');
+
+		session.pen(true);
+		socket.receive({ type: 'pen', holder: 'me' });
+
+		expect(socket.take()).toEqual([
+			{ type: 'follow', connectionId: 'other' },
+			{ type: 'follow', connectionId: null },
+			{ type: 'pen', take: true }
+		]);
+	});
+
+	test('a browser that comes while someone holds the pen follows the holder', () => {
+		const socket = together('other');
+		expect(socket.take()).toEqual([{ type: 'follow', connectionId: 'other' }]);
+	});
+
+	test('the view of the one followed is shown, and again after a whole diagram loads', async () => {
+		const socket = together();
+		socket.receive(since(0));
+		await settle();
+		session.follow('other');
+
+		socket.receive({ type: 'view', connectionId: 'third', view: AREA });
+		socket.receive({ type: 'view', connectionId: 'other', view: AREA });
+		expect(frame.shown).toEqual([AREA]);
+
+		// A repair puts the person's own view back with the diagram.
+		socket.receive(whole('<mxfile>again</mxfile>', 0));
+		await settle();
+		expect(frame.shown).toEqual([AREA, AREA]);
+	});
+
+	test('the view goes out only while someone follows this browser', () => {
+		vi.useFakeTimers();
+		const socket = together();
+		socket.take();
+
+		session.viewChanged(AREA);
+		expect(socket.take()).toEqual([]);
+		socket.receive({ type: 'followers', count: 1 });
+		expect(socket.take()).toEqual([{ type: 'view', view: AREA }]);
+	});
+
+	test('a refused follow ends here and at the server', () => {
+		const socket = together();
+		session.follow('other');
+		socket.take();
+
+		socket.receive({ type: 'error', error: 'cannot_follow', message: 'No.' });
+
+		expect(socket.take()).toEqual([{ type: 'follow', connectionId: null }]);
+		expect(states.at(-1)?.following).toBeNull();
+		// The frame forgets the view it was to show: a page that comes later is not turned to.
+		expect(frame.shown).toEqual([null]);
+	});
+
+	test('this browser never follows itself, even after its own presence', () => {
+		const socket = together();
+		socket.receive({ type: 'presence', ...ME, cursor: { x: 1, y: 2, page: null } });
+		socket.take();
+
+		session.follow('me');
+		socket.receive({ type: 'pen', holder: 'me' });
+
+		expect(socket.take()).toEqual([]);
+		expect(frame.drawn.at(-1)).toEqual([]);
+	});
+
+	test('the follow ends when the one followed leaves, and with a dropped socket', () => {
+		const socket = together();
+		session.follow('other');
+		socket.receive({ type: 'presence-end', connectionId: 'other' });
+		expect(states.at(-1)?.following).toBeNull();
+
+		session.follow('third');
+		socket.drop();
+		expect(states.at(-1)?.following).toBeNull();
 	});
 });

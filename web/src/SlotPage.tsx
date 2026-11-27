@@ -190,6 +190,8 @@ export function SlotPage({ config, slot, displayName, editPass }: SlotPageProps)
 				status={room.status}
 				participants={room.participants}
 				self={room.connectionId}
+				following={room.following}
+				onFollow={isDiagram ? diagram.onFollow : collab.onFollow}
 				canEdit={!viewOnly}
 				onRetitle={retitle}
 				epoch={room.epoch}
@@ -217,6 +219,7 @@ export function SlotPage({ config, slot, displayName, editPass }: SlotPageProps)
 							rootUrl={config.rootUrl}
 							onFrame={setFrame}
 							onEdit={diagram.onEdit}
+							watcher={diagram.watcher}
 						/>
 					</Suspense>
 				)}
@@ -231,6 +234,8 @@ export function SlotPage({ config, slot, displayName, editPass }: SlotPageProps)
 							onEditor={collab.onEditor}
 							onChange={collab.onChange}
 							onCursor={collab.onCursor}
+							onView={collab.onView}
+							onUnfollow={collab.onUnfollow}
 						/>
 					</Suspense>
 				)}

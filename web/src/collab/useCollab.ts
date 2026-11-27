@@ -19,7 +19,7 @@ import { browserStorage } from '../slots.ts';
 import type { WireElement } from './elements.ts';
 import type { FileRef } from './files.ts';
 import { readClientId } from './identity.ts';
-import type { Cursor } from './protocol.ts';
+import type { Cursor, View } from './protocol.ts';
 import { CollabSession, INITIAL_STATE, type SceneEditor, type SessionState } from './session.ts';
 import { httpTransport } from './transport.ts';
 
@@ -42,10 +42,14 @@ export interface CollabOptions {
 
 export interface Collab {
 	state: SessionState;
-	/** Give these three to the canvas. */
+	/** Give these five to the canvas. */
 	onEditor: (editor: SceneEditor | null) => void;
 	onChange: () => void;
 	onCursor: (cursor: Cursor) => void;
+	onView: (view: View) => void;
+	onUnfollow: (connectionId: string) => void;
+	/** Follow this connection's view, or stop: null (T18). For the bar. */
+	onFollow: (connectionId: string | null) => void;
 }
 
 /**
@@ -136,11 +140,17 @@ export function useCollab({
 
 	const onChange = useCallback(() => session.current?.localChange(), []);
 	const onCursor = useCallback((cursor: Cursor) => session.current?.cursor(cursor), []);
+	const onView = useCallback((view: View) => session.current?.viewChanged(view), []);
+	const onUnfollow = useCallback((id: string) => session.current?.unfollowed(id), []);
+	const onFollow = useCallback((id: string | null) => session.current?.follow(id), []);
 
 	return {
 		state: held !== null && held.slot === slot ? held.state : INITIAL_STATE,
 		onEditor: setEditor,
 		onChange,
-		onCursor
+		onCursor,
+		onView,
+		onUnfollow,
+		onFollow
 	};
 }

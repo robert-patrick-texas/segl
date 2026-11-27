@@ -13,6 +13,7 @@
 // limitations under the License.
 
 import { describe, expect, test } from 'vitest';
+import type { Cursor, View } from '../collab/protocol.ts';
 import {
 	DiagramFrame,
 	drawioAddress,
@@ -27,9 +28,15 @@ const ORIGIN = 'https://dev.example.com';
 class FakeWindow {
 	readonly posted: Record<string, unknown>[] = [];
 	readonly origins: string[] = [];
+	/** segl's own messages, which go as objects and not as text. */
+	readonly objects: Record<string, unknown>[] = [];
 
-	postMessage(message: string, targetOrigin: string): void {
-		this.posted.push(JSON.parse(message) as Record<string, unknown>);
+	postMessage(message: unknown, targetOrigin: string): void {
+		if (typeof message === 'string') {
+			this.posted.push(JSON.parse(message) as Record<string, unknown>);
+		} else {
+			this.objects.push(message as Record<string, unknown>);
+		}
 		this.origins.push(targetOrigin);
 	}
 
@@ -41,15 +48,21 @@ class FakeWindow {
 function setUp() {
 	const window = new FakeWindow();
 	const edits: DiagramEdit[] = [];
+	const views: View[] = [];
+	const pointers: Cursor[] = [];
+	let looks = 0;
 	const frame = new DiagramFrame({
 		target: () => window,
 		origin: ORIGIN,
-		onEdit: (edit) => edits.push(edit)
+		onEdit: (edit) => edits.push(edit),
+		onView: (view) => views.push(view),
+		onPointer: (cursor) => pointers.push(cursor),
+		onLooked: () => (looks += 1)
 	});
 	/** drawio said something. */
 	const say = (message: unknown, source: unknown = window, origin = ORIGIN) =>
 		frame.handle({ source, origin, data: JSON.stringify(message) });
-	return { window, edits, frame, say };
+	return { window, edits, frame, say, views, pointers, looks: () => looks };
 }
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -324,5 +337,62 @@ describe('a person’s view and typing', () => {
 				scroll: { x: 40, y: 60 }
 			}
 		]);
+	});
+});
+
+describe('follow mode and cursors (T18)', () => {
+	const AREA = { x: -5, y: 10, width: 640, height: 480, page: 'segl-page-1' };
+
+	test('the view, the pointer, and a look of the person’s own reach the page', () => {
+		const { say, views, pointers, looks } = setUp();
+
+		say({ event: 'view', view: AREA });
+		say({ event: 'pointer', x: 12.5, y: -3, page: 'segl-page-1' });
+		say({ event: 'pointer', x: 1, y: 2, page: null });
+		say({ event: 'looked' });
+
+		expect(views).toEqual([AREA]);
+		expect(pointers).toEqual([
+			{ x: 12.5, y: -3, page: 'segl-page-1' },
+			{ x: 1, y: 2, page: null }
+		]);
+		expect(looks()).toBe(1);
+	});
+
+	test('a report that is not one, or from another window, is dropped', () => {
+		const { say, views, pointers, looks } = setUp();
+
+		say({ event: 'view', view: { ...AREA, width: 0 } });
+		say({ event: 'view' });
+		say({ event: 'pointer', x: 'left', y: 2 });
+		say({ event: 'view', view: AREA }, {});
+		say({ event: 'looked' }, {}, ORIGIN);
+		say({ event: 'pointer', x: 1, y: 2 }, undefined, 'https://other.example.net');
+
+		expect(views).toEqual([]);
+		expect(pointers).toEqual([]);
+		expect(looks()).toBe(0);
+	});
+
+	test('a view to show and the cursors to draw go to the frame as segl’s own objects', async () => {
+		const { window, frame, say } = setUp();
+		const cursor = { id: 'b', name: 'Bea', color: 'hsl(0, 100%, 83%)', x: 1, y: 2, page: null };
+
+		// Not before drawio is ready: nothing in the frame would take them.
+		frame.showView(AREA);
+		expect(window.objects).toEqual([]);
+		say({ event: 'init' });
+		await flush();
+
+		frame.showView(AREA);
+		frame.showCursors([cursor]);
+
+		expect(window.objects).toEqual([
+			{ segl: 'view', view: AREA },
+			{ segl: 'cursors', cursors: [cursor] }
+		]);
+		expect(window.origins.at(-1)).toBe(ORIGIN);
+		// None of drawio's actions was posted for them.
+		expect(window.take()).toEqual([]);
 	});
 });

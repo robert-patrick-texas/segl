@@ -20,10 +20,26 @@
 import { isWireElement, type WireElement } from './elements.ts';
 import { parseFileRefs, type FileRef } from './files.ts';
 
-/** A cursor, in the canvas's own coordinates. */
+/**
+ * A cursor, in the canvas's own coordinates. On slot 9 it is in the diagram's,
+ * with the id of the diagram's page it is on, or null when drawio named none.
+ */
 export interface Cursor {
 	x: number;
 	y: number;
+	page?: string | null;
+}
+
+/**
+ * The area a browser shows, in the canvas's coordinates, and on slot 9 the
+ * diagram's, with its page (T18). Its width and height are more than 0.
+ */
+export interface View {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+	page?: string | null;
 }
 
 /**
@@ -61,6 +77,10 @@ export type ServerMessage =
 	| { type: 'slot'; slot: number; title: string }
 	| ({ type: 'presence'; cursor: Cursor | null } & Participant)
 	| { type: 'presence-end'; connectionId: string }
+	/** How many connections follow this one now. */
+	| { type: 'followers'; count: number }
+	/** What the connection this one follows shows now. */
+	| { type: 'view'; connectionId: string; view: View }
 	| { type: 'error'; error: string; message: string };
 
 /**
@@ -104,7 +124,11 @@ export type ClientMessage =
 	| { type: 'elements'; epoch: number; elements: WireElement[]; seq: number }
 	| { type: 'files'; epoch: number; files: FileRef[]; seq: number }
 	| { type: 'presence'; cursor: Cursor | null }
-	| { type: 'rename'; displayName: string };
+	| { type: 'rename'; displayName: string }
+	/** Follow this connection's view, or stop: null. */
+	| { type: 'follow'; connectionId: string | null }
+	/** What this browser shows, for the connections that follow it. */
+	| { type: 'view'; view: View };
 
 type Fields = Record<string, unknown>;
 
@@ -120,11 +144,39 @@ function participant(value: unknown): Participant | null {
 	return { connectionId, displayName };
 }
 
+/** The page a cursor or a view names: its id, null, or undefined when it names none. */
+function pageOf(value: Fields): string | null | undefined | false {
+	if (!('page' in value)) return undefined;
+	const { page } = value;
+	return page === null || (typeof page === 'string' && page !== '') ? page : false;
+}
+
 function cursor(value: unknown): Cursor | null | undefined {
 	if (value === null) return null;
 	if (!isFields(value)) return undefined;
 	const { x, y } = value;
-	return Number.isFinite(x) && Number.isFinite(y) ? { x: x as number, y: y as number } : undefined;
+	const page = pageOf(value);
+	if (!Number.isFinite(x) || !Number.isFinite(y) || page === false) return undefined;
+	const point: Cursor = { x: x as number, y: y as number };
+	if (page !== undefined) point.page = page;
+	return point;
+}
+
+/** Return a view a message carries, or null when it is not one. */
+export function parseView(value: unknown): View | null {
+	if (!isFields(value)) return null;
+	const { x, y, width, height } = value;
+	const page = pageOf(value);
+	if (![x, y, width, height].every(Number.isFinite) || page === false) return null;
+	if (!((width as number) > 0 && (height as number) > 0)) return null;
+	const view: View = {
+		x: x as number,
+		y: y as number,
+		width: width as number,
+		height: height as number
+	};
+	if (page !== undefined) view.page = page;
+	return view;
 }
 
 function elements(value: unknown): WireElement[] | null {
@@ -224,6 +276,17 @@ export function parseServerMessage(text: unknown): ServerMessage | null {
 			const { connectionId } = message;
 			if (typeof connectionId !== 'string') return null;
 			return { type: 'presence-end', connectionId };
+		}
+		case 'followers': {
+			const { count } = message;
+			if (!Number.isInteger(count) || (count as number) < 0) return null;
+			return { type: 'followers', count: count as number };
+		}
+		case 'view': {
+			const { connectionId } = message;
+			const view = parseView(message['view']);
+			if (typeof connectionId !== 'string' || view === null) return null;
+			return { type: 'view', connectionId, view };
 		}
 		case 'error': {
 			const { error, message: said } = message;

@@ -69,6 +69,11 @@ MAX_MARK_LENGTH = 64
 # The count at the end of a mark, as the room writes one.
 _COUNT = re.compile(r"[0-9]{1,20}")
 
+# The longest id of a diagram's page that a cursor or a view may name (slot 9).
+MAX_PAGE_LENGTH = 128
+
+CANNOT_FOLLOW = "Follow another connection on this slot, one that does not follow you."
+
 
 def new_start() -> str:
     """Return a value for one slot's marks that no earlier process used."""
@@ -178,6 +183,7 @@ class Connection:
 
     It has no color. The editor draws a connection's cursor in a color it works
     out from the connection id, the same in every browser, and takes no other.
+    Diagram mode works out the same color in each browser (T18).
     """
 
     def __init__(
@@ -202,7 +208,9 @@ class Connection:
         self._clock = clock
         # The room sets this when the connection joins.
         self.id = ""
-        self.cursor: dict[str, float] | None = None
+        self.cursor: dict[str, Any] | None = None
+        # The connection whose view this one follows, or None (T18).
+        self.following: Connection | None = None
         # The number of this connection's newest message that is waiting to
         # be called saved, or None when none is.
         self.awaiting: int | None = None
@@ -258,23 +266,60 @@ def named_files(files: Iterable[FileEntry], elements: Iterable[object]) -> list[
     return [entry for entry in files if entry["id"] in named]
 
 
-def _cursor(value: object) -> dict[str, float] | None:
-    """Return a cursor a browser sent as ``{"x", "y"}``, in scene coordinates.
+def _numbers(value: object, keys: tuple[str, ...], *, pages: bool) -> dict[str, Any]:
+    """Return the finite numbers of ``keys`` in an object a browser sent.
+
+    With ``pages``, the object may also name a page of the diagram, ``page``:
+    its id, or null. Without, it names none.
 
     Raises:
-        ValueError: When it is not two finite numbers.
+        ValueError: When it is not such an object.
     """
     if not isinstance(value, dict):
         raise ValueError
-    point: dict[str, float] = {}
-    for axis in ("x", "y"):
-        number = value.get(axis)
+    found: dict[str, Any] = {}
+    for key in keys:
+        number = value.get(key)
         if isinstance(number, bool) or not isinstance(number, int | float):
             raise ValueError
         if not math.isfinite(number):
             raise ValueError
-        point[axis] = number
-    return point
+        found[key] = number
+    page = value.get("page")
+    if page is not None:
+        if not pages or not isinstance(page, str) or not 1 <= len(page) <= MAX_PAGE_LENGTH:
+            raise ValueError
+        found["page"] = page
+    elif pages:
+        found["page"] = None
+    return found
+
+
+def parse_cursor(value: object, *, pages: bool = False) -> dict[str, Any]:
+    """Return a cursor a browser sent as ``{"x", "y"}``, in scene coordinates.
+
+    On slot 9 it is in the diagram's coordinates, with its page: ``{"x", "y",
+    "page"}``.
+
+    Raises:
+        ValueError: When it is not two finite numbers, with a page on slot 9.
+    """
+    return _numbers(value, ("x", "y"), pages=pages)
+
+
+def parse_view(value: object, *, pages: bool = False) -> dict[str, Any]:
+    """Return the area a browser shows, ``{"x", "y", "width", "height"}``.
+
+    It is in the canvas's coordinates, and on slot 9 the diagram's, with its
+    page. Its width and height are more than 0.
+
+    Raises:
+        ValueError: When it is not such an area.
+    """
+    view = _numbers(value, ("x", "y", "width", "height"), pages=pages)
+    if not (view["width"] > 0 and view["height"] > 0):
+        raise ValueError
+    return view
 
 
 def _nothing() -> None:
@@ -311,6 +356,9 @@ class Room:
     winner, a ``files`` message with a new file, and a restore or an import.
     It starts at 0, from the head, and only goes up.
     """
+
+    # Whether a cursor and a view name a page of a diagram: slot 9's do.
+    pages = False
 
     def __init__(
         self,
@@ -470,9 +518,17 @@ class Room:
         self._broadcast(connection.presence(), skip=connection)
 
     def leave(self, connection: Connection) -> None:
-        """Remove a connection and tell the others. Leaving twice is harmless."""
+        """Remove a connection and tell the others. Leaving twice is harmless.
+
+        Its follow ends, and so does every follow of it. Its followers learn
+        that it left from ``presence-end``.
+        """
         if self.connections.pop(connection.id, None) is None:
             return
+        for each in self.connections.values():
+            if each.following is connection:
+                each.following = None
+        self._set_following(connection, None)
         self._broadcast({"type": "presence-end", "connectionId": connection.id})
         if not self.connections:
             self.on_empty()
@@ -552,6 +608,10 @@ class Room:
             self._presence(connection, message)
         elif kind == "rename":
             self._rename(connection, message)
+        elif kind == "follow":
+            self._follow(connection, message)
+        elif kind == "view":
+            self._view(connection, message)
         elif kind == "hello":
             connection.error("bad_message", "hello is the first message, and is sent once.")
         else:
@@ -646,11 +706,70 @@ class Room:
     def _presence(self, connection: Connection, message: dict[str, Any]) -> None:
         cursor = message.get("cursor")
         try:
-            connection.cursor = None if cursor is None else _cursor(cursor)
+            connection.cursor = None if cursor is None else parse_cursor(cursor, pages=self.pages)
         except ValueError:
-            connection.error("bad_message", "A cursor is an x and a y, or null.")
+            said = "an x, a y, and a page" if self.pages else "an x and a y"
+            connection.error("bad_message", f"A cursor is {said}, or null.")
             return
         self._broadcast(connection.presence(), skip=connection)
+
+    def _follow(self, connection: Connection, message: dict[str, Any]) -> None:
+        """Follow another connection's view, or stop: ``connectionId`` null.
+
+        A connection does not follow itself, one that is not on the slot, or
+        one that follows it, however many steps away: the two screens would
+        fit each other's view in turn, and with screens of two sizes zoom out
+        for ever.
+        """
+        if "connectionId" not in message:
+            connection.error("bad_message", "follow needs a connectionId, or null.")
+            return
+        wanted = message["connectionId"]
+        if wanted is None:
+            self._set_following(connection, None)
+            return
+        if not isinstance(wanted, str):
+            connection.error("bad_message", "follow needs a connectionId, or null.")
+            return
+        leader = self.connections.get(wanted)
+        step = leader
+        while step is not None and step is not connection:
+            step = step.following
+        if leader is None or step is connection:
+            connection.error("cannot_follow", CANNOT_FOLLOW)
+            return
+        self._set_following(connection, leader)
+
+    def _set_following(self, connection: Connection, leader: Connection | None) -> None:
+        """Change whom a connection follows, and tell each leader how many follow it now."""
+        before = connection.following
+        if before is leader:
+            return
+        connection.following = leader
+        for changed in (before, leader):
+            if changed is not None and self.connections.get(changed.id) is changed:
+                changed.send({"type": "followers", "count": len(self._followers(changed))})
+
+    def _followers(self, leader: Connection) -> list[Connection]:
+        return [each for each in self.connections.values() if each.following is leader]
+
+    def _view(self, connection: Connection, message: dict[str, Any]) -> None:
+        """Send the area a connection shows to its followers, and to nobody else."""
+        try:
+            view = parse_view(message.get("view"), pages=self.pages)
+        except ValueError:
+            said = "an x, a y, a width, a height, and a page"
+            if not self.pages:
+                said = "an x, a y, a width, and a height"
+            connection.error("bad_message", f"A view is {said}.")
+            return
+        followers = self._followers(connection)
+        if not followers:
+            # Sent as its last follower left: nobody is left to tell.
+            return
+        text = encode({"type": "view", "connectionId": connection.id, "view": view})
+        for each in followers:
+            each.deliver(text)
 
     def _rename(self, connection: Connection, message: dict[str, Any]) -> None:
         typed = message.get("displayName")

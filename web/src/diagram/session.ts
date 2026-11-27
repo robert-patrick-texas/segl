@@ -32,16 +32,27 @@
  *
  * Patches this page made that the server has not numbered are kept. After a
  * reconnect, the ones the server never took are sent again.
+ *
+ * Follow mode and cursors (T18): the frame reports where the person looks
+ * and points, and the session draws the others' cursors in it. Each take of
+ * the pen starts this browser following the new holder, once, unless it is
+ * the holder. The person ends a follow by scrolling, zooming, or clicking in
+ * the frame, and it ends when the pen comes back.
  */
-import type { ClientMessage, Participant } from '../collab/protocol.ts';
+import { Leading } from '../collab/follow.ts';
+import type { ClientMessage, Cursor, Participant, View } from '../collab/protocol.ts';
 import {
+	CURSOR_INTERVAL_MS,
 	LOCK_EARLY_MS,
 	MAX_TIMER_MS,
 	RETRY_DELAYS_MS,
 	type ConnectionStatus,
 	type Hello,
+	type Peer,
 	type SocketLike
 } from '../collab/session.ts';
+import { Throttle } from '../collab/throttle.ts';
+import { frameCursors } from './cursors.ts';
 import type { DiagramEdit, DiagramFrameLike } from './frame.ts';
 import {
 	parseDiagramMessage,
@@ -63,6 +74,8 @@ export interface DiagramState {
 	participants: readonly Participant[];
 	/** Who holds the pen: a connection id, or null when it is free. */
 	pen: string | null;
+	/** The connection whose view this browser follows, or null (T18). */
+	following: string | null;
 }
 
 export const INITIAL_DIAGRAM_STATE: DiagramState = {
@@ -72,7 +85,8 @@ export const INITIAL_DIAGRAM_STATE: DiagramState = {
 	title: null,
 	epoch: null,
 	participants: [],
-	pen: null
+	pen: null,
+	following: null
 };
 
 export interface DiagramSessionOptions {
@@ -150,6 +164,19 @@ export class DiagramSession {
 	private retryTimer: Timer | undefined;
 	private lockTimer: Timer | undefined;
 	private renameWaiting: string | null = null;
+	/** The others on the slot, with their cursors. */
+	private readonly peers = new Map<string, Peer>();
+	private readonly cursors = new Throttle<Cursor | null>(CURSOR_INTERVAL_MS, (cursor) =>
+		this.send({ type: 'presence', cursor })
+	);
+	/** This browser as the one followed: its view goes out while someone follows it. */
+	private readonly leading = new Leading((view) => this.send({ type: 'view', view }));
+	/** The pen holder this browser last followed for taking the pen. */
+	private penFollowed: string | null = null;
+	/** The newest view of the one followed, shown again after a whole diagram loads. */
+	private shown: View | null = null;
+	/** What the frame shows, as it last said. */
+	private looking: View | null = null;
 
 	constructor(options: DiagramSessionOptions) {
 		this.options = options;
@@ -162,6 +189,8 @@ export class DiagramSession {
 		this.enqueue(async () => {
 			await this.options.frame.ready;
 			await this.options.frame.load(this.options.xml, this.wantsReadOnly());
+			// What came before the frame could draw.
+			this.drawCursors();
 		});
 		this.open();
 	}
@@ -194,9 +223,44 @@ export class DiagramSession {
 		this.setState();
 	}
 
-	/** Take the pen, or give it back. */
+	/**
+	 * Take the pen, or give it back. The one who takes it leads: a follow of
+	 * theirs ends first, or the others' follow of them would be refused.
+	 */
 	pen(take: boolean): void {
-		if (this.live) this.send({ type: 'pen', take });
+		if (!this.live) return;
+		if (take) this.follow(null);
+		this.send({ type: 'pen', take });
+	}
+
+	/** Follow this connection's view, or stop: null (T18). */
+	follow(connectionId: string | null): void {
+		if (!this.live || connectionId === this.state.following) return;
+		if (connectionId !== null && !this.peers.has(connectionId)) return;
+		this.send({ type: 'follow', connectionId });
+		this.shown = null;
+		this.setState({ following: connectionId });
+	}
+
+	/** The person scrolled, zoomed, or clicked in the frame: a follow ends. */
+	looked(): void {
+		this.follow(null);
+	}
+
+	/** The area of the diagram the frame shows, as it changes. */
+	viewChanged(view: View): void {
+		this.looking = view;
+		this.leading.view(view);
+	}
+
+	/** The area of the diagram the frame shows, as it last said, or null. */
+	view(): View | null {
+		return this.looking;
+	}
+
+	/** The person's pointer moved over the diagram. */
+	pointer(cursor: Cursor): void {
+		if (this.live) this.cursors.push(cursor);
 	}
 
 	rename(displayName: string): void {
@@ -213,7 +277,7 @@ export class DiagramSession {
 		clearTimeout(this.lockTimer);
 		socket.close();
 		this.link = 'connecting';
-		this.setState({ connectionId: null, participants: [] });
+		this.setState({ connectionId: null, participants: [], following: null });
 		this.open();
 	}
 
@@ -234,17 +298,22 @@ export class DiagramSession {
 		};
 	}
 
+	/** Forget the socket and everyone on it. A follow either way ends with it. */
 	private forget(): void {
 		this.socket = null;
 		this.live = false;
 		this.synced = false;
 		this.reloading = false;
+		this.cursors.cancel();
+		this.leading.reset();
+		this.peers.clear();
+		this.drawCursors();
 	}
 
 	private dropped(): void {
 		this.forget();
 		this.link = 'disconnected';
-		this.setState({ connectionId: null, participants: [] });
+		this.setState({ connectionId: null, participants: [], following: null });
 		const delay = RETRY_DELAYS_MS[Math.min(this.failures, RETRY_DELAYS_MS.length - 1)];
 		this.failures += 1;
 		this.retryTimer = setTimeout(() => this.open(), delay);
@@ -291,12 +360,19 @@ export class DiagramSession {
 				this.sent.clear();
 				this.savedHere = false;
 				this.failures = 0;
+				this.peers.clear();
+				for (const person of message.participants) {
+					if (person.connectionId !== message.connectionId) {
+						this.peers.set(person.connectionId, { ...person, cursor: null });
+					}
+				}
 				this.setState({
 					connectionId: message.connectionId,
 					viewOnly: message.viewOnly,
 					title: message.title,
 					participants: message.participants,
-					pen: penOfWelcome(text)
+					pen: penOfWelcome(text),
+					following: null
 				});
 				if (this.renameWaiting !== null) {
 					this.send({ type: 'rename', displayName: this.renameWaiting });
@@ -304,6 +380,9 @@ export class DiagramSession {
 				}
 				this.lockIn(message.editEndsIn);
 				this.keepReadOnly();
+				this.drawCursors();
+				// Someone held the pen before this browser came.
+				this.penMoved(this.state.pen);
 				break;
 			case 'diagram': {
 				const joining = this.joining;
@@ -317,6 +396,7 @@ export class DiagramSession {
 			case 'pen':
 				this.setState({ pen: message.holder });
 				this.keepReadOnly();
+				this.penMoved(message.holder);
 				break;
 			case 'saved':
 				if (!this.live) break;
@@ -328,8 +408,11 @@ export class DiagramSession {
 				this.setState({ title: message.title });
 				break;
 			case 'presence': {
-				// Diagram mode shows no cursors: a name is all a presence changes.
-				const { connectionId, displayName } = message;
+				const { connectionId, displayName, cursor } = message;
+				if (connectionId !== this.state.connectionId) {
+					this.peers.set(connectionId, { connectionId, displayName, cursor });
+					this.drawCursors();
+				}
 				const people = this.state.participants;
 				const before = people.find((p) => p.connectionId === connectionId);
 				if (before?.displayName === displayName) break;
@@ -343,13 +426,31 @@ export class DiagramSession {
 				break;
 			}
 			case 'presence-end':
+				if (this.peers.delete(message.connectionId)) this.drawCursors();
 				this.setState({
 					participants: this.state.participants.filter(
 						(p) => p.connectionId !== message.connectionId
-					)
+					),
+					// The server ended the follow when its leader left.
+					...(this.state.following === message.connectionId ? { following: null } : {})
 				});
 				break;
+			case 'followers':
+				this.leading.followers(message.count);
+				break;
+			case 'view':
+				if (message.connectionId === this.state.following) {
+					this.shown = message.view;
+					this.options.frame.showView(message.view);
+				}
+				break;
 			case 'error':
+				if (message.error === 'cannot_follow') {
+					// The server kept the follow there was: this one ends it too.
+					this.send({ type: 'follow', connectionId: null });
+					this.setState({ following: null });
+					break;
+				}
 				this.refused(message.error, message.message);
 				break;
 		}
@@ -412,6 +513,8 @@ export class DiagramSession {
 			for (const entry of message.patches) await this.apply(entry, null);
 		}
 		this.mark = message.mark;
+		// A load put the person's own view back: a follow shows the leader's again.
+		if (message.whole && this.shown !== null) this.options.frame.showView(this.shown);
 		if (!joining) {
 			// The server kept no copy with a patch of this page's while it waited.
 			if (this.copyAfterLoad && this.live) {
@@ -481,6 +584,23 @@ export class DiagramSession {
 		}
 	}
 
+	/**
+	 * The pen moved. A new holder is followed, once, unless it is this browser,
+	 * which is not among its own peers. When the pen comes back, the follow it
+	 * started ends.
+	 */
+	private penMoved(holder: string | null): void {
+		const before = this.penFollowed;
+		if (holder === before) return;
+		this.penFollowed = holder;
+		if (holder !== null) this.follow(holder);
+		else if (before !== null && this.state.following === before) this.follow(null);
+	}
+
+	private drawCursors(): void {
+		this.options.frame.showCursors(frameCursors(this.peers.values(), this.state.connectionId));
+	}
+
 	/** Whether drawio's read-only view should be on: a viewer, or someone else holds the pen. */
 	private wantsReadOnly(): boolean {
 		const viewOnly = this.state.viewOnly ?? this.options.editRequired;
@@ -523,6 +643,11 @@ export class DiagramSession {
 	private setState(change: Partial<Omit<DiagramState, 'status'>> = {}): void {
 		const before = this.state;
 		this.state = { ...before, ...change };
+		if (before.following !== null && this.state.following === null) {
+			// However the follow ended, the frame stops showing the leader's view.
+			this.shown = null;
+			this.options.frame.showView(null);
+		}
 		const status = this.status();
 		if (Object.keys(change).length === 0 && status === before.status) return;
 		this.state = { ...this.state, status };

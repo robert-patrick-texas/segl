@@ -81,6 +81,8 @@ export const STORED_NAME = 'Tester';
 export const SLOTS = {
 	/** The canvas tools, and the mount test's text. */
 	tools: 2,
+	/** Follow mode on a whiteboard draws nothing: it scrolls and zooms each browser's own view. */
+	follow: 2,
 	presence: 3,
 	/**
 	 * The presence tests draw nothing, so the history tests have this canvas

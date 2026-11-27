@@ -15,8 +15,9 @@
 /**
  * The mounted editor as the collaboration session uses it (`SceneEditor` in
  * `collab/session.ts`): read the elements, merge elements from the server,
- * draw the other people's cursors, and hold the files of images. This is
- * where the package's `reconcileElements` is called (D2-025).
+ * draw the other people's cursors, hold the files of images, and follow
+ * another browser's view (T18). This is where the package's
+ * `reconcileElements` is called (D2-025).
  */
 import {
 	CaptureUpdateAction,
@@ -34,11 +35,14 @@ import type {
 	Collaborator,
 	DataURL,
 	ExcalidrawImperativeAPI,
+	NormalizedZoomValue,
 	SocketId
 } from '@excalidraw/excalidraw/types';
 import type { WireElement } from '../collab/elements.ts';
 import type { CanvasFile } from '../collab/files.ts';
+import type { Participant } from '../collab/protocol.ts';
 import type { Peer, SceneEditor } from '../collab/session.ts';
+import { fitArea } from './fit.ts';
 
 type Remote = Parameters<typeof reconcileElements>[1];
 
@@ -130,8 +134,26 @@ export function makeEditor(api: ExcalidrawImperativeAPI): SceneEditor {
 		},
 		showPeers(peers) {
 			api.updateScene({ collaborators: collaborators(peers) });
+		},
+		showFollow(person) {
+			api.updateScene({ appState: { userToFollow: followed(person) } });
+		},
+		showView(view) {
+			const { width, height } = api.getAppState();
+			const { scrollX, scrollY, zoom } = fitArea(view, width, height);
+			// Set straight, not through the editor's own scroll, which would end the follow.
+			api.updateScene({
+				appState: { scrollX, scrollY, zoom: { value: zoom as NormalizedZoomValue } },
+				captureUpdate: CaptureUpdateAction.NEVER
+			});
 		}
 	};
+}
+
+/** The editor's record of whom this browser follows. Its badge shows the name. */
+function followed(person: Participant | null): { socketId: SocketId; username: string } | null {
+	if (person === null) return null;
+	return { socketId: person.connectionId as SocketId, username: person.displayName ?? UNNAMED };
 }
 
 /**

@@ -13,11 +13,11 @@
 // limitations under the License.
 
 /** Slot 9's live connection, as React state (D2-040). */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { readClientId } from '../collab/identity.ts';
 import { collabUrl, storageKey, type AppConfig } from '../config.ts';
 import { browserStorage } from '../slots.ts';
-import type { DiagramEdit, DiagramFrameLike } from './frame.ts';
+import type { DiagramEdit, DiagramFrameLike, FrameWatcher } from './frame.ts';
 import { installDiagramHandle } from './handle.ts';
 import { DiagramSession, INITIAL_DIAGRAM_STATE, type DiagramState } from './session.ts';
 
@@ -40,6 +40,10 @@ export interface Diagram {
 	onEdit: (edit: DiagramEdit) => void;
 	/** Take the pen, or give it back. */
 	onPen: (take: boolean) => void;
+	/** Follow this connection's view, or stop: null (T18). For the bar. */
+	onFollow: (connectionId: string | null) => void;
+	/** Give this to the frame: where the person looks and points. */
+	watcher: FrameWatcher;
 }
 
 /**
@@ -119,5 +123,14 @@ export function useDiagram({
 
 	const onEdit = useCallback((edit: DiagramEdit) => session.current?.edit(edit), []);
 	const onPen = useCallback((take: boolean) => session.current?.pen(take), []);
-	return { state, onEdit, onPen };
+	const onFollow = useCallback((id: string | null) => session.current?.follow(id), []);
+	const watcher = useMemo<FrameWatcher>(
+		() => ({
+			onView: (view) => session.current?.viewChanged(view),
+			onPointer: (cursor) => session.current?.pointer(cursor),
+			onLooked: () => session.current?.looked()
+		}),
+		[]
+	);
+	return { state, onEdit, onPen, onFollow, watcher };
 }

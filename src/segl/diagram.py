@@ -138,7 +138,11 @@ class DiagramRoom(Room):
     holds (``copy_count``), and every patch after the stored head's count, so
     that a page that loaded the stored head gets the patches since. It has no
     elements: the saver counts none, and keeps no row before a big delete.
+
+    A cursor and a view name the page of the diagram they are on (T18).
     """
+
+    pages = True
 
     def __init__(
         self,
@@ -254,6 +258,10 @@ class DiagramRoom(Room):
             self._presence(connection, message)
         elif kind == "rename":
             self._rename(connection, message)
+        elif kind == "follow":
+            self._follow(connection, message)
+        elif kind == "view":
+            self._view(connection, message)
         elif kind == "hello":
             connection.error("bad_message", "hello is the first message, and is sent once.")
         else:

@@ -19,7 +19,8 @@
  * this browser's display name (S-009), and the notice that the workspace is
  * shared (S-016), with the way to the access page for a browser that may not
  * edit (S-008). On slot 9, Diagram mode, it shows the pen in place of History
- * and Import, which come to Diagram mode later (D2-039).
+ * and Import, which come to Diagram mode later (D2-039), and whom this browser
+ * follows (T18).
  */
 import { Link, NavLink } from 'react-router';
 import type { Participant } from '../collab/protocol.ts';
@@ -33,7 +34,8 @@ import { ImportControl } from './ImportControl.tsx';
 import { NameControl } from './NameControl.tsx';
 import { PenControl } from './PenControl.tsx';
 import { ENTER_CODE, offersAccess, sharedNotice, type Editing } from './notice.ts';
-import { PresenceControl } from './PresenceControl.tsx';
+import { FollowingControl, PresenceControl } from './PresenceControl.tsx';
+import { UNNAMED } from './presence.ts';
 import { statusLabel } from './status.ts';
 import { TitleControl } from './TitleControl.tsx';
 
@@ -54,6 +56,10 @@ export interface SeglBarProps {
 	participants: readonly Participant[];
 	/** This browser's own connection. */
 	self: string | null;
+	/** The connection whose view this browser follows, or null (T18). */
+	following: string | null;
+	/** Follow this connection's view, or stop: null. */
+	onFollow: (connectionId: string | null) => void;
 	/** False for a browser that may look and not edit. */
 	canEdit: boolean;
 	/** Store a new title for this slot on the server. */
@@ -84,6 +90,8 @@ export function SeglBar({
 	status,
 	participants,
 	self,
+	following,
+	onFollow,
 	canEdit,
 	onRetitle,
 	epoch,
@@ -99,6 +107,7 @@ export function SeglBar({
 	const notice = sharedNotice(editing);
 	// Where the access page sends the person back to.
 	const cameFrom: CameFrom = { slot };
+	const leader = participants.find((person) => person.connectionId === following);
 	return (
 		<header className="segl-bar">
 			<span className="segl-bar__brand">segl</span>
@@ -125,17 +134,28 @@ export function SeglBar({
 				editable={canEdit}
 				onRetitle={onRetitle}
 			/>
-			<PresenceControl key={`people-${slot}`} participants={participants} self={self} />
+			<PresenceControl
+				key={`people-${slot}`}
+				participants={participants}
+				self={self}
+				following={following}
+				onFollow={onFollow}
+			/>
 			<span className="segl-bar__status" data-state={status} role="status">
 				{statusLabel(status)}
 			</span>
 			{diagram !== undefined ? (
-				<PenControl
-					holder={diagram.holder}
-					mine={diagram.mine}
-					canTake={canEdit && connected}
-					onPen={diagram.onPen}
-				/>
+				<>
+					<PenControl
+						holder={diagram.holder}
+						mine={diagram.mine}
+						canTake={canEdit && connected}
+						onPen={diagram.onPen}
+					/>
+					{leader !== undefined && (
+						<FollowingControl name={leader.displayName ?? UNNAMED} onStop={() => onFollow(null)} />
+					)}
+				</>
 			) : (
 				<>
 					{/* Keyed by the slot too: an open list is of the slot it was opened on. */}

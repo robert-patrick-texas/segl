@@ -15,7 +15,8 @@
 /**
  * Who is on this slot (S-010). The number is the WebSocket connections the
  * server counts on the slot, this one included, so two tabs of one browser
- * count twice. Pressing it lists their labels.
+ * count twice. Pressing it lists their labels. Pressing another person's
+ * name follows their view, and pressing it again stops (T18).
  */
 import { useId, useRef, useState } from 'react';
 import type { Participant } from '../collab/protocol.ts';
@@ -27,9 +28,13 @@ export interface PresenceControlProps {
 	participants: readonly Participant[];
 	/** This browser's own connection, marked in the list. */
 	self: string | null;
+	/** The connection whose view this browser follows, or null. */
+	following: string | null;
+	/** Follow this connection, or stop: null. */
+	onFollow: (connectionId: string | null) => void;
 }
 
-export function PresenceControl({ participants, self }: PresenceControlProps) {
+export function PresenceControl({ participants, self, following, onFollow }: PresenceControlProps) {
 	const [open, setOpen] = useState(false);
 	const wrapper = useRef<HTMLDivElement>(null);
 	const list = useId();
@@ -56,14 +61,63 @@ export function PresenceControl({ participants, self }: PresenceControlProps) {
 			)}
 			{open && count > 0 && (
 				<ul id={list} className="segl-bar__people" aria-label="On this slot">
-					{participants.map((person) => (
-						<li key={person.connectionId} className="segl-bar__person">
-							<span className="segl-bar__person-name">{person.displayName ?? UNNAMED}</span>
-							{person.connectionId === self && <span className="segl-bar__person-you">you</span>}
-						</li>
-					))}
+					{participants.map((person) => {
+						const name = person.displayName ?? UNNAMED;
+						const followed = person.connectionId === following;
+						return (
+							<li key={person.connectionId} className="segl-bar__person">
+								{person.connectionId === self ? (
+									<>
+										<span className="segl-bar__person-name">{name}</span>
+										<span className="segl-bar__person-tag">you</span>
+									</>
+								) : (
+									<button
+										type="button"
+										className="segl-bar__person-button"
+										aria-pressed={followed}
+										title={followed ? `Stop following ${name}` : `Follow ${name}`}
+										onClick={() => {
+											onFollow(followed ? null : person.connectionId);
+											setOpen(false);
+										}}
+									>
+										<span className="segl-bar__person-name">{name}</span>
+										{followed && <span className="segl-bar__person-tag">following</span>}
+									</button>
+								)}
+							</li>
+						);
+					})}
 				</ul>
 			)}
 		</div>
+	);
+}
+
+export interface FollowingControlProps {
+	/** The display name of the one followed. */
+	name: string;
+	onStop: () => void;
+}
+
+/**
+ * Whom this browser follows, and the way to stop, on slot 9 (T18). drawio
+ * has no sign of its own, as the whiteboards' editor has.
+ */
+export function FollowingControl({ name, onStop }: FollowingControlProps) {
+	return (
+		<button
+			type="button"
+			className="segl-bar__following"
+			aria-label={`Following ${name}. Stop`}
+			title="Stop following"
+			onClick={onStop}
+		>
+			<span className="segl-bar__following-name">Following {name}</span>
+			<span className="segl-bar__following-stop" aria-hidden="true">
+				×
+			</span>
+		</button>
 	);
 }

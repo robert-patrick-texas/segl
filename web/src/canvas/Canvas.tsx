@@ -29,7 +29,7 @@ import {
 	type CSSProperties,
 	type DragEvent
 } from 'react';
-import type { Cursor } from '../collab/protocol.ts';
+import type { Cursor, View } from '../collab/protocol.ts';
 import type { SceneEditor } from '../collab/session.ts';
 import { dropGoesTo } from '../importing.ts';
 import type { LinkKind, State } from '../network/kinds.ts';
@@ -37,6 +37,7 @@ import { NetworkPanel } from '../network/NetworkPanel.tsx';
 import { selectedObject, type NetworkObject } from '../network/selection.ts';
 import './canvas.css';
 import { makeEditor } from './editor.ts';
+import { visibleArea } from './fit.ts';
 import { clearHandle, publishHandle } from './handle.ts';
 import { networkLibrary, renewCopies, setLinkKind, setObjectState } from './network.ts';
 import { initialDataFrom } from './scene.ts';
@@ -59,6 +60,14 @@ export interface CanvasProps {
 	onChange?: () => void;
 	/** Called as this browser's pointer moves over the canvas. */
 	onCursor?: (cursor: Cursor) => void;
+	/** Called with the area of the scene the canvas shows, whenever the editor changed (T18). */
+	onView?: (view: View) => void;
+	/**
+	 * Called when the editor ended its follow of this connection: the person
+	 * scrolled, zoomed, clicked on the canvas, or pressed its own Stop, or the
+	 * person followed left.
+	 */
+	onUnfollow?: (connectionId: string) => void;
 }
 
 type PointerUpdate = { pointer: { x: number; y: number } };
@@ -82,7 +91,9 @@ export default function Canvas({
 	viewOnly = false,
 	onEditor,
 	onChange,
-	onCursor
+	onCursor,
+	onView,
+	onUnfollow
 }: CanvasProps) {
 	// segl's network library, which the editor merges with the person's own.
 	const initialData = useMemo(
@@ -120,9 +131,18 @@ export default function Canvas({
 					0)
 				: 0;
 			setSidebar((before) => (before === width ? before : width));
+			onView?.(
+				visibleArea({
+					scrollX: appState.scrollX,
+					scrollY: appState.scrollY,
+					zoom: appState.zoom.value,
+					width: appState.width,
+					height: appState.height
+				})
+			);
 			onChange?.();
 		},
-		[onChange]
+		[onChange, onView]
 	);
 
 	const setState = useCallback(
@@ -147,6 +167,15 @@ export default function Canvas({
 			onEditor?.(null);
 		};
 	}, [api, onEditor]);
+
+	// The editor says when a follow starts and ends, segl's own changes too.
+	// Only an end matters: a follow starts from segl's bar.
+	useEffect(() => {
+		if (api === null || onUnfollow === undefined) return;
+		return api.onUserFollow(({ userToFollow, action }) => {
+			if (action === 'UNFOLLOW') onUnfollow(userToFollow.socketId);
+		});
+	}, [api, onUnfollow]);
 
 	const pointerMoved = useCallback(
 		({ pointer }: PointerUpdate) => onCursor?.({ x: pointer.x, y: pointer.y }),

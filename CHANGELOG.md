@@ -4,6 +4,20 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
+Follow mode: press a name in the bar and follow that person's view, on every slot, and on slot 9 the others follow whoever takes the pen. Slot 9 shows each person's cursor, as the whiteboards do.
+
+### New
+
+- Follow mode, on every slot (S-021; D2-041). A name pressed in the bar's list of who is here follows that person's view: the canvas, or drawio's frame on slot 9, shows all of the area theirs shows, centred, whatever the two screens' sizes, and on slot 9 their page of the diagram. A whiteboard shows the editor's own `Following` sign with a stop. On slot 9 the bar says `Following` and the name, with a stop. The follow ends when the follower scrolls, zooms, or clicks on the canvas or in the frame, presses the name again, or when either person leaves. It locks no one, and a viewer may follow and be followed.
+- On slot 9, each take of the pen starts every other browser following the holder, once. One who looks away stays away until they press the holder's name or the pen moves, and giving the pen back ends the follow. The one who takes the pen stops following first.
+- The cursors on slot 9 (S-002, T-026). Each person's pointer shows in the others' drawio frames, with their name, on its point of the diagram and only on its page, in the color the whiteboards give the same connection.
+
+### Changed
+
+- The socket has `follow`, `view`, and `followers`, and the error `cannot_follow` for a follow of a connection not on the slot, of itself, or of one that would close a loop (`docs/API.md`). On slot 9 a cursor and a view name their page of the diagram, and one with a page is `bad_message` on slots 1–8.
+- segl's `web/drawio/js/PostConfig.js` reports the frame's view, with its page, the pointer, and the person's own wheel, press, or modifier key, takes segl's own messages ahead of drawio's handler, and draws the others' cursors (D2-039).
+- `window.SEGL_CANVAS.view()` gives the canvas's `width` and `height` too, and `window.SEGL_DIAGRAM.view()` the area of the diagram the frame shows, for the browser tests.
+
 ## 0.7.0 — 2026-11-27
 
 Slot 9 is Diagram mode: drawio's editor, which several people edit at once, or one at a time with the pen. Slot 9's whiteboard goes, and the package carries drawio. Release and test tooling: a stopped install test cleans up, and `upgrade` leaves `cut` nothing to run again.

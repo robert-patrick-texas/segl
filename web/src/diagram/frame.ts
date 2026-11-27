@@ -22,12 +22,20 @@
  * answer before the next, so a patch never reaches a diagram that is still
  * loading. drawio's diff sync is on: an edit comes out as an `autosave` with
  * a patch, a checksum, and the whole XML.
+ *
+ * segl's `js/PostConfig.js` adds what drawio's messages do not carry. For
+ * follow mode and cursors (T18) it reports the view, the pointer, and the
+ * person's own scroll, zoom, or click, and it takes segl's own messages,
+ * objects with a `segl` field, which drawio's handler never sees: a view to
+ * show, and the others' cursors to draw.
  */
+import { parseView, type Cursor, type View } from '../collab/protocol.ts';
+import type { FrameCursor } from './cursors.ts';
 import type { DrawioPatch } from './protocol.ts';
 
 /** The frame's window, as the adapter posts to it. */
 export interface FrameTarget {
-	postMessage(message: string, targetOrigin: string): void;
+	postMessage(message: unknown, targetOrigin: string): void;
 }
 
 /** A message event, as the adapter reads one. */
@@ -80,9 +88,26 @@ export interface DiagramFrameLike {
 	idle(): Promise<void>;
 	/** Keep drawio's read-only view on, or off. */
 	setReadOnly(value: boolean): void;
+	/**
+	 * Show another browser's view: its page of the diagram, and its area
+	 * fitted. Null when the follow ended: a page that comes later is not turned to.
+	 */
+	showView(view: View | null): void;
+	/** Draw these cursors, and only these. */
+	showCursors(cursors: readonly FrameCursor[]): void;
 }
 
-export interface FrameOptions {
+/** What the person does in the frame, besides editing (T18). */
+export interface FrameWatcher {
+	/** The area of the diagram the frame shows, with its page, as it changes. */
+	onView(view: View): void;
+	/** The person's pointer, on the diagram. */
+	onPointer(cursor: Cursor): void;
+	/** The person scrolled, zoomed, or clicked in the frame themselves. */
+	onLooked(): void;
+}
+
+export interface FrameOptions extends Partial<FrameWatcher> {
 	/** The frame's window, or null while there is none. */
 	target(): FrameTarget | null;
 	/** segl's own origin, which serves drawio. */
@@ -170,6 +195,21 @@ export class DiagramFrame implements DiagramFrameLike {
 					for (const resolve of this.waitingIdle.splice(0)) resolve();
 				}
 				return;
+			case 'view': {
+				const view = parseView(reply['view']);
+				if (view !== null) this.options.onView?.(view);
+				return;
+			}
+			case 'pointer': {
+				const { x, y, page } = reply;
+				if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+				const where = typeof page === 'string' && page !== '' ? page : null;
+				this.options.onPointer?.({ x: x as number, y: y as number, page: where });
+				return;
+			}
+			case 'looked':
+				this.options.onLooked?.();
+				return;
 		}
 		const waiting = this.waiting;
 		if (waiting !== null && reply['event'] === waiting.event) {
@@ -220,6 +260,23 @@ export class DiagramFrame implements DiagramFrameLike {
 	setReadOnly(value: boolean): void {
 		this.wantReadOnly = value;
 		this.keepReadOnly();
+	}
+
+	showView(view: View | null): void {
+		this.tellSegl({ segl: 'view', view });
+	}
+
+	showCursors(cursors: readonly FrameCursor[]): void {
+		this.tellSegl({ segl: 'cursors', cursors });
+	}
+
+	/**
+	 * Post one of segl's own messages to `PostConfig.js`. Not one of drawio's
+	 * actions, so it waits for no answer, and goes as an object, not as text.
+	 */
+	private tellSegl(message: { segl: string } & Record<string, unknown>): void {
+		if (!this.isReady) return;
+		this.options.target()?.postMessage(message, this.options.origin);
 	}
 
 	/** Turn drawio's read-only view the way the page wants it. drawio's action toggles it. */

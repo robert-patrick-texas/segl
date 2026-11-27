@@ -177,6 +177,35 @@ describe('parseServerMessage', () => {
 		});
 	});
 
+	test('a cursor on slot 9, with its page or with none', () => {
+		const who = { connectionId: 'c2', displayName: 'Staff2' };
+		expect(parse({ type: 'presence', ...who, cursor: { x: 1, y: 2, page: 'p1' } })).toEqual({
+			type: 'presence',
+			...who,
+			cursor: { x: 1, y: 2, page: 'p1' }
+		});
+		expect(parse({ type: 'presence', ...who, cursor: { x: 1, y: 2, page: null } })).toEqual({
+			type: 'presence',
+			...who,
+			cursor: { x: 1, y: 2, page: null }
+		});
+	});
+
+	test('how many follow, and a view to follow (T18)', () => {
+		expect(parse({ type: 'followers', count: 2 })).toEqual({ type: 'followers', count: 2 });
+		const view = { x: -10, y: 4.5, width: 800, height: 600 };
+		expect(parse({ type: 'view', connectionId: 'c2', view })).toEqual({
+			type: 'view',
+			connectionId: 'c2',
+			view
+		});
+		expect(parse({ type: 'view', connectionId: 'c2', view: { ...view, page: 'p1' } })).toEqual({
+			type: 'view',
+			connectionId: 'c2',
+			view: { ...view, page: 'p1' }
+		});
+	});
+
 	test('an error', () => {
 		expect(
 			parse({ type: 'error', error: 'view_only', message: 'Editing needs an access code.' })
@@ -228,7 +257,18 @@ describe('parseServerMessage', () => {
 		{ type: 'presence', connectionId: 'c2', displayName: 'x', cursor: { x: 1 } },
 		{ type: 'presence', connectionId: 'c2', displayName: 'x', cursor: { x: '1', y: 2 } },
 		{ type: 'presence', displayName: 'x', cursor: null },
+		{ type: 'presence', connectionId: 'c2', displayName: 'x', cursor: { x: 1, y: 2, page: 3 } },
+		{ type: 'presence', connectionId: 'c2', displayName: 'x', cursor: { x: 1, y: 2, page: '' } },
 		{ type: 'presence-end' },
+		{ type: 'followers' },
+		{ type: 'followers', count: -1 },
+		{ type: 'followers', count: 1.5 },
+		{ type: 'view', view: { x: 0, y: 0, width: 1, height: 1 } },
+		{ type: 'view', connectionId: 'c2' },
+		{ type: 'view', connectionId: 'c2', view: { x: 0, y: 0, width: 0, height: 1 } },
+		{ type: 'view', connectionId: 'c2', view: { x: 0, y: 0, width: 1, height: -1 } },
+		{ type: 'view', connectionId: 'c2', view: { x: '0', y: 0, width: 1, height: 1 } },
+		{ type: 'view', connectionId: 'c2', view: { x: 0, y: 0, width: 1, height: 1, page: 7 } },
 		{ type: 'error' }
 	])('%j is not a message this page acts on', (message) => {
 		expect(parse(message)).toBeNull();

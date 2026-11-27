@@ -242,8 +242,13 @@ test('segl’s settings files keep drawio’s settings and add segl’s', () => 
 	expect(pre).toMatch(/defaultLibraries: '[^']*network[^']*cisco19/);
 	expect(post).toContain('window.ICONSEARCH_PATH = null;');
 	expect(post).toContain("event: 'readOnly'");
-	// segl's file sets no color: drawio's shapes keep drawio's (D2-039).
-	expect(`${pre}${post}`).not.toMatch(/color|#[0-9a-f]{3,6}\b/i);
+	// segl's files set no color on the diagram: drawio's shapes keep drawio's
+	// (D2-039). A cursor's color comes from the page, worked out from the
+	// connection id as the whiteboards' editor does (T18).
+	expect(`${pre}${post}`).not.toMatch(
+		/(fill|stroke|font|gradient|labelBackground|labelBorder|image)Color|#[0-9a-f]{3,6}\b/i
+	);
+	expect(post).toContain("arrow.setAttribute('fill', color);");
 });
 
 test('a dev-server path is a file in one of the folders, or nothing', () => {

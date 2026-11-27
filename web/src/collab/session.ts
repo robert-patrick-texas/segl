@@ -39,14 +39,17 @@
  */
 import { knownFrom, note, pendingElements, type Known, type WireElement } from './elements.ts';
 import { FileSync, type FileEditor, type FileRef, type FileTransport } from './files.ts';
+import { Leading } from './follow.ts';
 import {
 	parseServerMessage,
 	type ClientMessage,
 	type Cursor,
 	type Participant,
 	type SceneMessage,
-	type ServerMessage
+	type ServerMessage,
+	type View
 } from './protocol.ts';
+import { Throttle } from './throttle.ts';
 
 /**
  * What the bar shows (S-013). `live` is a connection with nothing to save
@@ -74,6 +77,10 @@ export interface SceneEditor extends FileEditor {
 	replace(elements: readonly WireElement[]): void;
 	/** Draw the other connections' cursors. */
 	showPeers(peers: readonly Peer[]): void;
+	/** Show the editor's own sign that this browser follows someone, or take it away. */
+	showFollow(person: Participant | null): void;
+	/** Show the area of the scene that the followed browser shows (T18). */
+	showView(view: View): void;
 }
 
 export interface SessionState {
@@ -91,6 +98,8 @@ export interface SessionState {
 	epoch: number | null;
 	/** Every connection on the slot, this one included, in the order they joined. */
 	participants: readonly Participant[];
+	/** The connection whose view this browser follows, or null (T18). */
+	following: string | null;
 }
 
 export const INITIAL_STATE: SessionState = {
@@ -99,7 +108,8 @@ export const INITIAL_STATE: SessionState = {
 	viewOnly: null,
 	title: null,
 	epoch: null,
-	participants: []
+	participants: [],
+	following: null
 };
 
 /** The part of `WebSocket` the session uses. */
@@ -206,10 +216,13 @@ export class CollabSession {
 	private readonly peers = new Map<string, Peer>();
 	private retryTimer: Timer | undefined;
 	private sendTimer: Timer | undefined;
-	private cursorTimer: Timer | undefined;
 	/** Runs out when this connection's pass is about to end. */
 	private lockTimer: Timer | undefined;
-	private cursorWaiting: { cursor: Cursor | null } | null = null;
+	private readonly cursors = new Throttle<Cursor | null>(CURSOR_INTERVAL_MS, (cursor) =>
+		this.send({ type: 'presence', cursor })
+	);
+	/** This browser as the one followed: its view goes out while someone follows it. */
+	private readonly leading = new Leading((view) => this.send({ type: 'view', view }));
 	private renameWaiting: string | null = null;
 
 	constructor(options: SessionOptions) {
@@ -275,8 +288,32 @@ export class CollabSession {
 	/** This browser's pointer moved over the canvas. */
 	cursor(cursor: Cursor | null): void {
 		if (!this.live) return;
-		this.cursorWaiting = { cursor };
-		if (this.cursorTimer === undefined) this.sendCursor();
+		this.cursors.push(cursor);
+	}
+
+	/**
+	 * Follow this connection's view, or stop: null (T18). The editor shows
+	 * its own sign of the follow, and ends it when the person scrolls, zooms,
+	 * or clicks on the canvas, which it tells `unfollowed`.
+	 */
+	follow(connectionId: string | null): void {
+		if (!this.live || connectionId === this.state.following) return;
+		if (connectionId === this.state.connectionId) return;
+		if (connectionId !== null && !this.peers.has(connectionId)) return;
+		this.send({ type: 'follow', connectionId });
+		this.showFollow(connectionId);
+	}
+
+	/** The editor ended its follow of this connection: the person looked away. */
+	unfollowed(connectionId: string): void {
+		if (this.state.following !== connectionId) return;
+		this.send({ type: 'follow', connectionId: null });
+		this.setState({ following: null });
+	}
+
+	/** The area of the scene the canvas shows, as it changes. */
+	viewChanged(view: View): void {
+		this.leading.view(view);
 	}
 
 	/**
@@ -303,8 +340,18 @@ export class CollabSession {
 		clearTimeout(this.lockTimer);
 		socket.close();
 		this.link = 'connecting';
-		this.setState({ connectionId: null, participants: [] });
+		this.setState({ connectionId: null, participants: [], following: null });
 		this.open();
+	}
+
+	/** Show the follow of this connection, or of nobody, here and in the editor. */
+	private showFollow(connectionId: string | null): void {
+		// First: what the editor says of the follow it ends is read against this.
+		this.setState({ following: connectionId });
+		const peer = connectionId === null ? undefined : this.peers.get(connectionId);
+		this.options.editor.showFollow(
+			peer === undefined ? null : { connectionId: peer.connectionId, displayName: peer.displayName }
+		);
 	}
 
 	private mayEdit(): boolean {
@@ -364,19 +411,21 @@ export class CollabSession {
 		};
 	}
 
-	/** Forget the socket and everyone on it. */
+	/** Forget the socket and everyone on it. A follow either way ends with it. */
 	private leave(): void {
 		this.socket = null;
 		this.live = false;
 		this.clearTimers();
 		this.peers.clear();
+		this.leading.reset();
 		this.options.editor.showPeers([]);
+		if (this.state.following !== null) this.options.editor.showFollow(null);
 	}
 
 	private dropped(): void {
 		this.leave();
 		this.link = 'disconnected';
-		this.setState({ connectionId: null, participants: [] });
+		this.setState({ connectionId: null, participants: [], following: null });
 		const delay = RETRY_DELAYS_MS[Math.min(this.failures, RETRY_DELAYS_MS.length - 1)];
 		this.failures += 1;
 		this.retryTimer = setTimeout(() => this.open(), delay);
@@ -384,10 +433,8 @@ export class CollabSession {
 
 	private clearTimers(): void {
 		clearTimeout(this.sendTimer);
-		clearTimeout(this.cursorTimer);
 		this.sendTimer = undefined;
-		this.cursorTimer = undefined;
-		this.cursorWaiting = null;
+		this.cursors.cancel();
 	}
 
 	private send(message: ClientMessage): void {
@@ -435,17 +482,6 @@ export class CollabSession {
 		if (this.state.viewOnly !== false) return 'live';
 		if (this.unsaved()) return 'saving';
 		return this.savedHere ? 'saved' : 'live';
-	}
-
-	private sendCursor(): void {
-		if (this.cursorWaiting === null || !this.live) return;
-		const { cursor } = this.cursorWaiting;
-		this.cursorWaiting = null;
-		this.send({ type: 'presence', cursor });
-		this.cursorTimer = setTimeout(() => {
-			this.cursorTimer = undefined;
-			this.sendCursor();
-		}, CURSOR_INTERVAL_MS);
 	}
 
 	private receive(message: ServerMessage): void {
@@ -513,11 +549,28 @@ export class CollabSession {
 					this.setState({ participants: this.participants() });
 					this.showPeers();
 				}
+				// The server ended the follow when its leader left.
+				if (this.state.following === message.connectionId) this.showFollow(null);
+				break;
+			case 'followers':
+				this.leading.followers(message.count);
+				break;
+			case 'view':
+				if (message.connectionId === this.state.following) {
+					this.options.editor.showView(message.view);
+				}
 				break;
 			case 'error':
 				// The server dropped an edit: this browser is a viewer after all.
 				if (message.error === 'view_only') {
 					this.setState({ viewOnly: true });
+					break;
+				}
+				// The one to follow left before the server heard, or follows this
+				// browser. The server kept the follow there was: this one ends it too.
+				if (message.error === 'cannot_follow') {
+					this.send({ type: 'follow', connectionId: null });
+					if (this.state.following !== null) this.showFollow(null);
 					break;
 				}
 				console.warn(`segl: ${message.error}: ${message.message}`);

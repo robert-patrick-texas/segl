@@ -21,9 +21,10 @@
 
 /*
  * The editor draws its own row of avatars once it is told who else is here.
- * Pressing one follows that person's view, which segl does not carry, so the
- * row is hidden. The segl bar has the count and the list (S-010). The cursors
- * on the canvas are not part of that row and stay.
+ * The row is hidden: the segl bar has the count and the list (S-010), and a
+ * name pressed there follows that person's view on every slot, Diagram mode
+ * too (T18). The cursors on the canvas are not part of that row and stay, and
+ * so does the editor's own sign of a follow.
  */
 .excalidraw .UserList,
 .excalidraw .UserList-Wrapper {

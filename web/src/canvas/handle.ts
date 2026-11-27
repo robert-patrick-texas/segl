@@ -51,8 +51,8 @@ export interface CanvasHandle {
 	images(): string;
 	/**
 	 * Where the scene is on the canvas, as JSON text: `scrollX`, `scrollY`,
-	 * and `zoom`. A scene point is at `(x + scrollX) * zoom` from the
-	 * canvas's left edge, and the same for y.
+	 * and `zoom`, and the canvas's `width` and `height`. A scene point is at
+	 * `(x + scrollX) * zoom` from the canvas's left edge, and the same for y.
 	 */
 	view(): string;
 }
@@ -102,8 +102,8 @@ export function publishHandle(api: ExcalidrawImperativeAPI): void {
 			);
 		},
 		view: () => {
-			const { scrollX, scrollY, zoom } = api.getAppState();
-			return JSON.stringify({ scrollX, scrollY, zoom: zoom.value });
+			const { scrollX, scrollY, zoom, width, height } = api.getAppState();
+			return JSON.stringify({ scrollX, scrollY, zoom: zoom.value, width, height });
 		}
 	};
 }

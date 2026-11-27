@@ -213,11 +213,67 @@
 	white-space: nowrap;
 }
 
-.segl-bar__person-you {
+.segl-bar__person-tag {
 	flex: 0 0 auto;
 	margin-left: auto;
 	color: #5a6b7b;
 	font-size: 0.75rem;
+}
+
+/* Another person's name: pressing it follows their view (T18). */
+.segl-bar__person-button {
+	display: flex;
+	flex: 1 1 auto;
+	align-items: center;
+	gap: 0.5rem;
+	min-width: 0;
+	margin: -0.25rem -0.75rem;
+	padding: 0.25rem 0.75rem;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.segl-bar__person-button:hover,
+.segl-bar__person-button:focus-visible {
+	background: #eef3f7;
+	outline: none;
+}
+
+.segl-bar__following {
+	display: flex;
+	flex: 0 1 auto;
+	align-items: center;
+	gap: 0.375rem;
+	min-width: 0;
+	height: 1.75rem;
+	padding: 0 0.5rem;
+	border: 1px solid rgb(244 241 232 / 35%);
+	border-radius: 0.375rem;
+	background: rgb(244 241 232 / 15%);
+	color: inherit;
+	font: inherit;
+	font-size: 0.8125rem;
+	cursor: pointer;
+}
+
+.segl-bar__following:hover {
+	background: rgb(244 241 232 / 25%);
+}
+
+.segl-bar__following:focus-visible {
+	outline: 2px solid #7fd1ae;
+	outline-offset: 2px;
+}
+
+.segl-bar__following-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .segl-bar__status {

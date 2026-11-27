@@ -194,6 +194,8 @@ Client → server:
 - `elements` — `{ "type": "elements", "epoch", "elements": [ ... ], "seq" }`. Each element is the editor's record, with a text `id` and whole-number `version` and `versionNonce`. The batch is taken whole or refused whole. `seq` is optional: the number this browser gives the message, which the server answers with `saved`. The list may be empty, which with a `seq` asks whether everything the server holds is saved.
 - `presence` — `{ "type": "presence", "cursor": { "x", "y" } }`, in the canvas's own coordinates, or `"cursor": null`.
 - `rename` — `{ "type": "rename", "displayName" }`, a name the person typed.
+- `follow` — `{ "type": "follow", "connectionId" }`: follow that connection's view, or stop with `"connectionId": null` (follow mode, T18). It names another connection on the slot, one that does not follow this one, however many steps away. Anything else is `cannot_follow`, and the follow there was stays.
+- `view` — `{ "type": "view", "view": { "x", "y", "width", "height" } }`: the area of the scene this browser shows, in the canvas's own coordinates. `width` and `height` are more than 0. A page sends it only while the server says someone follows it, at most five times a second, and at once when one more starts.
 - `files` — `{ "type": "files", "epoch", "files": [ { "id", "hash", "mimeType" } ], "seq" }`, after the bytes were uploaded: these file ids mean those bytes. 1 to 256 files. `id` is 1–64 letters, digits, `_`, and `-`. `seq` is optional, as in `elements`.
 
 Server → client:
@@ -203,19 +205,22 @@ Server → client:
 - `elements` — `{ "type": "elements", "epoch", "elements": [ ... ] }`: the elements of another connection's batch that the server kept. Not sent to the connection they came from.
 - `slot` — `{ "type": "slot", "slot", "title" }` after a title change.
 - `presence` — `{ "type": "presence", "connectionId", "displayName", "cursor" }`: a connection that joined (`cursor` is `null`), moved its cursor, or was renamed. A cursor goes to the other connections. A rename goes to every connection, the renamed one included.
-- `presence-end` — `{ "type": "presence-end", "connectionId" }` when a connection leaves.
+- `presence-end` — `{ "type": "presence-end", "connectionId" }` when a connection leaves. A follow of it ends with it.
+- `followers` — `{ "type": "followers", "count" }`: how many connections follow this one now, after each change.
+- `view` — `{ "type": "view", "connectionId", "view" }`: the newest view of the connection this one follows, as it sent it. Sent to its followers alone.
 - `files` — `{ "type": "files", "epoch", "files": [ { "id", "hash", "mimeType" } ] }`: the files of another connection's message that were new to the slot, for this connection to fetch. Not sent to the connection they came from.
 - `saved` — `{ "type": "saved", "epoch", "savedAt", "seq" }` after a head flush: every message this connection sent up to number `seq` is in the slot's head, on the server's disk. `savedAt` is the head's. Sent only to a connection that numbered a message, and once for the newest number a flush held.
 - `error` — `{ "type": "error", "error", "message" }`. The connection stays open.
 
 | `error` | When |
 |---|---|
-| `bad_message` | Not JSON text, not an object with a `type`, a second `hello`, or a field of the wrong shape. Nothing was applied. |
+| `bad_message` | Not JSON text, not an object with a `type`, a second `hello`, or a field of the wrong shape, a `follow` without `connectionId` among them. Nothing was applied. |
 | `unknown_type` | A `type` this segl does not know. |
 | `view_only` | `elements` or `files` from a connection that may not edit: one that had no pass the server takes in `hello`, or one whose pass has ended since. Nothing was applied, and nobody else was told. |
 | `scene_too_large` | `elements` that would take the slot's elements over `max_scene_bytes`. Nothing was applied. |
 | `unknown_file` | `files` that named a hash segl has no bytes for. Nothing was applied. The browser uploads the bytes and sends the message again. |
 | `invalid_name` | `rename` with a name that is not 1–40 characters once title-cased. |
+| `cannot_follow` | `follow` of a connection that is not on the slot, of this one, or of one that follows this one. The follow there was stays. |
 
 The server applies `elements` only when the sender is an editor and `epoch` matches the room. A connection is an editor until its pass ends: the first `elements` or `files` after that time is answered `view_only`, and from then on the connection is a viewer, as one that came without a pass. `welcome` is not sent again, and need not be: it said how long the pass had, in `editEndsIn`, and segl's own page has stopped by then. On an epoch mismatch it sends `scene` and does not apply the payload. It keeps the copy of each element with the higher `version`, and on equal versions the one with the lower `versionNonce` (`ARCHITECTURE.md`, collaboration). A deleted element is an element with `isDeleted` true, and is kept.
 
@@ -227,7 +232,9 @@ A restore or an import ends the wait for `saved`. What a connection sent for the
 
 `rename` is allowed for viewers. The server title-cases the name, sends `presence`, and does not write SQLite.
 
-A participant has no color. The editor draws a connection's cursor in a color it works out from `connectionId`, the same in every browser, and takes no other.
+Follow mode (T18, D2-041): neither `follow` nor `view` changes the scene, so the edit gate does not apply, and a viewer may follow and be followed. A follow ends when either connection leaves, and the server sends nothing more for it: the follower has `presence-end`. A loop is refused because each browser would fit the other's view in turn, and with screens of two sizes they would zoom out without end. The server keeps no view: a connection's followers get each one it sends, and nobody else.
+
+A participant has no color. The editor draws a connection's cursor in a color it works out from `connectionId`, the same in every browser, and takes no other. Diagram mode works the same color out from the same id.
 
 Limits:
 
@@ -239,7 +246,7 @@ Limits:
 
 ### Diagram mode, slot 9
 
-Slot 9 is drawio's editor (D2-039, D2-040). Its socket is the same `/collab?slot=9`, with the same handshake, `hello`, gate, Origin check, and `internal_networks`. `presence`, `rename`, `slot`, `presence-end`, and `saved` are as above. Its scene is drawio's XML, which the server cannot read: drawio applies a patch, in each browser. So the server numbers each patch it takes, in the order it takes them, and sends it to every connection on the slot, the sender too.
+Slot 9 is drawio's editor (D2-039, D2-040). Its socket is the same `/collab?slot=9`, with the same handshake, `hello`, gate, Origin check, and `internal_networks`. `presence`, `rename`, `follow`, `view`, `followers`, `slot`, `presence-end`, and `saved` are as above, but that a cursor and a view are in the diagram's coordinates and name the page of the diagram they are on: `"cursor": { "x", "y", "page" }` and `"view": { "x", "y", "width", "height", "page" }`. `page` is the id drawio gives the page, text of 1 to 128 characters, or `null` when drawio named none. On slots 1–8 a cursor or a view with a page is `bad_message`. Its scene is drawio's XML, which the server cannot read: drawio applies a patch, in each browser. So the server numbers each patch it takes, in the order it takes them, and sends it to every connection on the slot, the sender too.
 
 Client → server:
 
@@ -263,7 +270,7 @@ The pen: anyone who may edit can take it, even from its holder. A viewer's `pen`
 
 | `error` | When, on slot 9 |
 |---|---|
-| `bad_message` | A `patch`, `copy`, or `pen` with a field of the wrong shape, or a `base` past the room's count. |
+| `bad_message` | A `patch`, `copy`, or `pen` with a field of the wrong shape, or a `base` past the room's count. A cursor or a view whose `page` is not text of 1 to 128 characters, or null. |
 | `unknown_type` | A whiteboard's message, such as `elements` or `files`, or any other type. |
 | `view_only` | A `patch`, `copy`, or `pen` take from a connection that may not edit. |
 | `pen_held` | A `patch` or `copy` while another connection holds the pen. |
