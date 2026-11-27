@@ -25,3 +25,9 @@ segl.toml
 .DS_Store
 # Documentation site built by scripts/build_docs.py.
 _site/
+
+# Local notes and status files a developer keeps beside the tree; never committed
+/STATUS.md
+/CLAUDE.local.md
+/local-notes/
+.claude/settings.local.json
