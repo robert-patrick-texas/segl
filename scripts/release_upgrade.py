@@ -326,8 +326,38 @@ def upgrade(root: Path, runner: Runner, sources: Sources, today: dt.date | None 
     # passed on it here, or CI passed on a commit with the same files.
     good = known_good(root, runner)
     tree_was_good = good is not None and not good.changed
-    # Whether the tree, or the tree with moves, is known to be good.
-    tree_is_good = tree_was_good
+    # The tools first, each with its own check, so that the suite's one run
+    # below covers their moves too, and the pass it records is of the tree
+    # this leaves: `cut` then has nothing to run again.
+    for status in narrow:
+        commands = narrow_commands(root, status)
+        assert commands is not None
+        component = status.component
+        saved = snapshot(root)
+        if not move(status):
+            continue
+        if not commands:
+            keep(status)
+            print(f"{component.label}: nothing here runs it; CI on the push is its test")
+            continue
+        reason = run_commands(runner, commands)
+        if reason is None:
+            keep(status)
+            continue
+        restore(saved)
+        if not tree_was_good:
+            # The check fails with the move. Run it on the tree as it was too,
+            # unless that is known to be good, to tell a broken tree from a
+            # broken move, as the suite below does.
+            before = run_commands(runner, commands)
+            if before is not None:
+                print(
+                    f"{component.label}: its check fails without the move too ({before}); not held"
+                )
+                unknown.append(status)
+                continue
+        hold(status, reason)
+        held += 1
     if wide:
         # The components that can break anything, together, and the suite
         # once. A pass shows the tree and every one of these moves to be good.
@@ -340,7 +370,6 @@ def upgrade(root: Path, runner: Runner, sources: Sources, today: dt.date | None 
             print(f"trying together: {labels}")
             reason = run_suite(runner, root, package)
         if reason is None:
-            tree_is_good = bool(moved)
             for status in moved:
                 keep(status)
         else:
@@ -361,7 +390,6 @@ def upgrade(root: Path, runner: Runner, sources: Sources, today: dt.date | None 
             if baseline is not None:
                 print(f"the suite fails before any move ({baseline}); nothing was changed")
                 return 1
-            tree_is_good = True
             if len(moved) == 1:
                 # It ran alone already.
                 hold(moved[0], reason)
@@ -379,32 +407,6 @@ def upgrade(root: Path, runner: Runner, sources: Sources, today: dt.date | None 
                     restore(saved)
                     hold(status, alone)
                     held += 1
-    for status in narrow:
-        commands = narrow_commands(root, status)
-        assert commands is not None
-        component = status.component
-        if commands and not tree_is_good:
-            # No whole-suite run has shown the tree to be good. These checks
-            # take seconds, so run them as the tree stands first.
-            before = run_commands(runner, commands)
-            if before is not None:
-                print(f"{component.label}: its check fails before the move ({before}); not tried")
-                unknown.append(status)
-                continue
-        saved = snapshot(root)
-        if not move(status):
-            continue
-        if not commands:
-            keep(status)
-            print(f"{component.label}: nothing here runs it; CI on the push is its test")
-            continue
-        reason = run_commands(runner, commands)
-        if reason is None:
-            keep(status)
-            continue
-        restore(saved)
-        hold(status, reason)
-        held += 1
     if held:
         # Put the environments back on the pins that were kept.
         for argv in sync_commands(root):

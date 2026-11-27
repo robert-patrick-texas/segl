@@ -26,7 +26,7 @@ import pytest
 from release_components import LookupFailed
 from release_proc import Result
 from release_upgrade import NARROW_PYTHON, NARROW_WEB, suite_commands, upgrade
-from suite import step_of
+from suite import recorded_pass, step_of, work_tree
 
 TODAY = dt.date(2026, 11, 12)
 
@@ -125,10 +125,10 @@ def test_upgrade_holds_the_component_that_fails_and_keeps_the_others(
     )
     # A [python.docs] move also updates md2html's inline metadata.
     assert '#     "markdown-it-py==4.4.0",' in (tree / "tools/md2html/md2html.py").read_text()
-    # pytest ran five times: for the two dependencies together, which failed,
-    # for the tree as it was, for each of the two alone, and for md2html's
-    # package, whose move only pytest covers. `uv sync` ran last, to put the
-    # environment back on the kept pin.
+    # pytest ran five times: for md2html's package, whose move only pytest
+    # covers, then for the two dependencies together, which failed, for the
+    # tree as it was, and for each of the two alone. `uv sync` ran last, to
+    # put the environment back on the kept pin.
     assert len(runner.called("uv", "run", "pytest")) == 5
     assert runner.calls[-1] == ["uv", "sync"]
 
@@ -174,9 +174,8 @@ def test_a_tool_gets_the_checks_that_use_it_and_no_others(
     assert versions(tree)["python"]["dev"] == {"ruff": "0.2.0"}
     assert 'dev = ["ruff==0.2.0"]' in (tree / "pyproject.toml").read_text()
     checks = ["uv sync", "uv run ruff check .", "uv run ruff format --check ."]
-    # As the tree stands, since no run of the suite has shown it to be good,
-    # and then with the move.
-    assert commands(runner) == in_stages(checks + checks)
+    # Once, with the move. The tree as it was is checked only when that fails.
+    assert commands(runner) == in_stages(checks)
     assert not runner.called("uv", "run", "pytest")
 
 
@@ -202,7 +201,7 @@ def test_a_tool_whose_check_fails_after_the_move_is_held(
     assert runner.calls[-1] == ["uv", "sync"]
 
 
-def test_a_tool_whose_check_fails_before_the_move_is_not_tried(
+def test_a_tool_whose_check_fails_without_the_move_too_is_not_held(
     tree: Path, fake_runner, fake_sources, capsys
 ) -> None:
     add_tool(tree, "ruff", "0.1.0")
@@ -213,12 +212,12 @@ def test_a_tool_whose_check_fails_before_the_move_is_not_tried(
 
     assert (tree / "versions.toml").read_text() == before
     assert "ruff==0.1.0" in (tree / "pyproject.toml").read_text()
-    assert (
-        "its check fails before the move (`uv run ruff check .` failed)" in capsys.readouterr().out
+    assert "its check fails without the move too (`uv run ruff check .` failed); not held" in (
+        capsys.readouterr().out
     )
 
 
-def test_after_a_suite_run_passed_a_tool_is_not_checked_twice(
+def test_a_tool_moves_before_the_suite_so_that_its_one_run_covers_both(
     tree: Path, fake_runner, fake_sources
 ) -> None:
     add_tool(tree, "ruff", "0.1.0")
@@ -232,10 +231,11 @@ def test_after_a_suite_run_passed_a_tool_is_not_checked_twice(
     assert doc["python"]["dev"] == {"ruff": "0.2.0"}
     assert doc["python"]["dependencies"]["good"] == "1.1.0"
     suite = [" ".join(argv) for argv in suite_commands(tree)]
-    # The suite for the dependency, which showed the tree to be good, and
-    # then ruff's own checks once, with its move.
+    # ruff's own checks once, with its move, and then the suite for the
+    # dependency, on the tree with both moves: the pass it records is of the
+    # tree `upgrade` leaves, so `cut` has nothing to run again.
     assert commands(runner) == in_stages(
-        [*suite, "uv sync", "uv run ruff check .", "uv run ruff format --check ."]
+        ["uv sync", "uv run ruff check .", "uv run ruff format --check .", *suite]
     )
 
 
@@ -611,3 +611,20 @@ def test_a_go_tool_at_a_new_major_version_is_left_for_a_person(
     assert "goreleaser/nfpm" not in versions(containers)["held"]
     assert "v3.0.0 is a new major version, and its module path changes" in capsys.readouterr().out
     assert not runner.called(*INSTALL)
+
+
+def test_the_pass_upgrade_records_is_of_the_tree_it_leaves(
+    repo: Path, fake_runner, fake_sources
+) -> None:
+    """A tool moved after the suite left a pass of another tree, and `cut` ran it all again."""
+    add_tool(repo, "ruff", "0.1.0")
+    runner = fake_runner(repo)
+    sources = fake_sources(
+        runner, {"ruff": "0.2.0", "good": "1.1.0", "astral-sh/setup-uv": "v10.4.0"}
+    )
+
+    assert upgrade(repo, runner, sources, TODAY) == 0
+
+    kept = recorded_pass(repo)
+    assert kept is not None
+    assert kept[0] == work_tree(repo)

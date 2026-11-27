@@ -4,10 +4,11 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
-Test tooling only: a stopped install test cleans up, and a test never gets a port another test has.
+Release and test tooling only: a stopped install test cleans up, `upgrade` leaves `cut` nothing to run again, and a test never gets a port another test has.
 
 ### Changed
 
+- `scripts/release.py upgrade` moves the tools that only their own check covers before the components the whole suite covers, and checks each once with its move. The suite's one run then covers every move, and `cut` has nothing to run again: after 0.6.0's upgrade, `cut` ran all of the suite and the install test again, 11 minutes (`docs/RELEASING.md`).
 - A stopped install test, by Ctrl+C or by the suite when a check beside it fails, ends at once and removes its containers and its folders under `/tmp`. Before, `docker run` held the stop, and the script was killed 30 seconds later with its container still running and its folder left behind.
 
 ### Fixed
