@@ -707,7 +707,7 @@ As built (2026-11-27):
 
 ## T18 — Follow mode, and cursors in Diagram mode
 
-- Status: next
+- Status: done
 - Requires: T17
 - Requirements: S-002 (cursors on slot 9), S-010, and a new row for follow mode
 - Read: `docs/DECISIONS.md` D2-013, D2-025, D2-027, and D2-039, `docs/API.md` (the WebSocket, `presence`), `src/segl/room.py`, `web/src/bar/`, `web/src/canvas/`, `web/src/diagram/`, `web/src/collab/session.ts`, `web/drawio/js/PostConfig.js`, the pinned editor's follow types (`onUserFollow`, `userToFollow`, `followedBy`), its `maybeUnfollowRemoteUser`, and its `getClientColor`, drawio's embed page (the `viewbox` action and `zoomEvents`), drawio's `js/diagramly/P2PCollab.js` (`sendCursor` and `updateCursor`), and the STATUS entries of 2026-11-26 and 2026-11-27
