@@ -1603,3 +1603,10 @@ This file is the source of truth for what is done and what to do next. Update it
   - CI run 45896476501 on `aebb4bc` succeeded in 3 minutes 14 seconds. Its `package` job ran the new steps: "Build the package" in 41 seconds, which wrote `dist/segl_0.5.0_amd64.deb`, and "Install it" in 2:04, on that file. It kept the file as `segl-deb`, 44,423,047 bytes. The job took 3:03, where it took 3:19 on `6e4a5d9`. Pages run succeeded.
   - `docs/DEVELOPMENT.md`, `docs/DEPLOY.md`, and `docs/RELEASING.md` say where the test builds. `docs/RELEASING.md`'s sample of `publish` with no CI package now shows two commands, each counting from its own start, with times from the suite's install test of 2026-11-26. `CHANGELOG.md` has a Changed bullet.
   - Not exercised: `publish` itself, which runs at the next release.
+- 2026-11-26: The dev image leaves out local notes and status files. It is an out-of-queue change, at the user's word: "add the local files to .dockerignore in segl", then "commit both" and "push both". Next task remains T17. Evidence, on commit `3ff915c`:
+  - Why: a developer may keep `STATUS.md`, `CLAUDE.local.md`, `local-notes/` and `.claude/` beside the tree, untracked. `deploy/Containerfile` copies the build context, and `.dockerignore` did not leave them out, so the dev container took them.
+  - What changed: `.dockerignore` lists `/STATUS.md`, `/CLAUDE.local.md`, `/local-notes/` and `/.claude/`. The leading slash matches the top folder only, so `draft2/STATUS.md` is still copied.
+  - A throwaway build of the context (`COPY . /ctx` on `ubuntu:26.04`, no network) found none of the four in the image and `draft2/STATUS.md` present. The image was removed after.
+  - `python3 scripts/suite.py --changed` passed: nothing in the suite covers `.dockerignore`, so it ran `tests/test_license_headers.py`, `6 passed in 1.36s`.
+  - CI run 45941916072 on `3ff915c` succeeded in 3 minutes 46 seconds: checks 1:18, browser groups 3:32 and 3:43, package 3:06. Pages run succeeded.
+  - No document or CHANGELOG change: the image is the dev container, not the package.
