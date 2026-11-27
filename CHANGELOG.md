@@ -4,7 +4,11 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
-Test tooling only: a test never gets a port another test has.
+Test tooling only: a stopped install test cleans up, and a test never gets a port another test has.
+
+### Changed
+
+- A stopped install test, by Ctrl+C or by the suite when a check beside it fails, ends at once and removes its containers and its folders under `/tmp`. Before, `docker run` held the stop, and the script was killed 30 seconds later with its container still running and its folder left behind.
 
 ### Fixed
 

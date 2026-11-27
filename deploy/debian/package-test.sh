@@ -24,6 +24,29 @@
 #                         with other work, 600 unless set. 0 does not wait.
 set -euo pipefail
 
+# A stop, Ctrl+C or the suite's when a check beside this one failed, ends the
+# script at once, and the EXIT trap below cleans up. bash runs a trap only
+# when the command in the foreground ends, and `docker run` hands a stop to
+# its container instead of ending, so the long steps run through `stoppable`:
+# bash's `wait` returns at once. The step is told to stop too, and cleans up
+# its own before this script removes the folder it works in.
+step=
+stop() {
+    if [ -n "$step" ]; then
+        kill -TERM "$step" 2>/dev/null || true
+        wait "$step" 2>/dev/null || true
+    fi
+    exit "$1"
+}
+trap 'stop 130' INT
+trap 'stop 143' TERM
+stoppable() {
+    "$@" &
+    step=$!
+    wait "$step"
+    step=
+}
+
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 # On a machine that is busy with other work, wait for room, and go ahead
 # after ten minutes (scripts/capacity.py). The build below does not wait again.
@@ -43,12 +66,13 @@ name=segl_${version}_amd64.deb
 
 work=$(mktemp -d)
 container=segl-package-test-$$
+releases=segl-package-releases-$$
 cleanup() {
     if [ -n "${SEGL_KEEP_CONTAINER:-}" ]; then
         echo "package-test: kept container $container, and its packages in $work"
         return
     fi
-    docker rm -f "$container" >/dev/null 2>&1 || true
+    docker rm -f "$container" "$releases" >/dev/null 2>&1 || true
     rm -rf "$work"
 }
 trap cleanup EXIT
@@ -57,7 +81,7 @@ deb=${1:-}
 if [ -z "$deb" ]; then
     # Not into dist/: it holds the packages built there on purpose, such as a
     # release's, and this one is of the same version.
-    deploy/debian/build-deb.sh "$work/build"
+    stoppable deploy/debian/build-deb.sh "$work/build"
     deb=$work/build/$name
 fi
 [ "$(basename "$deb")" = "$name" ] || {
@@ -81,7 +105,8 @@ sign() {
 
 # Releases 9.0.1 to 9.0.5: the package under test at higher versions, each
 # with a few files changed.
-docker run --rm --volume "$work:/w" --volume "$PWD/deploy/debian:/d:ro" \
+stoppable docker run --rm --name "$releases" \
+    --mount "type=bind,source=$work,target=/w" --volume "$PWD/deploy/debian:/d:ro" \
     docker.io/library/ubuntu:26.04 bash /d/test-releases.sh "$name" "$version" "$(id -u):$(id -g)"
 for release in 9.0.1 9.0.2 9.0.3 9.0.4 9.0.5; do
     sign "$work/$release" "$work/keys/release"
@@ -132,6 +157,6 @@ case $state in
         exit 1
         ;;
 esac
-docker exec --env SEGL_VERSION="$version" --env SEGL_PYTHON="$python" \
+stoppable docker exec --env SEGL_VERSION="$version" --env SEGL_PYTHON="$python" \
     --env SEGL_LIBERATION_SHA256="$liberation" \
     "$container" bash /deploy/debian/systemd-test.sh

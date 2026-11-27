@@ -43,7 +43,15 @@ print(version)')
 epoch=$(git log -1 --format=%ct)
 
 stage=$(mktemp -d)
-trap 'rm -rf "$stage"' EXIT
+build=segl-deb-build-$$
+trap 'rm -rf "$stage"; docker rm -f "$build" >/dev/null 2>&1 || true' EXIT
+# A stop ends the script, and the EXIT trap removes $stage and the build's
+# container. The build runs in the background, since `docker run` hands a
+# stop to its container instead of ending, and bash's `wait` returns at once.
+# Its folders are bind mounts that must exist: a container that starts after
+# the trap then fails, where a --volume would make the folder again, as root.
+trap 'exit 130' INT
+trap 'exit 143' TERM
 git ls-files -z --cached --others --exclude-standard |
     while IFS= read -r -d '' path; do
         # A tracked file deleted in the work tree is not built.
@@ -61,10 +69,12 @@ echo "==> building in a clean ubuntu:26.04 container: the paths below are inside
 mounts=()
 if [ -n "$uv_cache" ]; then mounts+=(--volume "$uv_cache:/root/.cache/uv"); fi
 if [ -n "$npm_cache" ]; then mounts+=(--volume "$npm_cache:/root/.npm"); fi
-docker run --rm \
-    --volume "$stage:/in:ro" --volume "$out_dir:/out" "${mounts[@]}" \
+docker run --rm --name "$build" \
+    --mount "type=bind,source=$stage,target=/in,readonly" \
+    --mount "type=bind,source=$out_dir,target=/out" "${mounts[@]}" \
     --env SEGL_VERSION="$version" --env SOURCE_DATE_EPOCH="$epoch" \
     --env HOST_UID="$(id -u)" --env HOST_GID="$(id -g)" \
-    "$image" bash ${SEGL_BUILD_TRACE:+-x} /in/build.sh
+    "$image" bash ${SEGL_BUILD_TRACE:+-x} /in/build.sh &
+wait $!
 
 echo "build-deb: $out_dir/segl_${version}_amd64.deb"

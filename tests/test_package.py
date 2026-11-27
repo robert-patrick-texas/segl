@@ -699,6 +699,35 @@ def test_the_operator_notes_show_no_real_code_or_secret() -> None:
     assert shown.group(1).startswith("<"), "a placeholder, not a secret someone would copy"
 
 
+def test_a_stop_ends_the_install_test_and_its_build_at_once_and_they_clean_up() -> None:
+    """A stop reaches bash only between commands, and `docker run` passes it on and waits.
+
+    Stopping the real script at three points left nothing behind: no
+    container and no folder under /tmp (STATUS of 2026-11-27).
+    """
+    install = read(DEBIAN / "package-test.sh")
+    build = read(DEBIAN / "build-deb.sh")
+
+    for script in (install, build):
+        assert "\ntrap 'exit 130' INT\n" in script or "\ntrap 'stop 130' INT\n" in script
+        assert "\ntrap 'exit 143' TERM\n" in script or "\ntrap 'stop 143' TERM\n" in script
+    # The long steps run in the background, so that bash's `wait` returns at
+    # a stop, and the stop is passed on to the step, which cleans up first.
+    assert 'stoppable() {\n    "$@" &\n    step=$!\n    wait "$step"\n' in install
+    assert 'kill -TERM "$step"' in install
+    assert '\nstoppable docker run --rm --name "$releases" ' in install
+    assert "\nstoppable docker exec " in install
+    assert '"$container" "$releases"' in install
+    assert "/in/build.sh &\nwait $!\n" in build
+    assert 'trap \'rm -rf "$stage"; docker rm -f "$build"' in build
+    # Bind mounts that must exist: a container that starts after the clean-up
+    # fails, where --volume would make the folder again, as root.
+    assert '--mount "type=bind,source=$stage,target=/in,readonly"' in build
+    assert '--mount "type=bind,source=$out_dir,target=/out"' in build
+    assert '--mount "type=bind,source=$work,target=/w"' in install
+    assert '--volume "$stage' not in build and '--volume "$work:/w"' not in install
+
+
 def test_the_install_test_names_the_host_of_the_example_site() -> None:
     site = read(DEPLOY / "nginx" / "site-board.example.conf")
     runner = read(DEBIAN / "package-test.sh")
@@ -722,7 +751,7 @@ def test_the_build_and_the_install_test_wait_for_a_machine_that_is_busy() -> Non
 
 
 # How the install test builds a package when it is given none.
-BUILDS_ITS_OWN = '\n    deploy/debian/build-deb.sh "$work/build"\n'
+BUILDS_ITS_OWN = '\n    stoppable deploy/debian/build-deb.sh "$work/build"\n'
 
 
 def test_the_install_test_builds_into_a_folder_of_its_own_and_leaves_dist_alone() -> None:
