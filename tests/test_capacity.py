@@ -443,6 +443,32 @@ def test_outside_a_worker_the_system_picks_the_port(monkeypatch: pytest.MonkeyPa
         probe.bind(("127.0.0.1", port))
 
 
+def test_outside_a_worker_a_port_is_never_handed_out_twice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The system may pick the same port twice in a row: the second is asked for again."""
+    monkeypatch.delenv("PYTEST_XDIST_WORKER", raising=False)
+    monkeypatch.setattr(harness, "_handed_out", set())
+    picks = iter([41001, 41001, 41001, 41002])
+
+    class Probe:
+        def __enter__(self) -> Probe:
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+        def bind(self, address: tuple[str, int]) -> None:
+            self.port = next(picks)
+
+        def getsockname(self) -> tuple[str, int]:
+            return ("127.0.0.1", self.port)
+
+    monkeypatch.setattr(harness.socket, "socket", Probe)
+
+    assert [harness.free_port(), harness.free_port()] == [41001, 41002]
+
+
 # The workers must agree on the tests.
 
 

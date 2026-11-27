@@ -4,6 +4,12 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
+Test tooling only: a test never gets a port another test has.
+
+### Fixed
+
+- Outside a pytest worker, `free_port` in `tests/harness.py` could hand out the same port twice, and two sites of one test's nginx then shared it.
+
 ## 0.6.0 — 2026-11-27
 
 History lasts a week: the newest 50 revisions, then one a minute, an hour, and a day as they age, and the board as it was before a big delete, a restore, or an import. `segl slot clear N` empties a slot for good.

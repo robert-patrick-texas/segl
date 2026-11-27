@@ -213,6 +213,11 @@ def make_settings(**changes: Any) -> Settings:
 WORKER_PORTS_FROM = 20000
 WORKER_PORTS_EACH = 1000
 _port_turn = itertools.count()
+# Outside a worker the system picks the port, and it can hand out the same
+# one twice in a row, before the first test's server has it: two sites of
+# one nginx got port 39417 that way (STATUS of 2026-11-27). So a port handed
+# out once is not handed out again in this process.
+_handed_out: set[int] = set()
 
 
 def worker_ports(worker: str) -> range | None:
@@ -227,9 +232,14 @@ def free_port() -> int:
     """Return a loopback TCP port that nothing is listening on."""
     ports = worker_ports(os.environ.get("PYTEST_XDIST_WORKER", ""))
     if ports is None:
-        with socket.socket() as probe:
-            probe.bind(("127.0.0.1", 0))
-            return probe.getsockname()[1]
+        for _ in range(100):
+            with socket.socket() as probe:
+                probe.bind(("127.0.0.1", 0))
+                port = probe.getsockname()[1]
+            if port not in _handed_out:
+                _handed_out.add(port)
+                return port
+        raise RuntimeError("the system handed out only ports this process has had already")
     # In turn, so that a port a test has just let go is not the next one out.
     for _ in ports:
         port = ports[next(_port_turn) % len(ports)]

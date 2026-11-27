@@ -157,7 +157,7 @@ python3 scripts/capacity.py          # what there is room for now
 
 On the development host, idle, three workers ran the 1,924 tests in about 34 seconds on 2026-11-13, where one process took 79 to 92. With all four cores busy on purpose and `SEGL_TEST_WAIT=20`, a run said `capacity: no room now (4.0 of 4 cores busy ...)`, waited 20 seconds, and ran in one process.
 
-Each worker takes the ports for its servers from a range of its own (`free_port` in `tests/harness.py`: 1,000 ports a worker, from 20000). Two workers that asked the system for a free port could be handed the same one. A test must not use a fixed port or a fixed path outside its `tmp_path`.
+Each worker takes the ports for its servers from a range of its own (`free_port` in `tests/harness.py`: 1,000 ports a worker, from 20000). Two workers that asked the system for a free port could be handed the same one. Outside a worker the system picks the port, and `free_port` never hands out one it handed out before in that process: the system can pick the same port twice in a row. A test must not use a fixed port or a fixed path outside its `tmp_path`.
 
 The package build and the install test are one job each. They wait the same way before they start (`python3 scripts/capacity.py --wait`), and go ahead after ten minutes.
 
