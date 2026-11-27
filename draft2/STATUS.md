@@ -1617,3 +1617,9 @@ This file is the source of truth for what is done and what to do next. Update it
   - The test's three cases ran 25 times in a row: 25 passed. `python3 scripts/suite.py --changed` passed: ruff, ty, and pytest on `tests/test_capacity.py`, `tests/test_license_headers.py` and `tests/test_suite.py`, `127 passed in 9.52s`.
   - CI run 45943670060 on `3d368ae` succeeded in 3 minutes 47 seconds: checks 1:17, browser groups 3:33 and 3:44, package 3:17. Pages run succeeded.
   - No document or CHANGELOG change: the change is in a test's helper.
+- 2026-11-27: Git ignores local notes and status files kept beside the tree. It is an out-of-queue change, at the user's word: "commit and push all ten" (the same change in ten of the owner's repositories). Next task remains T17. Evidence, on commit `20be7ac`:
+  - Why: a developer may keep `STATUS.md`, `CLAUDE.local.md` and `local-notes/` at the top of the tree, and `.claude/settings.local.json`. Until now only this clone's own exclude file kept them out of git; a fresh clone did not.
+  - What changed: `.gitignore` lists `/STATUS.md`, `/CLAUDE.local.md`, `/local-notes/` and `.claude/settings.local.json`. The leading slash matches the top folder only.
+  - The new `.gitignore` alone, in an empty repository with no other ignore file, ignored all four paths and none of `draft2/STATUS.md`, `CLAUDE.md` or `docs/x.md`.
+  - CI run 45949585588 on `20be7ac` succeeded, and so did its Pages run 45949585561.
+  - No document or CHANGELOG change: the change is in git's ignore list.
