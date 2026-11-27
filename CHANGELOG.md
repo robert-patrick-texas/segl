@@ -4,6 +4,8 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
+## 0.6.0 — 2026-11-27
+
 History lasts a week: the newest 50 revisions, then one a minute, an hour, and a day as they age, and the board as it was before a big delete, a restore, or an import. `segl slot clear N` empties a slot for good.
 
 ### New
