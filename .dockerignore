@@ -18,3 +18,9 @@ web/playwright-report/
 *.sqlite
 segl.toml
 *.local.toml
+
+# Local notes and Claude Code files a developer keeps beside the tree: never in an image
+/STATUS.md
+/CLAUDE.local.md
+/local-notes/
+/.claude/
