@@ -2,7 +2,7 @@
 
 This file is the source of truth for what is done and what to do next. Update it at the end of every task. Do not mark a task complete unless its acceptance commands were run and passed.
 
-- Updated: 2026-11-26
+- Updated: 2026-11-27
 - Phase: P1, network objects and Diagram mode (`docs/ROADMAP.md`). P0's gate passed (T13)
 - Next task: T17
 - Completed: T00, T00b, T01, T01b, T02, T03, T04, T05, T06, T07, T08, T09, T10, T10b, T11, T12, T13, T14, T15, T16
@@ -1610,3 +1610,10 @@ This file is the source of truth for what is done and what to do next. Update it
   - `python3 scripts/suite.py --changed` passed: nothing in the suite covers `.dockerignore`, so it ran `tests/test_license_headers.py`, `6 passed in 1.36s`.
   - CI run 45941916072 on `3ff915c` succeeded in 3 minutes 46 seconds: checks 1:18, browser groups 3:32 and 3:43, package 3:06. Pages run succeeded.
   - No document or CHANGELOG change: the image is the dev container, not the package.
+- 2026-11-27: A process that ends while `gone()` reads its stat counts as ended. It is an out-of-queue change, at the user's word: "make the gone() fix in segl and push it". Next task remains T17. Evidence, on commit `3d368ae`:
+  - Why: CI run 45942376310 on `c482472` failed one test, `tests/test_suite.py::test_a_cancelled_command_and_what_it_started_are_stopped[stops]`, with `ProcessLookupError` (2,272 passed), and the rerun of the failed job passed. `gone()` caught `FileNotFoundError` and `IndexError`, but a process that ends between the open of `/proc/PID/stat` and the read gives `ProcessLookupError`.
+  - What changed: `gone()` counts `ProcessLookupError` as ended too, with a comment that says why.
+  - A scratch check took `gone()` from `c482472` and from the change, and made the read raise `ProcessLookupError`: the old one raised it, the new one returned true. Both still said that a live process had not ended and that a missing one had.
+  - The test's three cases ran 25 times in a row: 25 passed. `python3 scripts/suite.py --changed` passed: ruff, ty, and pytest on `tests/test_capacity.py`, `tests/test_license_headers.py` and `tests/test_suite.py`, `127 passed in 9.52s`.
+  - CI run 45943670060 on `3d368ae` succeeded in 3 minutes 47 seconds: checks 1:17, browser groups 3:33 and 3:44, package 3:17. Pages run succeeded.
+  - No document or CHANGELOG change: the change is in a test's helper.
