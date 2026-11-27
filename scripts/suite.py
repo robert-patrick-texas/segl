@@ -890,10 +890,14 @@ def _commands(needs: _Needs, graph: Graph, web: bool) -> list[tuple[str, ...]]:
 # --- Running ----------------------------------------------------------------
 
 
-def run_whole(runner: Runner, root: Path) -> str | None:
-    """Run the whole suite, and keep the tree when it passes. Return what failed."""
+def run_whole(runner: Runner, root: Path, extra: Sequence[Sequence[str]] = ()) -> str | None:
+    """Run the whole suite, and keep the tree when it passes. Return what failed.
+
+    ``extra`` commands run with it, by stage: `upgrade` adds the install test
+    when a move changed a container file, since the suite builds no image.
+    """
     tree = work_tree(root)
-    failure = run(runner, whole_suite(root))
+    failure = run(runner, (*whole_suite(root), *extra))
     # A file changed while the suite ran: the pass is not that tree's.
     if failure is None and tree is not None and work_tree(root) == tree:
         record_pass(root, tree)

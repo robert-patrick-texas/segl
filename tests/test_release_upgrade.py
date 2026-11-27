@@ -23,6 +23,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pytest
+from release_components import LookupFailed
 from release_proc import Result
 from release_upgrade import NARROW_PYTHON, NARROW_WEB, suite_commands, upgrade
 from suite import step_of
@@ -424,3 +425,189 @@ def test_a_tree_known_to_be_good_is_not_run_again_after_a_failed_try(
     assert len(runner.called("uv", "run", "pytest")) == 1
     out = capsys.readouterr().out
     assert f"  CI passed on {head[:7]}: not run again" in out
+
+
+# The images and the Go tool the container files pin (CONTAINERS in conftest.py)
+
+INSTALL = ("deploy/debian/package-test.sh",)
+UV = "ghcr.io/astral-sh/uv"
+CONTAINER_FILES = ("deploy/Containerfile", "deploy/debian/Containerfile")
+
+
+def read_all(root: Path) -> dict[str, str]:
+    return {name: (root / name).read_text() for name in CONTAINER_FILES}
+
+
+def test_an_image_moves_in_every_container_file_with_its_new_digest(
+    containers: Path, fake_runner, fake_sources
+) -> None:
+    before = read_all(containers)
+    runner = fake_runner(containers, {INSTALL: ""})
+    sources = fake_sources(runner, {UV: "0.13.10"})
+
+    assert upgrade(containers, runner, sources, TODAY) == 0
+
+    for name, text in read_all(containers).items():
+        old = before[name].split("\n")
+        changed = [line for i, line in enumerate(text.split("\n")) if line != old[i]]
+        assert changed == [f"FROM {UV}:0.13.10@{sources.digest} AS uv"], name
+    # One lookup serves both files.
+    assert sources.digests_asked == [f"{UV}:0.13.10"]
+    # The suite builds no image, so the install test runs with it, once.
+    suite = [" ".join(argv) for argv in suite_commands(containers)]
+    assert commands(runner) == in_stages([*suite, " ".join(INSTALL)])
+
+
+def test_a_node_move_takes_the_node_image_lines_with_it(
+    containers: Path, fake_runner, fake_sources
+) -> None:
+    path = containers / "versions.toml"
+    path.write_text(path.read_text().replace('node = ""', 'node = "24.22.1"'))
+    (containers / "web").mkdir()
+    (containers / "web" / ".node-version").write_text("24.22.1\n")
+    runner = fake_runner(containers, {INSTALL: ""})
+    sources = fake_sources(runner, {"node": "24.23.0"})
+
+    assert upgrade(containers, runner, sources, TODAY) == 0
+
+    assert (containers / "web" / ".node-version").read_text() == "24.23.0\n"
+    for name, text in read_all(containers).items():
+        line = f"FROM docker.io/library/node:24.23.0-trixie-slim@{sources.digest} AS node\n"
+        assert line in text, name
+        assert f"FROM {UV}:0.13.7@sha256:" in text, name
+    assert sources.digests_asked == ["docker.io/library/node:24.23.0-trixie-slim"]
+    # The move changed the container files, so the install test ran with the suite.
+    assert len(runner.called(*INSTALL)) == 1
+
+
+def test_a_go_tool_moves_by_its_install_line(containers: Path, fake_runner, fake_sources) -> None:
+    before = read_all(containers)
+    runner = fake_runner(containers, {INSTALL: ""})
+    sources = fake_sources(runner, {"goreleaser/nfpm": "v2.50.0"})
+
+    assert upgrade(containers, runner, sources, TODAY) == 0
+
+    after = read_all(containers)
+    assert after["deploy/Containerfile"] == before["deploy/Containerfile"]
+    assert after["deploy/debian/Containerfile"] == before["deploy/debian/Containerfile"].replace(
+        "nfpm@v2.49.0\n", "nfpm@v2.50.0\n"
+    )
+    assert len(runner.called(*INSTALL)) == 1
+
+
+def test_an_image_whose_new_tag_has_no_digest_is_reported_and_left(
+    containers: Path, fake_runner, fake_sources, capsys
+) -> None:
+    before = read_all(containers)
+    runner = fake_runner(containers, {INSTALL: ""})
+    sources = fake_sources(runner, {UV: "0.13.10"})
+    sources.digest_errors[f"{UV}:0.13.10"] = LookupFailed("not published yet")
+
+    assert upgrade(containers, runner, sources, TODAY) == 1
+
+    assert read_all(containers) == before
+    assert UV not in versions(containers)["held"]
+    assert f"image {UV} 0.13.7: could not be moved (not published yet)" in capsys.readouterr().out
+
+
+def test_an_image_whose_install_test_fails_is_held_and_put_back(
+    containers: Path, fake_runner, fake_sources
+) -> None:
+    before = read_all(containers)
+
+    def install(argv: Sequence[str]) -> Result:
+        moved = "uv:0.13.10@" in (containers / "deploy/debian/Containerfile").read_text()
+        return Result(1 if moved else 0, "FAIL segl answers on its port\n")
+
+    runner = fake_runner(containers, {INSTALL: install})
+
+    assert upgrade(containers, runner, fake_sources(runner, {UV: "0.13.10"}), TODAY) == 0
+
+    assert read_all(containers) == before
+    held = versions(containers)["held"][UV]
+    assert (held["version"], held["skipped"]) == ("0.13.7", "0.13.10")
+    assert held["reason"] == "`deploy/debian/package-test.sh` failed"
+
+
+def test_a_failed_install_test_is_laid_on_the_move_that_caused_it(
+    containers: Path, fake_runner, fake_sources
+) -> None:
+    """Node's move changes image lines too: the install test runs for it, not only for uv's."""
+    path = containers / "versions.toml"
+    path.write_text(path.read_text().replace('node = ""', 'node = "24.22.1"'))
+    (containers / "web").mkdir()
+    (containers / "web" / ".node-version").write_text("24.22.1\n")
+
+    def install(argv: Sequence[str]) -> Result:
+        moved = "node:24.23.0-" in (containers / "deploy/debian/Containerfile").read_text()
+        return Result(1 if moved else 0, "FAIL node does not start\n")
+
+    runner = fake_runner(containers, {INSTALL: install})
+    sources = fake_sources(runner, {"node": "24.23.0", UV: "0.13.10"})
+
+    assert upgrade(containers, runner, sources, TODAY) == 0
+
+    doc = versions(containers)
+    assert doc["runtime"]["node"] == "24.22.1"
+    assert doc["held"]["node"]["reason"] == "`deploy/debian/package-test.sh` failed"
+    assert UV not in doc["held"]
+    builder = (containers / "deploy/debian/Containerfile").read_text()
+    assert f"FROM {UV}:0.13.10@{sources.digest} AS uv\n" in builder
+    assert "node:24.22.1-trixie-slim@" in builder
+
+
+def test_an_install_test_that_fails_before_any_move_holds_nothing(
+    containers: Path, fake_runner, fake_sources, capsys
+) -> None:
+    before = read_all(containers)
+    runner = fake_runner(containers, {INSTALL: Result(1, "docker: cannot connect\n")})
+
+    assert upgrade(containers, runner, fake_sources(runner, {UV: "0.13.10"}), TODAY) == 1
+
+    assert read_all(containers) == before
+    assert versions(containers)["held"] == {}
+    assert "the suite fails before any move" in capsys.readouterr().out
+
+
+def test_a_good_tree_still_gets_the_install_test_before_any_move(
+    containers: Path, repo: Path, fake_runner, fake_sources, capsys
+) -> None:
+    """A good tree passed the suite, which builds no image: the install test runs alone."""
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+    def install(argv: Sequence[str]) -> Result:
+        moved = "uv:0.13.10@" in (repo / "deploy/debian/Containerfile").read_text()
+        return Result(1 if moved else 0, "FAIL segl answers on its port\n")
+
+    runner = fake_runner(
+        repo, {INSTALL: install, ("gh", "run", "list"): json.dumps([{"headSha": head}])}
+    )
+
+    assert upgrade(repo, runner, fake_sources(runner, {UV: "0.13.10"}), TODAY) == 0
+
+    assert versions(repo)["held"][UV]["reason"] == "`deploy/debian/package-test.sh` failed"
+    # The suite once, with the move, and the install test with it and then
+    # alone. ruff runs in a stage of its own before the install test.
+    assert len(runner.called("uv", "run", "ruff", "check", ".")) == 1
+    assert len(runner.called(*INSTALL)) == 2
+    assert "the install test, which that does not cover, runs before any move" in (
+        capsys.readouterr().out
+    )
+
+
+def test_a_go_tool_at_a_new_major_version_is_left_for_a_person(
+    containers: Path, fake_runner, fake_sources, capsys
+) -> None:
+    before = read_all(containers)
+    runner = fake_runner(containers, {INSTALL: ""})
+
+    assert (
+        upgrade(containers, runner, fake_sources(runner, {"goreleaser/nfpm": "v3.0.0"}), TODAY) == 1
+    )
+
+    assert read_all(containers) == before
+    assert "goreleaser/nfpm" not in versions(containers)["held"]
+    assert "v3.0.0 is a new major version, and its module path changes" in capsys.readouterr().out
+    assert not runner.called(*INSTALL)

@@ -21,7 +21,8 @@ slots. For the release script there are fakes and a throwaway git repository.
 The fake runner stands in for ``uv``, ``gh``, ``cloc``, and ``git push``, and
 runs other git commands for real against a work repository with a local bare
 ``origin``, as Sunstone's tools/release tests do. The fake sources stand in
-for PyPI, npm, nodejs.org, and GitHub. No test uses the network.
+for PyPI, npm, nodejs.org, go.dev, GitHub, and the image registries. No test
+uses the network.
 """
 
 import json
@@ -127,6 +128,33 @@ jobs:
       - uses: astral-sh/setup-uv@{SHA_OLD} # v10.3.3
 """
 
+DIGEST_OLD = "sha256:" + "a" * 64
+DIGEST_NEW = "sha256:" + "c" * 64
+
+# The two container files in the shape of segl's deploy/: the dev container,
+# and the package's builder image with nfpm. The base image is not a pin.
+CONTAINERS = {
+    "deploy/Containerfile": f"""\
+FROM ghcr.io/astral-sh/uv:0.13.7@{DIGEST_OLD} AS uv
+FROM docker.io/library/node:24.22.1-trixie-slim@{DIGEST_OLD} AS node
+
+FROM docker.io/library/ubuntu:26.04
+COPY --from=uv /uv /uvx /usr/local/bin/
+""",
+    "deploy/debian/Containerfile": f"""\
+ARG BASE_IMAGE=docker.io/library/ubuntu:26.04
+
+FROM docker.io/library/golang:1.27.4@{DIGEST_OLD} AS nfpm
+RUN CGO_ENABLED=0 GOTOOLCHAIN=local GOBIN=/out \\
+    go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.49.0
+
+FROM ghcr.io/astral-sh/uv:0.13.7@{DIGEST_OLD} AS uv
+FROM docker.io/library/node:24.22.1-trixie-slim@{DIGEST_OLD} AS node
+
+FROM ${{BASE_IMAGE}}
+""",
+}
+
 CHANGELOG = """\
 # Changelog
 
@@ -150,6 +178,10 @@ LATEST = {
     "markdown-it-py": "4.3.0",
     "actions/checkout": "v7.0.1",
     "astral-sh/setup-uv": "v10.3.3",
+    # The pins of CONTAINERS, current.
+    "ghcr.io/astral-sh/uv": "0.13.7",
+    "docker.io/library/golang": "1.27.4",
+    "goreleaser/nfpm": "v2.49.0",
 }
 
 Reply = str | Exception | Result | Callable[[Sequence[str]], Result]
@@ -241,6 +273,10 @@ class FakeSources(Sources):
     def __init__(self, runner: Runner, latest: dict[str, Any] | None = None) -> None:
         super().__init__(runner)
         self.newest: dict[str, Any] = {**LATEST, **(latest or {})}
+        # The digest of every new tag, and ``name:tag`` → an exception to raise instead.
+        self.digest = DIGEST_NEW
+        self.digest_errors: dict[str, Exception] = {}
+        self.digests_asked: list[str] = []
 
     def latest(self, component: Component) -> str:
         found = self.newest.get(component.name)
@@ -250,6 +286,13 @@ class FakeSources(Sources):
 
     def action_commit(self, repo: str, tag: str) -> str:
         return SHA_NEW
+
+    def image_digest(self, name: str, tag: str) -> str:
+        self.digests_asked.append(f"{name}:{tag}")
+        error = self.digest_errors.get(f"{name}:{tag}")
+        if error is not None:
+            raise error
+        return self.digest
 
 
 def git(repo: Path, *args: str) -> str:
@@ -301,6 +344,16 @@ def tree(tmp_path: Path) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
     return root
+
+
+@pytest.fixture
+def containers(tree: Path) -> Path:
+    """Add the container files of ``CONTAINERS`` to ``tree``, and return the tree."""
+    for name, content in CONTAINERS.items():
+        path = tree / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    return tree
 
 
 @pytest.fixture

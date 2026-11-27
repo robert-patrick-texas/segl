@@ -13,7 +13,7 @@
 
 ARG BASE_IMAGE=docker.io/library/ubuntu:26.04
 
-# nfpm 2.49.0, built statically. `go install` checks every module against
+# nfpm, built statically. `go install` checks every module against
 # the Go checksum database. GOTOOLCHAIN=local: the pinned image's Go builds
 # it, and Go fetches no other.
 FROM docker.io/library/golang:1.27.4@sha256:5e8afd493a7124a8586e134d9b532731161d4b9becf9dee5a5956b107426f93d AS nfpm

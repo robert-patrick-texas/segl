@@ -37,6 +37,8 @@ from release_components import (
 from release_proc import CommandError, Result
 from release_versions import at_precision, is_newer, newest_stable, parse_version, within_pin
 
+ROOT = Path(__file__).resolve().parents[1]
+
 
 def hold(root: Path, name: str, version: str, skipped: str) -> None:
     path = root / "versions.toml"
@@ -206,6 +208,139 @@ def test_real_sources_read_pypi_npm_node_uv_and_github(tree: Path, fake_runner) 
         sources.latest(Component("action", "a/missing", "v1"))
     with pytest.raises(LookupFailed):
         sources.latest(Component("python", "absent", "1.0.0"))
+
+
+def test_discover_lists_the_images_and_go_tools_the_container_files_pin(
+    containers: Path,
+) -> None:
+    found = [c for c in discover(containers) if c.kind in ("image", "go")]
+
+    # uv is pinned in both files and listed once. Node's image moves with
+    # runtime.node, and the base image, named by tag alone, is not a pin.
+    assert found == [
+        Component("image", "ghcr.io/astral-sh/uv", "0.13.7", ref="0.13.7"),
+        Component("image", "docker.io/library/golang", "1.27.4", ref="1.27.4"),
+        Component("go", "goreleaser/nfpm", "v2.49.0", ref="github.com/goreleaser/nfpm/v2/cmd/nfpm"),
+    ]
+
+
+def test_pins_in_other_shapes_are_seen_and_the_ones_that_cannot_be_checked_fail(
+    containers: Path, fake_sources
+) -> None:
+    digest = "sha256:" + "b" * 64
+    (containers / "deploy" / "Containerfile.more").write_text(
+        f"FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.26.11@{digest} AS go\n"
+        f"FROM docker.io/library/debian:bookworm@{digest} AS base\n"
+        "RUN go install -trimpath github.com/example/tool/cmd/tool@v1.2.0-rc.1 \\\n"
+        " && go install golang.org/x/tools/cmd/stringer@v0.30.0\n"
+    )
+    found = {(c.kind, c.name, c.version, c.ref) for c in discover(containers)}
+
+    assert ("image", "docker.io/library/golang", "1.26.11", "1.26.11") in found
+    assert ("image", "docker.io/library/debian", "bookworm", "bookworm") in found
+    assert ("go", "example/tool", "v1.2.0-rc.1", "github.com/example/tool/cmd/tool") in found
+    module = "golang.org/x/tools/cmd/stringer"
+    assert ("go", module, "v0.30.0", module) in found
+    statuses = {s.component.name: s for s in report(containers, fake_sources(None))}
+    # A tag with no version, and a module that is not on GitHub, cannot be checked.
+    assert statuses["docker.io/library/debian"].state == UNKNOWN
+    assert statuses[module].state == UNKNOWN
+
+    text = "FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.27.4@sha256:" + "b" * 64
+    moved = edits.set_image(
+        text, "docker.io/library/golang", "1.27.4", "1.27.5", "sha256:" + "d" * 64
+    )
+    assert (
+        moved == "FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.27.5@sha256:" + "d" * 64
+    )
+    text = "go install -trimpath github.com/example/tool/cmd/tool@v1.2.0 && true"
+    moved = edits.set_go_install(text, "github.com/example/tool/cmd/tool", "v1.2.0", "v1.3.0")
+    assert moved == text.replace("@v1.2.0", "@v1.3.0")
+
+
+def test_segls_own_container_files_pin_uv_go_and_nfpm() -> None:
+    """The real deploy/ files parse: a reworded FROM line would drop a pin unseen."""
+    found = {(c.kind, c.name) for c in discover(ROOT) if c.kind in ("image", "go")}
+
+    assert found == {
+        ("image", "ghcr.io/astral-sh/uv"),
+        ("image", "docker.io/library/golang"),
+        ("go", "goreleaser/nfpm"),
+    }
+
+
+def test_images_and_go_tools_are_checked_and_gated(containers: Path, fake_sources) -> None:
+    latest = {
+        "ghcr.io/astral-sh/uv": "0.13.10",
+        "docker.io/library/golang": "1.27.4",
+        "goreleaser/nfpm": "v2.50.0",
+    }
+    statuses = {s.component.name: s for s in report(containers, fake_sources(None, latest))}
+
+    assert (
+        statuses["ghcr.io/astral-sh/uv"].line == "image ghcr.io/astral-sh/uv 0.13.7: newer 0.13.10"
+    )
+    assert statuses["docker.io/library/golang"].state == CURRENT
+    assert statuses["goreleaser/nfpm"].line == "go goreleaser/nfpm v2.49.0: newer v2.50.0"
+    assert not gate_passes(list(statuses.values()))
+
+
+def test_real_sources_read_images_go_and_digests(tree: Path, fake_runner) -> None:
+    documents = {
+        "https://pypi.org/pypi/uv/json": {
+            "releases": {"0.13.7": [{"yanked": False}], "0.13.10": [{"yanked": False}]}
+        },
+        "https://go.dev/dl/?mode=json": [
+            {"version": "go1.28rc1", "stable": False},
+            {"version": "go1.27.5", "stable": True},
+            {"version": "go1.26.12", "stable": True},
+        ],
+    }
+    inspect = ("docker", "buildx", "imagetools", "inspect")
+    index = {"mediaType": "application/vnd.oci.image.index.v1+json", "digest": "sha256:" + "e" * 64}
+    runner = fake_runner(
+        tree,
+        {
+            (*inspect, "ghcr.io/astral-sh/uv:0.13.10"): json.dumps(index),
+            (*inspect, "ghcr.io/astral-sh/uv:9.9.9"): CommandError("docker: not found: 9.9.9"),
+            (*inspect, "ghcr.io/astral-sh/uv:0.0.1"): json.dumps({"digest": "latest"}),
+            ("gh", "api", "repos/goreleaser/nfpm/releases/latest"): '{"tag_name": "v2.50.0"}',
+        },
+    )
+    sources = Sources(runner, fetch=documents.__getitem__)
+
+    assert sources.latest(Component("image", "ghcr.io/astral-sh/uv", "0.13.7")) == "0.13.10"
+    assert sources.latest(Component("image", "docker.io/library/golang", "1.27.4")) == "1.27.5"
+    assert sources.latest(Component("go", "goreleaser/nfpm", "v2.49.0")) == "v2.50.0"
+    with pytest.raises(LookupFailed, match="no source of releases"):
+        sources.latest(Component("image", "docker.io/library/other", "1.0.0"))
+    assert sources.image_digest("ghcr.io/astral-sh/uv", "0.13.10") == "sha256:" + "e" * 64
+    with pytest.raises(LookupFailed, match=r"not found: 9\.9\.9"):
+        sources.image_digest("ghcr.io/astral-sh/uv", "9.9.9")
+    with pytest.raises(LookupFailed, match="'latest'"):
+        sources.image_digest("ghcr.io/astral-sh/uv", "0.0.1")
+
+
+def test_image_and_go_edits_move_only_their_own_lines(containers: Path) -> None:
+    text = (containers / "deploy/debian/Containerfile").read_text()
+    digest = "sha256:" + "d" * 64
+
+    moved = edits.set_image(text, "ghcr.io/astral-sh/uv", "0.13.7", "0.13.10", digest)
+    changed = [(a, b) for a, b in zip(text.split("\n"), moved.split("\n"), strict=True) if a != b]
+    assert [b for _a, b in changed] == [f"FROM ghcr.io/astral-sh/uv:0.13.10@{digest} AS uv"]
+
+    moved = edits.set_go_install(
+        text, "github.com/goreleaser/nfpm/v2/cmd/nfpm", "v2.49.0", "v2.50.0"
+    )
+    assert moved == text.replace("nfpm@v2.49.0", "nfpm@v2.50.0")
+
+    with pytest.raises(edits.EditError):
+        edits.set_image(text, "ghcr.io/astral-sh/uv", "0.13.6", "0.13.10", digest)
+    with pytest.raises(edits.EditError):
+        # A tag that only starts with the old one is another tag.
+        edits.set_image(text, "docker.io/library/node", "24.22.1", "24.23.0", digest)
+    with pytest.raises(edits.EditError):
+        edits.set_go_install(text, "github.com/goreleaser/nfpm/v2/cmd/nfpm", "v2.4", "v2.50.0")
 
 
 def test_hold_edits_keep_the_file_valid_and_its_comments(tree: Path) -> None:

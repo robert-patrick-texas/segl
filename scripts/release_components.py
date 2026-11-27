@@ -15,7 +15,8 @@
 """Every pinned component beside its newest stable release, and the gate.
 
 The components are Python, Node, the direct Python and web dependencies in
-versions.toml, and the GitHub Actions the workflows pin (docs/RELEASING.md).
+versions.toml, the GitHub Actions the workflows pin, and the images and Go
+tools the container files in deploy/ pin (docs/RELEASING.md).
 """
 
 from __future__ import annotations
@@ -37,6 +38,17 @@ from release_versions import is_newer, newest_stable, parse_version, within_pin
 PYTHON_TABLES = ("dependencies", "dev", "build", "docs")
 WEB_TABLES = ("dependencies", "dev")
 WORKFLOWS = ".github/workflows"
+CONTAINER_FILES = "deploy/**/Containerfile*"
+
+# Where the newest release of each image pinned by digest comes from: the
+# project whose version the image's tag carries. An image not named here
+# cannot be checked, and fails the gate.
+IMAGE_RELEASES = {
+    "ghcr.io/astral-sh/uv": "pypi:uv",
+    "docker.io/library/golang": "go.dev",
+}
+# Node's image carries runtime.node, and moves with it.
+NODE_IMAGE = "docker.io/library/node"
 
 CURRENT = "current"
 NEWER = "newer"
@@ -52,6 +64,18 @@ _SHA = re.compile(r"^[0-9a-f]{40}$")
 # A stable CPython build in `uv python list` output. Pre-releases (3.16.0a1)
 # and build variants (3.15.2+freethreaded) do not match.
 _STABLE_CPYTHON = re.compile(r"\bcpython-(\d+\.\d+\.\d+)-")
+# A stage taken from an image pinned by digest, after any flags such as
+# --platform. The tag starts with the version, and may go on with a variant:
+# 26.13.1-trixie-slim. A tag with no version leading cannot be checked.
+_FROM = re.compile(
+    r"^FROM\s+(?:--\S+\s+)*(?P<name>[^\s:@]+):(?P<tag>[^\s@]+)@sha256:[0-9a-f]{64}(?:\s|$)",
+    flags=re.MULTILINE,
+)
+_TAG_VERSION = re.compile(r"^v?\d+(?:\.\d+)*")
+# A Go tool built at a version, after any flags such as -trimpath. Its
+# releases are its GitHub repository's. Another module host cannot be checked.
+_GO_INSTALL = re.compile(r"\bgo install (?:-\S+\s+)*(?P<module>[^\s@]+)@(?P<version>v[\w.+-]+)")
+_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 class LookupFailed(Exception):
@@ -63,10 +87,12 @@ class Component:
     """One pinned component.
 
     ``kind`` is ``runtime`` (Python or Node), ``python`` or ``web`` (a direct
-    dependency), or ``action``. ``name`` is also the ``[held.<name>]`` key.
-    ``table`` is the versions.toml table of a dependency. ``ref`` is the text
-    after ``@`` in a workflow, and ``version`` is then the tag, or the version
-    in the comment after a commit pin.
+    dependency), ``action``, ``image`` (a container image pinned by digest),
+    or ``go`` (a tool a container file builds with ``go install``). ``name``
+    is also the ``[held.<name>]`` key. ``table`` is the versions.toml table of
+    a dependency. ``ref`` is the text after ``@`` in a workflow, and
+    ``version`` is then the tag, or the version in the comment after a commit
+    pin. For an image, ``ref`` is the whole tag, and for a Go tool the module.
     """
 
     kind: str
@@ -113,8 +139,9 @@ def fetch_json(url: str) -> Any:
 class Sources:
     """Looks up the newest stable release of a component.
 
-    PyPI, the npm registry, and nodejs.org are read over HTTPS. CPython comes
-    from ``uv python list``, and GitHub Actions from ``gh api``.
+    PyPI, the npm registry, nodejs.org, and go.dev are read over HTTPS.
+    CPython comes from ``uv python list``, GitHub Actions and Go tools from
+    ``gh api``, and an image's digest from ``docker buildx imagetools``.
     """
 
     def __init__(self, runner: Runner, fetch: Callable[[str], Any] = fetch_json) -> None:
@@ -134,7 +161,9 @@ class Sources:
                 found = self._pypi(component.name)
             elif component.kind == "web":
                 found = self._npm(component.name)
-            else:
+            elif component.kind == "image":
+                found = self._image(component.name)
+            else:  # an action, or a Go tool: their GitHub releases
                 found = self._github(component.name)
         except (urllib.error.URLError, TimeoutError, CommandError, ValueError) as exc:
             raise LookupFailed(str(exc)) from exc
@@ -160,6 +189,36 @@ class Sources:
         if not _SHA.match(sha):
             raise LookupFailed(f"cannot resolve {repo}@{tag}: {sha!r} is not a commit")
         return sha
+
+    def image_digest(self, name: str, tag: str) -> str:
+        """Return the digest an image's tag points at now: its index, for every platform.
+
+        Raises:
+            LookupFailed: When the registry does not know the tag.
+        """
+        argv = ["docker", "buildx", "imagetools", "inspect", f"{name}:{tag}"]
+        try:
+            out = self.runner.run([*argv, "--format", "{{json .Manifest}}"]).stdout
+            digest = str(json.loads(out)["digest"])
+        except (CommandError, ValueError, KeyError, TypeError) as exc:
+            raise LookupFailed(f"cannot find the digest of {name}:{tag}: {exc}") from exc
+        if not _DIGEST.match(digest):
+            raise LookupFailed(f"cannot find the digest of {name}:{tag}: {digest!r}")
+        return digest
+
+    def _image(self, name: str) -> str | None:
+        source = IMAGE_RELEASES.get(name)
+        if source == "go.dev":
+            return self._go()
+        if source and source.startswith("pypi:"):
+            return self._pypi(source.removeprefix("pypi:"))
+        raise LookupFailed(f"no source of releases for {name} (IMAGE_RELEASES)")
+
+    def _go(self) -> str | None:
+        releases = self.fetch("https://go.dev/dl/?mode=json")
+        return newest_stable(
+            str(r["version"]).removeprefix("go") for r in releases if r.get("stable")
+        )
 
     def _python(self) -> str | None:
         listing = self.runner.run(["uv", "python", "list", "--all-versions"]).stdout
@@ -240,6 +299,43 @@ def action_components(root: Path) -> list[Component]:
     return found
 
 
+def container_files(root: Path) -> list[Path]:
+    """Return the container files under deploy/, in path order."""
+    return sorted(p for p in root.glob(CONTAINER_FILES) if p.is_file())
+
+
+def image_pins(text: str) -> list[tuple[str, str, str]]:
+    """Return (name, tag, version) for each ``FROM`` line that pins an image by digest."""
+    pins = []
+    for match in _FROM.finditer(text):
+        version = _TAG_VERSION.match(match["tag"])
+        pins.append((match["name"], match["tag"], version[0] if version else match["tag"]))
+    return pins
+
+
+def container_components(root: Path) -> list[Component]:
+    """Return one component for each distinct image and Go tool the container files pin.
+
+    Node's image is left out: it carries runtime.node, and moves with it. An
+    image named by tag alone, as the base ``ubuntu:26.04`` is, is not a pin.
+    """
+    found: list[Component] = []
+    for path in container_files(root):
+        text = path.read_text(encoding="utf-8")
+        for name, tag, version in image_pins(text):
+            component = Component("image", name, version, ref=tag)
+            if name != NODE_IMAGE and component not in found:
+                found.append(component)
+        for match in _GO_INSTALL.finditer(text):
+            module = match["module"]
+            parts = module.split("/")
+            repo = "/".join(parts[1:3]) if parts[0] == "github.com" else module
+            component = Component("go", repo, match["version"], ref=module)
+            if component not in found:
+                found.append(component)
+    return found
+
+
 def discover(root: Path) -> list[Component]:
     """Return every pinned component of the repository at ``root``."""
     doc = load_versions(root)
@@ -252,6 +348,7 @@ def discover(root: Path) -> list[Component]:
         for ecosystem, table, name, version in direct_rows(doc)
     )
     found.extend(action_components(root))
+    found.extend(container_components(root))
     return found
 
 

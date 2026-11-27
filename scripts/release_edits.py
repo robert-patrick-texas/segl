@@ -155,6 +155,32 @@ def set_python_minor(text: str, old: str, new: str) -> str:
     )
 
 
+def set_image(text: str, name: str, old_tag: str, new_tag: str, digest: str) -> str:
+    """Move every ``FROM name:old_tag@sha256:...`` line of a container file to ``new_tag``.
+
+    ``digest`` is the new tag's, ``sha256:`` and all.
+    """
+    pattern = (
+        rf"^(FROM\s+(?:--\S+\s+)*){re.escape(name)}:{re.escape(old_tag)}"
+        rf"@sha256:[0-9a-f]{{64}}(?=\s|$)"
+    )
+    changed, count = re.subn(
+        pattern, lambda m: f"{m[1]}{name}:{new_tag}@{digest}", text, flags=re.MULTILINE
+    )
+    if count == 0:
+        raise EditError(f"{name}:{old_tag} pinned by digest not found")
+    return changed
+
+
+def set_go_install(text: str, module: str, old: str, new: str) -> str:
+    """Move every ``go install module@old`` of a container file to ``new``."""
+    pattern = rf"(\bgo install (?:-\S+\s+)*{re.escape(module)}@){re.escape(old)}(?![\w.+-])"
+    changed, count = re.subn(pattern, lambda m: f"{m[1]}{new}", text)
+    if count == 0:
+        raise EditError(f"go install {module}@{old} not found")
+    return changed
+
+
 def set_action(text: str, repo: str, old_ref: str, new_ref: str, new_note: str = "") -> str:
     """Move every ``uses: repo[/path]@old_ref`` line to ``new_ref``.
 

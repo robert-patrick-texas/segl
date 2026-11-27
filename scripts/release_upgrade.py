@@ -35,18 +35,22 @@ import release_edits as edits
 from release_components import (
     CURRENT,
     NEWER,
+    NODE_IMAGE,
     STALE,
     UNKNOWN,
     LookupFailed,
     Sources,
     Status,
+    container_files,
+    image_pins,
     load_versions,
     report,
     workflow_files,
 )
 from release_proc import Runner
-from release_versions import at_precision
+from release_versions import at_precision, parse_version
 from suite import (
+    INSTALL_TEST,
     PYTHON_CHECKS,
     PYTHON_SYNC,
     PYTHON_TESTS,
@@ -111,7 +115,8 @@ def narrow_commands(root: Path, status: Status) -> tuple[tuple[str, ...], ...] |
     """Return the checks that cover a component's move, or None for the whole suite.
 
     An empty answer means nothing here can test the move: a GitHub Action runs
-    in CI alone, and the push is its test.
+    in CI alone, and the push is its test. An image or a Go tool gets the
+    whole suite, and the install test with it (``run_suite``).
     """
     component = status.component
     if component.kind == "action":
@@ -123,9 +128,20 @@ def narrow_commands(root: Path, status: Status) -> tuple[tuple[str, ...], ...] |
     return None
 
 
-def run_suite(runner: Runner, root: Path) -> str | None:
-    """Run the whole suite. Return None when it passes, or what failed first."""
-    return run_whole(runner, root)
+def run_suite(runner: Runner, root: Path, package: bool = False) -> str | None:
+    """Run the whole suite. Return None when it passes, or what failed first.
+
+    With ``package``, the install test runs with it. The suite builds no
+    image, and the install test builds the package's builder image from
+    deploy/debian/Containerfile, so it is what tests a move of an image or a
+    Go tool, and a Node move, which takes Node's image lines with it.
+    """
+    return run_whole(runner, root, (INSTALL_TEST,) if package else ())
+
+
+def containers_changed(root: Path, saved: dict[Path, bytes | None]) -> bool:
+    """Report whether a container file differs from ``snapshot``'s copy."""
+    return any(saved.get(path) != path.read_bytes() for path in container_files(root))
 
 
 def run_commands(runner: Runner, commands: Sequence[tuple[str, ...]]) -> str | None:
@@ -150,7 +166,7 @@ def tracked_files(root: Path) -> list[Path]:
         "web/package-lock.json",
         "web/.node-version",
     ]
-    return [root / name for name in names] + workflow_files(root)
+    return [root / name for name in names] + workflow_files(root) + container_files(root)
 
 
 def snapshot(root: Path) -> dict[Path, bytes | None]:
@@ -180,12 +196,31 @@ def target_of(status: Status) -> str:
     return status.latest
 
 
+def move_image(root: Path, sources: Sources, name: str, old: str, new: str) -> None:
+    """Move every pin of image ``name`` at version ``old`` to ``new``, with its digest.
+
+    A tag keeps its variant: ``26.13.1-trixie-slim`` becomes ``26.14.0-trixie-slim``.
+    """
+    digests: dict[str, str] = {}
+    for path in container_files(root):
+        text = path.read_text(encoding="utf-8")
+        tags = sorted({t for n, t, v in image_pins(text) if n == name and v == old})
+        for tag in tags:
+            moved = new + tag.removeprefix(old)
+            if moved not in digests:
+                digests[moved] = sources.image_digest(name, moved)
+            text = edits.set_image(text, name, tag, moved, digests[moved])
+        if tags:
+            path.write_text(text, encoding="utf-8")
+
+
 def apply_move(root: Path, status: Status, sources: Sources) -> None:
     """Write the newest release of one component into versions.toml and its mirrors.
 
     Raises:
         release_edits.EditError: When a mirror does not hold the old pin.
-        LookupFailed: When the commit of an Actions release cannot be found.
+        LookupFailed: When the commit of an Actions release, or the digest of
+            an image's new tag, cannot be found.
     """
     component, new = status.component, target_of(status)
     old = component.version
@@ -198,6 +233,20 @@ def apply_move(root: Path, status: Status, sources: Sources) -> None:
     elif component.kind == "runtime":
         rewrite(versions, lambda t: edits.set_entry(t, "runtime", "node", new))
         (root / "web" / ".node-version").write_text(f"{new}\n", encoding="utf-8")
+        move_image(root, sources, NODE_IMAGE, old, new)
+    elif component.kind == "image":
+        move_image(root, sources, component.name, old, new)
+    elif component.kind == "go":
+        old_major, new_major = (parse_version(v) for v in (old, new))
+        if old_major is None or new_major is None or old_major.release[0] != new_major.release[0]:
+            # Go puts a major version above 1 in the module path (/v2/), so
+            # the line needs more than a new version: a person moves it.
+            raise edits.EditError(f"{new} is a new major version, and its module path changes")
+        for path in container_files(root):
+            try:
+                rewrite(path, lambda t: edits.set_go_install(t, component.ref, old, new))
+            except edits.EditError:
+                continue
     elif component.kind == "python":
         table = f"python.{component.table}"
         rewrite(versions, lambda t: edits.set_entry(t, table, component.name, new))
@@ -285,10 +334,11 @@ def upgrade(root: Path, runner: Runner, sources: Sources, today: dt.date | None 
         start = snapshot(root)
         moved = [status for status in wide if move(status)]
         labels = ", ".join(f"{s.component.label} {target_of(s)}" for s in moved)
+        package = containers_changed(root, start)
         reason = None
         if moved:
             print(f"trying together: {labels}")
-            reason = run_suite(runner, root)
+            reason = run_suite(runner, root, package)
         if reason is None:
             tree_is_good = bool(moved)
             for status in moved:
@@ -301,9 +351,13 @@ def upgrade(root: Path, runner: Runner, sources: Sources, today: dt.date | None 
                 print(f"the suite fails with those moves ({reason}); before any move,")
                 print(f"  {good.what}: not run again")
                 baseline = None
+                if package:
+                    # The suite builds no image, so that says nothing of the install test.
+                    print("  the install test, which that does not cover, runs before any move")
+                    baseline = run_commands(runner, (INSTALL_TEST,))
             else:
                 print(f"the suite fails with those moves ({reason}); running it before any move")
-                baseline = run_suite(runner, root)
+                baseline = run_suite(runner, root, package)
             if baseline is not None:
                 print(f"the suite fails before any move ({baseline}); nothing was changed")
                 return 1
@@ -318,7 +372,7 @@ def upgrade(root: Path, runner: Runner, sources: Sources, today: dt.date | None 
                     saved = snapshot(root)
                     if not move(status):
                         continue
-                    alone = run_suite(runner, root)
+                    alone = run_suite(runner, root, containers_changed(root, saved))
                     if alone is None:
                         keep(status)
                         continue
