@@ -613,7 +613,7 @@ As built (2026-11-26), where the text above left a choice:
 
 ## T17 — Diagram mode on slot 9
 
-- Status: next
+- Status: done
 - Requires: T16
 - Requirements: S-001 and S-003 (slot 9), and new rows for Diagram mode (D2-039)
 - Read: `docs/DECISIONS.md` D2-007, D2-017, D2-026, D2-037, and D2-039, `docs/ARCHITECTURE.md` (collaboration, the canvas adapter), `docs/API.md` (the WebSocket), `src/segl/room.py`, `src/segl/saver.py`, `web/src/SlotPage.tsx`, `web/src/collab/session.ts`, `web/e2e/pages.ts`, `deploy/debian/`, `scripts/release.py`, drawio's embed page (<https://www.drawio.com/doc/faq/embed-mode>), and the STATUS entry of 2026-11-26
@@ -707,7 +707,7 @@ As built (2026-11-27):
 
 ## T18 — Follow mode
 
-- Status: pending
+- Status: next
 - Requires: T17
 - Requirements: S-010, and a new row for follow mode
 - Read: `docs/DECISIONS.md` D2-013, D2-025, and D2-039, `docs/API.md` (the WebSocket, `presence`), `src/segl/room.py`, `web/src/bar/`, `web/src/canvas/`, `web/src/diagram/`, `web/src/collab/session.ts`, the pinned editor's follow types (`onUserFollow`, `userToFollow`, `followedBy`) and its `maybeUnfollowRemoteUser`, drawio's embed page (the `viewbox` action and `zoomEvents`), and the STATUS entries of 2026-11-26
