@@ -4,6 +4,8 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
+## 0.7.0 — 2026-11-27
+
 Slot 9 is Diagram mode: drawio's editor, which several people edit at once, or one at a time with the pen. Slot 9's whiteboard goes, and the package carries drawio. Release and test tooling: a stopped install test cleans up, and `upgrade` leaves `cut` nothing to run again.
 
 ### New
@@ -23,6 +25,11 @@ Slot 9 is Diagram mode: drawio's editor, which several people edit at once, or o
 ### Fixed
 
 - Outside a pytest worker, `free_port` in `tests/harness.py` could hand out the same port twice, and two sites of one test's nginx then shared it.
+
+### Additional Notes
+
+- Before you update, export from slot 9 anything you want to keep, as an Excalidraw file or an image: the update empties slot 9 for Diagram mode.
+- In Diagram mode, when several people add shapes at the same moment, a browser now and then loads the whole diagram again to match the others. It keeps your zoom and scroll, and waits while you type a label, but goes back to the first page of a diagram with several pages. To avoid it, take the pen: one person edits and the others watch.
 
 ## 0.6.0 — 2026-11-27
 
