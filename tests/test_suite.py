@@ -312,7 +312,8 @@ def gone(pid: int) -> bool:
     """Report whether a process has ended (a zombie counts as ended)."""
     try:
         state = Path(f"/proc/{pid}/stat").read_text().split(") ", 1)[1][0]
-    except FileNotFoundError, IndexError:
+    # A process that ends between the open and the read gives ProcessLookupError.
+    except FileNotFoundError, ProcessLookupError, IndexError:
         return True
     return state == "Z"
 
