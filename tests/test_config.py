@@ -543,6 +543,8 @@ def test_the_command_serves_with_a_missing_config_file(
         # The WebSocket: a message may be a whole scene, max_scene_bytes.
         "ws": "websockets-sansio",
         "ws_max_size": 52428800,
+        # Longer than nginx keeps an idle connection to segl.
+        "timeout_keep_alive": cli.KEEP_ALIVE_SECONDS,
     }
     assert OpenedDatabase.opened == [(Path("/opt/segl/var/segl.sqlite"), 50)]
     assert read == [Path("/opt/segl/etc/display-names.txt")]
@@ -563,6 +565,19 @@ def test_the_command_passes_the_trusted_proxies_to_uvicorn(
     assert cli.main(["--config", str(config)]) == 0
     # An empty list, not None: None would make uvicorn fall back to its own default.
     assert served["forwarded_allow_ips"] == []
+
+
+def test_segl_keeps_an_idle_connection_longer_than_nginx_does() -> None:
+    # nginx must close an idle connection to segl first. When segl closes one
+    # as nginx sends a request on it, the request is reset, and nginx answers
+    # a POST with 502 (seen in a browser test, 2026-11-27).
+    text = (ROOT / "deploy" / "nginx" / "segl-http.conf").read_text(encoding="utf-8")
+    upstream = re.search(r"^upstream segl \{(.*?)^\}", text, flags=re.MULTILINE | re.DOTALL)
+    assert upstream is not None
+    assert re.search(r"^\s*keepalive \d+;", upstream.group(1), flags=re.MULTILINE)
+    # No keepalive_timeout of its own: nginx's default, 60 seconds.
+    assert "keepalive_timeout" not in upstream.group(1)
+    assert cli.KEEP_ALIVE_SECONDS > 60
 
 
 def test_the_command_reports_a_bad_config_and_exits_2(

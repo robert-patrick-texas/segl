@@ -38,6 +38,14 @@ from segl.update import command
 from segl.versions import app_version
 from segl.web import WebBuildError
 
+# How long segl keeps an idle HTTP connection open, in seconds. nginx keeps
+# idle connections to segl for its next requests (`keepalive 16` in
+# deploy/nginx/segl-http.conf) for 60 seconds, its default, and must close
+# them first: a request nginx sends on a connection segl is closing at that
+# moment is reset, and nginx answers a POST with 502, which it does not try
+# again. uvicorn's own default is 5.
+KEEP_ALIVE_SECONDS = 75
+
 
 def build_parser() -> argparse.ArgumentParser:
     """Return the command-line parser."""
@@ -112,6 +120,7 @@ def serve(config: Path | None) -> int:
                 # uvicorn pings each connection every 20 seconds by default.
                 ws="websockets-sansio",
                 ws_max_size=settings.max_scene_bytes,
+                timeout_keep_alive=KEEP_ALIVE_SECONDS,
             )
     except (StorageError, DisplayNamesError, WebBuildError, AssetsError) as exc:
         print(f"segl: {exc}", file=sys.stderr)

@@ -18,6 +18,10 @@ Follow mode: press a name in the bar and follow that person's view, on every slo
 - segl's `web/drawio/js/PostConfig.js` reports the frame's view, with its page, the pointer, and the person's own wheel, press, or modifier key, takes segl's own messages ahead of drawio's handler, and draws the others' cursors (D2-039).
 - `window.SEGL_CANVAS.view()` gives the canvas's `width` and `height` too, and `window.SEGL_DIAGRAM.view()` the area of the diagram the frame shows, for the browser tests.
 
+### Fixed
+
+- Behind nginx, a POST could now and then get `502 Bad Gateway`: an access code, a title, a restore, an import, or an upload. nginx keeps idle connections to segl for its next requests, for 60 seconds, and segl closed one after 5, so a request nginx sent as segl closed it was reset, and nginx does not send a POST again. segl now keeps an idle connection 75 seconds, and nginx closes it first (`docs/DEPLOY.md`, the nginx files). The nginx files are unchanged, so an update merges nothing new into a site's.
+
 ## 0.7.0 — 2026-11-27
 
 Slot 9 is Diagram mode: drawio's editor, which several people edit at once, or one at a time with the pen. Slot 9's whiteboard goes, and the package carries drawio. Release and test tooling: a stopped install test cleans up, and `upgrade` leaves `cut` nothing to run again.

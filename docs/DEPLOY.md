@@ -176,7 +176,7 @@ The LGPL 2.1 of libavoid is the one license in the package of the GNU family. Al
 
 | File | Install as | Context | Contents |
 |---|---|---|---|
-| `segl-http.conf` | `/etc/nginx/conf.d/segl.conf` | `http` | The `segl` upstream (`127.0.0.1:8888`, with keepalive) and the `$segl_connection` WebSocket map. Changes nothing on its own. |
+| `segl-http.conf` | `/etc/nginx/conf.d/segl.conf` | `http` | The `segl` upstream (`127.0.0.1:8888`, with keepalive) and the `$segl_connection` WebSocket map. Changes nothing on its own. nginx keeps an idle connection to segl 60 seconds, its default, and segl keeps one 75, so nginx always closes it first: a `keepalive_timeout` set in this upstream must stay below 75 seconds. |
 | `segl-proxy.conf` | `/etc/nginx/snippets/segl-proxy.conf` | `location` | Proxy settings: strip the location's prefix, forwarded headers, WebSocket upgrade, body limit, timeouts, and gzip. |
 | `segl-board.conf` | `/etc/nginx/snippets/segl-board.conf` | `server` | The `/board` to `/board/` redirect, and `location ^~ /board/` including `segl-proxy.conf`. |
 | `site-board.example.conf` | `/etc/nginx/sites-available/` | | A complete TLS site with segl at `/board/`. |
