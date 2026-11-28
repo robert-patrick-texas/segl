@@ -117,6 +117,8 @@ def test_a_connection_is_welcomed_and_then_sent_the_scene(room: Room) -> None:
         "editEndsIn": None,
         "connectionId": browser.id,
         "participants": [{"connectionId": browser.id, "displayName": "Guest1"}],
+        # This room was made with no version. segl gives each room its own.
+        "version": None,
     }
     assert scene == {
         "type": "scene",

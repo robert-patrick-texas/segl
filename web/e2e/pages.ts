@@ -340,6 +340,27 @@ export async function tapSockets(page: Page): Promise<SocketTap> {
 	return tap;
 }
 
+/**
+ * Read the connection id the server gives a page in its `welcome`, the newest
+ * one. Call before `goto`. The returned function waits for an id, and gives it.
+ */
+export function watchConnectionId(page: Page): () => Promise<string> {
+	let id: string | null = null;
+	page.on('websocket', (socket) => {
+		if (!/\/collab\?slot=\d$/.test(socket.url())) return;
+		socket.on('framereceived', ({ payload }) => {
+			const message = JSON.parse(String(payload)) as SocketMessage;
+			if (message.type === 'welcome' && typeof message['connectionId'] === 'string') {
+				id = message['connectionId'];
+			}
+		});
+	});
+	return async () => {
+		await expect.poll(() => id, { message: 'the welcome of this page' }).not.toBeNull();
+		return id!;
+	};
+}
+
 /** The number in the presence control. */
 export function presenceCount(page: Page): Locator {
 	return page.getByTestId('presence-count');

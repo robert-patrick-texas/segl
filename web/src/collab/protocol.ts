@@ -69,6 +69,11 @@ export type ServerMessage =
 			editEndsIn: number | null;
 			connectionId: string;
 			participants: Participant[];
+			/**
+			 * The server's version, as `segl --version` prints it, or null when
+			 * the server sent none: a segl older than T19.
+			 */
+			version: string | null;
 	  }
 	| SceneMessage
 	| { type: 'elements'; epoch: number; elements: WireElement[] }
@@ -223,7 +228,12 @@ export function parseServerMessage(text: unknown): ServerMessage | null {
 						? editEndsIn
 						: null,
 				connectionId,
-				participants: people as Participant[]
+				participants: people as Participant[],
+				// Anything but text is no version: the page then says nothing of an update.
+				version:
+					typeof message['version'] === 'string' && message['version'] !== ''
+						? message['version']
+						: null
 			};
 		}
 		case 'scene': {

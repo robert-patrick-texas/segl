@@ -18,9 +18,10 @@
  * the connection (S-013), the slot's history (S-005), JSON import (S-011),
  * this browser's display name (S-009), and the notice that the workspace is
  * shared (S-016), with the way to the access page for a browser that may not
- * edit (S-008). On slot 9, Diagram mode, it shows the pen in place of History
- * and Import, which come to Diagram mode later (D2-039), and whom this browser
- * follows (T18).
+ * edit (S-008). On slot 9, Diagram mode, it shows the pen beside History, in
+ * place of Import (D2-039), and whom this browser follows (T18). On every
+ * slot it says for a few seconds why a follow did not start, and that segl
+ * was updated while the page was open, with a button that reloads it (T19).
  */
 import { Link, NavLink } from 'react-router';
 import type { Participant } from '../collab/protocol.ts';
@@ -35,9 +36,10 @@ import { NameControl } from './NameControl.tsx';
 import { PenControl } from './PenControl.tsx';
 import { ENTER_CODE, offersAccess, sharedNotice, type Editing } from './notice.ts';
 import { FollowingControl, PresenceControl } from './PresenceControl.tsx';
-import { UNNAMED } from './presence.ts';
+import { CANNOT_FOLLOW, UNNAMED } from './presence.ts';
 import { statusLabel } from './status.ts';
 import { TitleControl } from './TitleControl.tsx';
+import { isUpdated, RELOAD, UPDATED } from './update.ts';
 
 export interface SeglBarProps {
 	slot: number;
@@ -45,7 +47,10 @@ export interface SeglBarProps {
 	titles: ReadonlyMap<number, string>;
 	/** Whether this browser may edit, and why not when it may not (S-016). */
 	editing: Editing;
+	/** The version this page was built with. */
 	version: string;
+	/** The server's version, as `welcome` said, or null when it said none. */
+	serverVersion: string | null;
 	/** This browser's display name, or null until the server has assigned one. */
 	displayName: string | null;
 	/** Store a name the person typed. Returns it as stored, or null when it is not usable. */
@@ -60,6 +65,8 @@ export interface SeglBarProps {
 	following: string | null;
 	/** Follow this connection's view, or stop: null. */
 	onFollow: (connectionId: string | null) => void;
+	/** The server refused a follow a moment ago. */
+	followRefused: boolean;
 	/** False for a browser that may look and not edit. */
 	canEdit: boolean;
 	/** Store a new title for this slot on the server. */
@@ -85,6 +92,7 @@ export function SeglBar({
 	titles,
 	editing,
 	version,
+	serverVersion,
 	displayName,
 	onRename,
 	status,
@@ -92,6 +100,7 @@ export function SeglBar({
 	self,
 	following,
 	onFollow,
+	followRefused,
 	canEdit,
 	onRetitle,
 	epoch,
@@ -108,6 +117,8 @@ export function SeglBar({
 	// Where the access page sends the person back to.
 	const cameFrom: CameFrom = { slot };
 	const leader = participants.find((person) => person.connectionId === following);
+	// Slot 9's pen is someone else's: only its holder restores.
+	const penHeld = diagram !== undefined && diagram.holder !== null && !diagram.mine;
 	return (
 		<header className="segl-bar">
 			<span className="segl-bar__brand">segl</span>
@@ -141,41 +152,45 @@ export function SeglBar({
 				following={following}
 				onFollow={onFollow}
 			/>
+			{followRefused && (
+				<span className="segl-bar__refused" role="status">
+					{CANNOT_FOLLOW}
+				</span>
+			)}
 			<span className="segl-bar__status" data-state={status} role="status">
 				{statusLabel(status)}
 			</span>
-			{diagram !== undefined ? (
-				<>
-					<PenControl
-						holder={diagram.holder}
-						mine={diagram.mine}
-						canTake={canEdit && connected}
-						onPen={diagram.onPen}
-					/>
-					{leader !== undefined && (
-						<FollowingControl name={leader.displayName ?? UNNAMED} onStop={() => onFollow(null)} />
-					)}
-				</>
-			) : (
-				<>
-					{/* Keyed by the slot too: an open list is of the slot it was opened on. */}
-					<HistoryControl
-						key={`history-${slot}`}
-						epoch={epoch}
-						canRestore={canEdit}
-						connected={connected}
-						onLoad={onLoadHistory}
-						onRestore={onRestore}
-					/>
-					<ImportControl
-						key={`import-${slot}`}
-						file={importFile}
-						onChoose={onChooseImport}
-						canImport={canEdit}
-						connected={connected}
-						onImport={onImport}
-					/>
-				</>
+			{diagram !== undefined && (
+				<PenControl
+					holder={diagram.holder}
+					mine={diagram.mine}
+					canTake={canEdit && connected}
+					onPen={diagram.onPen}
+				/>
+			)}
+			{/* Keyed by the slot too: an open list is of the slot it was opened on. */}
+			<HistoryControl
+				key={`history-${slot}`}
+				epoch={epoch}
+				canRestore={canEdit}
+				penHeld={penHeld}
+				connected={connected}
+				onLoad={onLoadHistory}
+				onRestore={onRestore}
+			/>
+			{diagram !== undefined && leader !== undefined && (
+				<FollowingControl name={leader.displayName ?? UNNAMED} onStop={() => onFollow(null)} />
+			)}
+			{/* Not on slot 9 yet: an import there would replace the diagram for everyone. */}
+			{diagram === undefined && (
+				<ImportControl
+					key={`import-${slot}`}
+					file={importFile}
+					onChoose={onChooseImport}
+					canImport={canEdit}
+					connected={connected}
+					onImport={onImport}
+				/>
 			)}
 			<div className="segl-bar__you">
 				{/* The button's own label says the same to a screen reader. */}
@@ -194,6 +209,18 @@ export function SeglBar({
 					</>
 				)}
 			</p>
+			{isUpdated(serverVersion, version) && (
+				<span className="segl-bar__updated" role="status">
+					{UPDATED}
+					<button
+						type="button"
+						className="segl-bar__updated-button"
+						onClick={() => window.location.reload()}
+					>
+						{RELOAD}
+					</button>
+				</span>
+			)}
 			<span className="segl-bar__version" title="segl version">
 				segl {version}
 			</span>

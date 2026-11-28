@@ -17,7 +17,11 @@ import {
 	historyRows,
 	KEPT_PHRASES,
 	NEEDS_CODE,
+	NEEDS_CONNECTION,
+	NEEDS_PEN,
 	parseRevisions,
+	restoreBody,
+	restoreNote,
 	restoreProblem,
 	whenLabel,
 	type RevisionInfo
@@ -213,6 +217,27 @@ test('a refused restore is put in words by its code', () => {
 	expect(restoreProblem(new Refused('revision_not_found', 'The slot has no such revision.'))).toBe(
 		'That version is no longer kept.'
 	);
+	expect(restoreProblem(new Refused('pen_held', 'Someone else holds the pen.'))).toBe(NEEDS_PEN);
+	expect(NEEDS_PEN).toBe('Restoring needs the pen.');
+});
+
+test('History says why it offers no Restore: no code, someone else’s pen, then no connection', () => {
+	const facts = { canRestore: true, penHeld: false, connected: true };
+
+	expect(restoreNote(facts)).toBeNull();
+	expect(restoreNote({ ...facts, connected: false })).toBe(NEEDS_CONNECTION);
+	expect(restoreNote({ ...facts, penHeld: true, connected: false })).toBe(NEEDS_PEN);
+	expect(restoreNote({ canRestore: false, penHeld: true, connected: false })).toBe(NEEDS_CODE);
+});
+
+test('a restore on slot 9 names this page’s connection, and one on a whiteboard does not', () => {
+	expect(restoreBody(9, 4, 'Bravo2', 'c1')).toEqual({
+		revision: 4,
+		displayName: 'Bravo2',
+		connectionId: 'c1'
+	});
+	expect(restoreBody(9, 4, null, null)).toEqual({ revision: 4, displayName: null });
+	expect(restoreBody(3, 4, 'Bravo2', 'c1')).toEqual({ revision: 4, displayName: 'Bravo2' });
 });
 
 test('any other failure is told in its own words', () => {

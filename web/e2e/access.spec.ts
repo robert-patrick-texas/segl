@@ -28,7 +28,17 @@
  * shown with an answer the test puts in the server's place.
  */
 import { expect, type APIRequestContext, type Page } from '@playwright/test';
-import { drawShape, expectVertices, openDiagram, shapes, vertices } from './diagram.ts';
+import {
+	drawio,
+	drawShape,
+	expectVertices,
+	onDiagram,
+	onScreen,
+	openDiagram,
+	overDiagram,
+	shapes,
+	vertices
+} from './diagram.ts';
 import {
 	canvasImages,
 	chooseImport,
@@ -727,6 +737,32 @@ test('a browser without a pass watches Diagram mode change and changes nothing',
 		collabUrl(baseURL, SLOTS.diagram)
 	);
 	expect(refused).toBe('view_only');
+});
+
+test('a viewer’s cursor on slot 9 shows in an editor’s frame, on the point under its pointer', async ({
+	page,
+	person
+}) => {
+	// T-026: a viewer is seen too, as on the whiteboards.
+	const editor = await person('Edna', { editor: true });
+	await openDiagram(page);
+	await openDiagram(editor);
+	await expectLocked(page);
+
+	const place = await overDiagram(page);
+	await page.mouse.move(place.x - 37, place.y + 23);
+	const point = await onDiagram(page, { x: place.x - 37, y: place.y + 23 });
+
+	const cursor = drawio(editor).locator('.segl-cursor');
+	await expect(cursor).toBeVisible();
+	await expect(cursor.locator('.segl-cursor__name')).toHaveText('Tester');
+	await expect
+		.poll(async () => {
+			const box = (await cursor.boundingBox())!;
+			const expected = await onScreen(editor, point);
+			return [Math.round(Math.abs(box.x - expected.x)), Math.round(Math.abs(box.y - expected.y))];
+		})
+		.toEqual([0, 0]);
 });
 
 test('a browser without a pass is still someone on the slot, with a name of its own', async ({

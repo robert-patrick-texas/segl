@@ -39,7 +39,7 @@
  */
 import { knownFrom, note, pendingElements, type Known, type WireElement } from './elements.ts';
 import { FileSync, type FileEditor, type FileRef, type FileTransport } from './files.ts';
-import { Leading } from './follow.ts';
+import { Leading, Refusal } from './follow.ts';
 import {
 	parseServerMessage,
 	type ClientMessage,
@@ -100,6 +100,10 @@ export interface SessionState {
 	participants: readonly Participant[];
 	/** The connection whose view this browser follows, or null (T18). */
 	following: string | null;
+	/** The server refused a follow in the last few seconds: it would close a loop (T19). */
+	followRefused: boolean;
+	/** The server's version, as the newest `welcome` said, or null when it said none (T19). */
+	version: string | null;
 }
 
 export const INITIAL_STATE: SessionState = {
@@ -109,7 +113,9 @@ export const INITIAL_STATE: SessionState = {
 	title: null,
 	epoch: null,
 	participants: [],
-	following: null
+	following: null,
+	followRefused: false,
+	version: null
 };
 
 /** The part of `WebSocket` the session uses. */
@@ -223,6 +229,7 @@ export class CollabSession {
 	);
 	/** This browser as the one followed: its view goes out while someone follows it. */
 	private readonly leading = new Leading((view) => this.send({ type: 'view', view }));
+	private readonly refusal = new Refusal((followRefused) => this.setState({ followRefused }));
 	private renameWaiting: string | null = null;
 
 	constructor(options: SessionOptions) {
@@ -255,6 +262,7 @@ export class CollabSession {
 	stop(): void {
 		this.stopped = true;
 		this.files.stop();
+		this.refusal.stop();
 		this.clearTimers();
 		clearTimeout(this.retryTimer);
 		clearTimeout(this.lockTimer);
@@ -499,7 +507,8 @@ export class CollabSession {
 					connectionId: message.connectionId,
 					viewOnly: message.viewOnly,
 					title: message.title,
-					participants: message.participants
+					participants: message.participants,
+					version: message.version
 				});
 				this.showPeers();
 				if (this.renameWaiting !== null) {
@@ -570,7 +579,11 @@ export class CollabSession {
 				// browser. The server kept the follow there was: this one ends it too.
 				if (message.error === 'cannot_follow') {
 					this.send({ type: 'follow', connectionId: null });
-					if (this.state.following !== null) this.showFollow(null);
+					// The bar says why, when a follow this browser asked for ended.
+					if (this.state.following !== null) {
+						this.showFollow(null);
+						this.refusal.refused();
+					}
 					break;
 				}
 				console.warn(`segl: ${message.error}: ${message.message}`);

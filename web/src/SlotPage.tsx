@@ -142,13 +142,15 @@ export function SlotPage({ config, slot, displayName, editPass }: SlotPageProps)
 	);
 
 	// The canvas is not touched here. The server sends the restored scene to
-	// every browser on the slot, this one among them, over the socket.
+	// every browser on the slot, this one among them, over the socket. On
+	// slot 9 the request names this page's connection, for the pen.
 	const name = displayName.name;
+	const connectionId = room.connectionId;
 	const restore = useCallback(
 		async (revision: number) => {
-			await restoreRevision(config, slot, revision, name, pass);
+			await restoreRevision(config, slot, revision, name, pass, connectionId);
 		},
-		[config, slot, name, pass]
+		[config, slot, name, pass, connectionId]
 	);
 
 	// The exported file that waits for the second press, with the slot it was
@@ -185,6 +187,7 @@ export function SlotPage({ config, slot, displayName, editPass }: SlotPageProps)
 					hasPass: pass !== ''
 				})}
 				version={__SEGL_VERSION__}
+				serverVersion={room.version}
 				displayName={displayName.name}
 				onRename={displayName.rename}
 				status={room.status}
@@ -192,6 +195,7 @@ export function SlotPage({ config, slot, displayName, editPass }: SlotPageProps)
 				self={room.connectionId}
 				following={room.following}
 				onFollow={isDiagram ? diagram.onFollow : collab.onFollow}
+				followRefused={room.followRefused}
 				canEdit={!viewOnly}
 				onRetitle={retitle}
 				epoch={room.epoch}

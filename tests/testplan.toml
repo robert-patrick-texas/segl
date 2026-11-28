@@ -188,7 +188,13 @@ browser = ["lasting.spec.ts"]
 [rows.T-024]
 pytest = ["tests/test_diagram.py"]
 browser = [
-    "diagram.spec.ts",
+    "diagram.spec.ts > slot 9 is drawio’s editor under the bar, which says Diagram mode",
+    "diagram.spec.ts > two browsers on slot 9 see each other’s shapes",
+    "diagram.spec.ts > each draws at the same time, and both shapes remain in both",
+    "diagram.spec.ts > a reload keeps the diagram",
+    "diagram.spec.ts > one browser takes the pen: the other sees its changes and cannot edit, then takes it in turn",
+    "diagram.spec.ts > the holder leaves, and the pen is free",
+    "diagram.spec.ts > Diagram mode asks for nothing off its origin, sets no cookie, and stays in its mount",
     "durability.spec.ts > slot 9’s diagram is there after the server is killed and restarted",
     "access.spec.ts > a browser without a pass watches Diagram mode change and changes nothing",
 ]
@@ -202,6 +208,8 @@ browser = [
     "follow.spec.ts > on a whiteboard > the leader leaves, and the follow ends",
     "follow.spec.ts > on slot 9 > a take of the pen starts a follow of the holder, who leads until the watcher looks away",
     "follow.spec.ts > on slot 9 > the bar’s stop ends a follow",
+    "follow.spec.ts > on a whiteboard > a follow that would close a loop is refused, and the bar says why",
+    "follow.spec.ts > on slot 9 > a follow that would close a loop is refused, and the bar says why",
 ]
 
 [rows.T-026]
@@ -214,4 +222,39 @@ pytest = [
 browser = [
     "follow.spec.ts > cursors on slot 9 > each browser shows the other’s cursor with its name, on the point under the other’s pointer",
     "follow.spec.ts > cursors on slot 9 > a cursor on another page of the diagram does not show, and one who leaves takes theirs",
+    "follow.spec.ts > cursors on slot 9 > the cursors stay on their points across a whole-diagram load",
+    "access.spec.ts > a viewer’s cursor on slot 9 shows in an editor’s frame, on the point under its pointer",
+]
+
+[rows.T-027]
+browser = [
+    "diagram.spec.ts > a browser on page 3 that loads the whole diagram stays on page 3, at the same view, with its selection kept",
+    "diagram.spec.ts > a load that comes during a drag waits for the release, and every browser keeps the move",
+    "diagram.spec.ts > an empty page keeps its view across a whole-diagram load",
+    "diagram.spec.ts > a shape drawn just as a load comes still takes its label",
+    "diagram.spec.ts > a press that ends in a cancel, a lost focus, or a move with no button lets a load come",
+]
+
+[rows.T-028]
+pytest = [
+    "tests/test_diagram_history.py",
+    "tests/test_diagram.py::test_slot_9_has_no_import_yet",
+]
+browser = [
+    "diagram.spec.ts > a restore from History on slot 9 reaches both browsers, each on its own page",
+    "diagram.spec.ts > while another holds the pen, History on slot 9 shows no Restore",
+]
+
+[rows.T-029]
+pytest = ["tests/test_selection.py"]
+browser = [
+    "diagram.spec.ts > each browser sees the other’s selection outlined, on its page and not on another",
+    "diagram.spec.ts > the outline follows a moved shape, and goes when the other selects nothing",
+]
+
+[rows.T-030]
+pytest = ["tests/test_collab.py::test_welcome_carries_the_servers_version"]
+browser = [
+    "slot.spec.ts > a whiteboard told of another version says segl updated, and Reload loads the page again",
+    "slot.spec.ts > Diagram mode told of another version says segl updated, and Reload loads the page again",
 ]

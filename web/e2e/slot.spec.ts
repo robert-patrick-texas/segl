@@ -14,11 +14,12 @@
 
 /**
  * The slot page: the editor inside the segl bar (S-001), the shared notice
- * (S-016), and the navigation rules (D2-006). Each test runs at a host root
- * and at `/board/`.
+ * (S-016), the navigation rules (D2-006), and the update notice (T-030).
+ * Each test runs at a host root and at `/board/`.
  */
-import { expect } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 import { readProjectVersion } from '../scripts/app-version.ts';
+import { diagramReady, openDiagram } from './diagram.ts';
 import {
 	drawRectangle,
 	elementIds,
@@ -31,7 +32,8 @@ import {
 	sceneDocument,
 	SLOTS,
 	test,
-	passKey
+	passKey,
+	type SocketMessage
 } from './pages.ts';
 
 const VERSION = readProjectVersion(new URL('../../versions.toml', import.meta.url));
@@ -200,4 +202,98 @@ test('a slot button opens that slot', async ({ page, baseURL }) => {
 	// A reload of the new address works too: Python serves the page for every slot.
 	await page.reload();
 	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Workspace 3');
+});
+
+/** A version no segl has had. */
+const OTHER_VERSION = '99.0.0';
+
+/**
+ * Stand between the page and the server, and change the version the server's
+ * `welcome` names, as a server updated while the page was open would. Keep
+ * each `welcome` as the server sent it. Call before `goto`.
+ */
+async function otherVersion(page: Page): Promise<{ welcomes: SocketMessage[]; stop(): void }> {
+	let changing = true;
+	const welcomes: SocketMessage[] = [];
+	await page.routeWebSocket(/\/collab\?slot=\d$/, (route) => {
+		const server = route.connectToServer();
+		route.onMessage((message) => server.send(message));
+		server.onMessage((message) => {
+			const parsed = JSON.parse(String(message)) as SocketMessage;
+			if (parsed.type !== 'welcome') {
+				route.send(message);
+				return;
+			}
+			welcomes.push(parsed);
+			route.send(changing ? JSON.stringify({ ...parsed, version: OTHER_VERSION }) : message);
+		});
+	});
+	return {
+		welcomes,
+		stop() {
+			changing = false;
+		}
+	};
+}
+
+/**
+ * The page is told of another version: the bar says so, and the page waits.
+ * `Reload` loads it again, and a page told of its own version says nothing.
+ */
+async function noticeAndReload(
+	page: Page,
+	open: () => Promise<void>,
+	ready: () => Promise<void>
+): Promise<void> {
+	const socket = await otherVersion(page);
+	await open();
+	// The server names its version, which is the one this page was built with.
+	expect(socket.welcomes.map((welcome) => welcome.version)).toEqual([VERSION]);
+	const bar = page.locator('header.segl-bar');
+	await expect(bar.getByText(`segl ${VERSION}`)).toBeVisible();
+
+	// The phrase, with its button beside it.
+	const notice = bar.getByText(/^segl updated/);
+	await expect(notice).toBeVisible();
+	await expect(notice).toHaveText(/^segl updated\s*Reload$/);
+	// It does not reload by itself: someone may be typing.
+	await page.evaluate(() => {
+		(window as { seglTest?: string }).seglTest = 'before the reload';
+	});
+	await page.waitForTimeout(1_000);
+	expect(await page.evaluate(() => (window as { seglTest?: string }).seglTest)).toBe(
+		'before the reload'
+	);
+
+	socket.stop();
+	const loaded = page.waitForEvent('load');
+	await notice.getByRole('button', { name: 'Reload', exact: true }).click();
+	await loaded;
+	expect(await page.evaluate(() => (window as { seglTest?: string }).seglTest)).toBeUndefined();
+	await ready();
+	expect(socket.welcomes).toHaveLength(2);
+	await expect(notice).toHaveCount(0);
+}
+
+test('a whiteboard told of another version says segl updated, and Reload loads the page again', async ({
+	page
+}) => {
+	await noticeAndReload(
+		page,
+		() => joinSlot(page, SLOTS.empty),
+		async () => {
+			await expectEditor(page);
+			await expectLive(page);
+		}
+	);
+});
+
+test('Diagram mode told of another version says segl updated, and Reload loads the page again', async ({
+	page
+}) => {
+	await noticeAndReload(
+		page,
+		() => openDiagram(page),
+		() => diagramReady(page)
+	);
 });

@@ -65,6 +65,7 @@ from segl.access import (
 from segl.app import create_app
 from segl.repository import Repository
 from segl.room import Connection, Hello, Room
+from segl.versions import app_version
 
 ROUTE = "/api/v1/access"
 CODE = normalize(ACCESS_CODE)
@@ -861,6 +862,7 @@ def test_welcome_says_how_long_the_pass_has_left(repository: Repository) -> None
             "editEndsIn": 0.001,
             "connectionId": "",
             "participants": [],
+            "version": app_version(),
         }
         # A viewer has nothing that ends: without a pass, and with one that has ended.
         for sent in ("", ACCESS_CODE, issued[:-1]):

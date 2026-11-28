@@ -66,7 +66,41 @@ describe('parseDiagramMessage', () => {
 		['a checksum that is not whole', { type: 'patch', epoch: 1, ...entry, checksum: 1.5 }],
 		['exact that is not true or false', { type: 'patch', epoch: 1, ...entry, exact: 1 }],
 		['a pen holder that is empty', { type: 'pen', holder: '' }],
-		['a pen with no holder field', { type: 'pen' }]
+		['a pen with no holder field', { type: 'pen' }],
+		['a selection of nobody', { type: 'selection', selection: null }],
+		['a selection with no selection field', { type: 'selection', connectionId: 'c1' }],
+		[
+			'a selection of an empty connection id',
+			{ type: 'selection', connectionId: '', selection: { page: null, cells: ['a'] } }
+		],
+		[
+			'a selection of no cells',
+			{ type: 'selection', connectionId: 'c1', selection: { page: null, cells: [] } }
+		],
+		[
+			'a selection of 51 cells',
+			{
+				type: 'selection',
+				connectionId: 'c1',
+				selection: { page: null, cells: Array.from({ length: 51 }, (_, i) => `c${i}`) }
+			}
+		],
+		[
+			'a selection with a cell id that is not text',
+			{ type: 'selection', connectionId: 'c1', selection: { page: null, cells: [7] } }
+		],
+		[
+			'a selection with a cell id too long',
+			{ type: 'selection', connectionId: 'c1', selection: { page: null, cells: ['x'.repeat(129)] } }
+		],
+		[
+			'a selection on an empty page id',
+			{ type: 'selection', connectionId: 'c1', selection: { page: '', cells: ['a'] } }
+		],
+		[
+			'a selection with no page field',
+			{ type: 'selection', connectionId: 'c1', selection: { cells: ['a'] } }
+		]
 	])('%s is not a message', (_, message) => {
 		expect(parseDiagramMessage(JSON.stringify(message))).toBeNull();
 	});
@@ -80,6 +114,25 @@ describe('parseDiagramMessage', () => {
 			type: 'pen',
 			holder: null
 		});
+	});
+
+	test('another connection’s selection, of up to 50 cells, or of nothing', () => {
+		const fifty = Array.from({ length: 50 }, (_, i) => `cell-${i}`);
+		const on = {
+			type: 'selection',
+			connectionId: 'c1',
+			selection: { page: 'p'.repeat(128), cells: ['x'.repeat(128), ...fifty.slice(1)] }
+		};
+		const nowhere = {
+			type: 'selection',
+			connectionId: 'c2',
+			selection: { page: null, cells: ['a'] }
+		};
+		const none = { type: 'selection', connectionId: 'c3', selection: null };
+
+		expect(parseDiagramMessage(JSON.stringify(on))).toEqual(on);
+		expect(parseDiagramMessage(JSON.stringify(nowhere))).toEqual(nowhere);
+		expect(parseDiagramMessage(JSON.stringify(none))).toEqual(none);
 	});
 
 	test('a whiteboard message is read as the whiteboards read it', () => {

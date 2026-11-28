@@ -35,15 +35,22 @@ A mark names one patch number, as a whiteboard's names one change (D2-037).
 The scene route hands out the stored head's mark, ``hello`` hands it back, and
 the room then sends the patches after it, or the whole diagram when it no
 longer holds them.
+
+A restore is a whiteboard's (D2-030): a new epoch with the revision's diagram,
+which every browser loads. While someone holds the pen, only the holder
+restores. Each browser's selection goes to the others, as a cursor does (T19).
+The server reads the XML only to count the shapes and links, for the rule on a
+big delete (``live_cells``).
 """
 
 import json
 import re
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from typing import Any
+from xml.parsers import expat
 
-from segl.room import NEEDS_CODE, Connection, Room, Snapshot, encode
+from segl.room import MAX_PAGE_LENGTH, NEEDS_CODE, Connection, Room, Snapshot, encode
 
 # Slot 9 is Diagram mode. Slots 1 to 8 are whiteboards.
 DIAGRAM_SLOT = 9
@@ -56,6 +63,12 @@ EMPTY_DIAGRAM = (
 )
 
 PEN_HELD = "Someone else holds the pen."
+
+# The most cells a selection names. drawio's own sessions send none past it.
+MAX_SELECTED_CELLS = 50
+
+# The longest cell id a selection may name.
+MAX_CELL_ID_LENGTH = 128
 
 # The id a page gives a patch, so that it knows its own when it comes back.
 _PATCH_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
@@ -79,6 +92,89 @@ def diagram_of(scene_json: str) -> str:
     document = json.loads(scene_json)
     xml = document.get("diagram") if isinstance(document, dict) else None
     return xml if isinstance(xml, str) else EMPTY_DIAGRAM
+
+
+class PenHeld(Exception):
+    """A restore of slot 9 from a connection that does not hold the pen, while another does."""
+
+
+class _Uncountable(Exception):
+    pass
+
+
+def live_cells(xml: str) -> int | None:
+    """Return how many shapes and links a diagram holds, or None when the server cannot tell.
+
+    They are drawio's cells with ``vertex="1"`` or ``edge="1"``, on every
+    page, also inside an ``<object>`` or ``<UserObject>``. The XML comes from a
+    browser: a DOCTYPE, which could declare entities, makes it uncountable, so
+    no entity is ever expanded. So does a page drawio wrote compressed, which
+    is text in its ``<diagram>``, and XML that does not parse. This reads the
+    whole text, so it runs in a worker thread.
+    """
+    cells = 0
+    # The names of the elements open at this point.
+    open_names: list[str] = []
+
+    def start(name: str, attributes: dict[str, str]) -> None:
+        nonlocal cells
+        open_names.append(name)
+        if name == "mxCell" and "1" in (attributes.get("vertex"), attributes.get("edge")):
+            cells += 1
+
+    def end(name: str) -> None:
+        open_names.pop()
+
+    def text(data: str) -> None:
+        if open_names[-1:] == ["diagram"] and data.strip():
+            raise _Uncountable
+
+    def doctype(*_: object) -> None:
+        raise _Uncountable
+
+    parser = expat.ParserCreate()
+    parser.StartElementHandler = start
+    parser.EndElementHandler = end
+    parser.CharacterDataHandler = text
+    parser.StartDoctypeDeclHandler = doctype
+    try:
+        parser.Parse(xml, True)
+    except _Uncountable, expat.ExpatError, ValueError:
+        # ValueError: half a surrogate pair, which JSON can carry and UTF-8 cannot.
+        return None
+    return cells
+
+
+def _short_text(value: object, longest: int) -> bool:
+    return isinstance(value, str) and 1 <= len(value) <= longest
+
+
+def parse_selection(value: object) -> dict[str, Any] | None:
+    """Return a selection a browser sent, ``{"page", "cells"}``, or None for nothing selected.
+
+    ``page`` is the id drawio gives the page, or null, as a cursor's. ``cells``
+    is 1 to 50 of drawio's cell ids, each text of 1 to 128 characters.
+
+    Raises:
+        ValueError: When it is neither null nor such a selection.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError
+    page, cells = value.get("page"), value.get("cells")
+    if page is not None and not _short_text(page, MAX_PAGE_LENGTH):
+        raise ValueError
+    if not isinstance(cells, list) or not 1 <= len(cells) <= MAX_SELECTED_CELLS:
+        raise ValueError
+    if not all(_short_text(cell, MAX_CELL_ID_LENGTH) for cell in cells):
+        raise ValueError
+    return {"page": page, "cells": cells}
+
+
+def _selection_message(connection: Connection) -> dict[str, Any]:
+    """Return a connection's selection as the others are sent it."""
+    return {"type": "selection", "connectionId": connection.id, "selection": connection.selection}
 
 
 @dataclass(frozen=True)
@@ -114,6 +210,10 @@ class DiagramSnapshot(Snapshot):
         """Return the head as it is stored, ``{"diagram": xml}``."""
         return encode(self.document)
 
+    def live(self) -> int | None:
+        """Return how many shapes and links the copy holds, or None when it cannot be counted."""
+        return live_cells(self.document["diagram"])
+
 
 def _number(value: object) -> int | None:
     """Return a whole number from 0 a message carries, or None."""
@@ -137,9 +237,12 @@ class DiagramRoom(Room):
     The room holds the copy (``xml``) and the number of the newest patch it
     holds (``copy_count``), and every patch after the stored head's count, so
     that a page that loaded the stored head gets the patches since. It has no
-    elements: the saver counts none, and keeps no row before a big delete.
+    elements: for the rule on a big delete, the saver counts the copy's shapes
+    and links.
 
-    A cursor and a view name the page of the diagram they are on (T18).
+    A cursor and a view name the page of the diagram they are on (T18). The
+    room keeps each connection's newest selection, and sends it to the others
+    (T19).
     """
 
     pages = True
@@ -153,8 +256,11 @@ class DiagramRoom(Room):
         *,
         max_scene_bytes: int | None = None,
         start: str | None = None,
+        version: str | None = None,
     ) -> None:
-        super().__init__(slot, title, epoch, [], max_scene_bytes=max_scene_bytes, start=start)
+        super().__init__(
+            slot, title, epoch, [], max_scene_bytes=max_scene_bytes, start=start, version=version
+        )
         self.xml = xml
         self.copy_count = 0
         # Every patch after count `trimmed`, oldest first. The others are in
@@ -177,6 +283,7 @@ class DiagramRoom(Room):
         *,
         max_scene_bytes: int | None = None,
         start: str | None = None,
+        version: str | None = None,
     ) -> DiagramRoom:
         """Build the room from slot 9's stored head."""
         return cls(
@@ -186,6 +293,7 @@ class DiagramRoom(Room):
             diagram_of(scene_json),
             max_scene_bytes=max_scene_bytes,
             start=start,
+            version=version,
         )
 
     def snapshot(self) -> Snapshot:
@@ -204,6 +312,36 @@ class DiagramRoom(Room):
     def take_back(self, snapshot: Snapshot) -> None:
         """Take back a snapshot that was not written: the room is dirty again."""
         self.dirty = True
+
+    def live_counter(self) -> Callable[[], int | None]:
+        """Return a count of the copy's shapes and links, for a worker thread to call."""
+        xml = self.xml
+        return lambda: live_cells(xml)
+
+    def may_restore(self, connection_id: object) -> bool:
+        """Whether a restore may go ahead: the pen is free, or this id's connection holds it."""
+        return self.pen is None or self.pen.id == connection_id
+
+    def replace(self, epoch: int, scene_json: str) -> None:
+        """Put a stored diagram in place of the room's, at a new epoch: a restore (D2-030).
+
+        The diagram is already slot 9's head, so the room has nothing to
+        write. The old epoch's patches go, and nobody waits for a ``saved``
+        for them: the new epoch says so. Every connection is sent the whole
+        diagram, as a join's. The pen stays with its holder.
+        """
+        self.epoch = epoch
+        self.xml = diagram_of(scene_json)
+        self.patches = []
+        # One change, and the head holds every change up to it.
+        put_at = self._next_count()
+        self.copy_count = self.trimmed = put_at
+        self.written = (epoch, put_at)
+        self.dirty = False
+        self._waiting.clear()
+        for connection in self.connections.values():
+            connection.awaiting = None
+        self._broadcast(self._diagram(None))
 
     def wrote(self, snapshot: Snapshot) -> None:
         """A flush wrote this copy: the patches it holds are in the stored head."""
@@ -225,10 +363,16 @@ class DiagramRoom(Room):
                 "editEndsIn": connection.edit_ends_in(),
                 "connectionId": connection.id,
                 "participants": [other.participant() for other in self.connections.values()],
+                "version": self.version,
                 "pen": None if self.pen is None else self.pen.id,
             }
         )
         connection.send(self._diagram(self._since(mark)))
+        # What the others have selected: they send it again only when it
+        # changes. The new connection has selected nothing yet.
+        for other in self.connections.values():
+            if other.selection is not None:
+                connection.send(_selection_message(other))
         self._broadcast(connection.presence(), skip=connection)
 
     def leave(self, connection: Connection) -> None:
@@ -262,12 +406,28 @@ class DiagramRoom(Room):
             self._follow(connection, message)
         elif kind == "view":
             self._view(connection, message)
+        elif kind == "selection":
+            self._selection(connection, message)
         elif kind == "hello":
             connection.error("bad_message", "hello is the first message, and is sent once.")
         else:
             connection.error(
                 "unknown_type", "Slot 9 is Diagram mode: segl does not know this type."
             )
+
+    def _selection(self, connection: Connection, message: dict[str, Any]) -> None:
+        """Keep a connection's newest selection, and send it to the others.
+
+        Any connection may send one, a viewer too: it changes no diagram.
+        """
+        try:
+            if "selection" not in message:
+                raise ValueError
+            connection.selection = parse_selection(message["selection"])
+        except ValueError:
+            connection.error("bad_message", "A selection is a page and 1 to 50 cell ids, or null.")
+            return
+        self._broadcast(_selection_message(connection), skip=connection)
 
     def _may_change(self, connection: Connection) -> bool:
         """Whether this connection may change the diagram now. Tell it when not."""

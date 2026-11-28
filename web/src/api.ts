@@ -18,7 +18,7 @@ import { sceneElements, type WireElement } from './collab/elements.ts';
 import { isHash, parseFileRefs, type FileRef } from './collab/files.ts';
 import { markOf } from './collab/protocol.ts';
 import { apiUrl, type AppConfig } from './config.ts';
-import { parseRevisions, type RevisionInfo } from './history.ts';
+import { parseRevisions, restoreBody, type RevisionInfo } from './history.ts';
 import { nameHeader } from './importing.ts';
 
 export interface SlotInfo {
@@ -209,6 +209,8 @@ export async function fetchRevisions(
  * to every browser on the slot, this one included, over the socket.
  * `displayName` is who restored, for the history. `pass` is this
  * browser's stored pass, or `''`. It goes in a header, never in the URL.
+ * `connectionId` is this page's connection to the slot: slot 9's pen lets
+ * only its holder restore (T19).
  */
 export async function restoreRevision(
 	config: AppConfig,
@@ -216,6 +218,7 @@ export async function restoreRevision(
 	revision: number,
 	displayName: string | null,
 	pass: string,
+	connectionId: string | null = null,
 	signal?: AbortSignal
 ): Promise<{ revision: number; epoch: number }> {
 	const url = apiUrl(config, `slots/${slot}/restore`);
@@ -225,7 +228,7 @@ export async function restoreRevision(
 			'Content-Type': 'application/json',
 			...(pass === '' ? {} : { [PASS_HEADER]: pass })
 		},
-		body: JSON.stringify({ revision, displayName }),
+		body: JSON.stringify(restoreBody(slot, revision, displayName, connectionId)),
 		signal
 	})) as { revision?: unknown; epoch?: unknown } | null;
 	return replacement(url, body);

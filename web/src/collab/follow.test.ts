@@ -13,7 +13,7 @@
 // limitations under the License.
 
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import { Leading, sameView, VIEW_INTERVAL_MS } from './follow.ts';
+import { Leading, REFUSED_FOLLOW_MS, Refusal, sameView, VIEW_INTERVAL_MS } from './follow.ts';
 import type { View } from './protocol.ts';
 
 const FIRST: View = { x: 0, y: 0, width: 800, height: 600 };
@@ -92,4 +92,30 @@ test('a view is the same only on the same page', () => {
 	expect(sameView({ ...FIRST, page: 'p1' }, { ...FIRST, page: 'p2' })).toBe(false);
 	expect(sameView(FIRST, { ...FIRST, page: null })).toBe(true);
 	expect(sameView(FIRST, SECOND)).toBe(false);
+});
+
+test('a refusal is said for five seconds, and for five again when it comes again', () => {
+	const said: boolean[] = [];
+	const refusal = new Refusal((shown) => said.push(shown));
+
+	refusal.refused();
+	expect(said).toEqual([true]);
+	vi.advanceTimersByTime(REFUSED_FOLLOW_MS - 1000);
+	refusal.refused();
+	vi.advanceTimersByTime(REFUSED_FOLLOW_MS - 1);
+	expect(said).toEqual([true, true]);
+	vi.advanceTimersByTime(1);
+	expect(said).toEqual([true, true, false]);
+	expect(REFUSED_FOLLOW_MS).toBe(5000);
+});
+
+test('a refusal says nothing more once stopped', () => {
+	const said: boolean[] = [];
+	const refusal = new Refusal((shown) => said.push(shown));
+
+	refusal.refused();
+	refusal.stop();
+	vi.advanceTimersByTime(REFUSED_FOLLOW_MS * 2);
+
+	expect(said).toEqual([true]);
 });

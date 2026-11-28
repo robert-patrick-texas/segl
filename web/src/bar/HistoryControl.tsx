@@ -18,14 +18,14 @@
  * canvas of everyone on the slot, so it takes two presses. The scene that is
  * replaced is kept as a revision itself, and can be restored in its turn.
  *
- * A browser that may look and not edit sees the list without the buttons.
+ * A browser that may look and not edit sees the list without the buttons,
+ * and so does one on slot 9 while another connection holds the pen (T19).
  */
 import { useEffect, useId, useRef, useState } from 'react';
 import {
 	historyRows,
 	KEPT_PHRASES,
-	NEEDS_CONNECTION,
-	NEEDS_CODE,
+	restoreNote,
 	restoreProblem,
 	whenLabel,
 	type HistoryRow,
@@ -42,6 +42,8 @@ export interface HistoryControlProps {
 	epoch: number | null;
 	/** False for a browser that may look and not edit. */
 	canRestore: boolean;
+	/** On slot 9, another connection holds the pen: only the holder restores. */
+	penHeld: boolean;
 	/** False while this browser is not in the slot's room, and would not see a restore. */
 	connected: boolean;
 	/** Read the slot's revisions from the server, newest first. */
@@ -58,6 +60,7 @@ type List =
 export function HistoryControl({
 	epoch,
 	canRestore,
+	penHeld,
 	connected,
 	onLoad,
 	onRestore
@@ -121,6 +124,8 @@ export function HistoryControl({
 
 	const rows = list.state === 'ready' ? list.rows : [];
 	const now = new Date();
+	const offered = canRestore && !penHeld;
+	const note = restoreNote({ canRestore, penHeld, connected });
 
 	return (
 		<div ref={wrapper} className="segl-bar__history" data-testid="history">
@@ -189,7 +194,7 @@ export function HistoryControl({
 												</span>
 											)}
 										</span>
-										{canRestore && chosen !== row.revision && (
+										{offered && chosen !== row.revision && (
 											<button
 												type="button"
 												className="segl-bar__revision-button"
@@ -203,7 +208,7 @@ export function HistoryControl({
 												Restore
 											</button>
 										)}
-										{canRestore && chosen === row.revision && (
+										{offered && chosen === row.revision && (
 											<span className="segl-bar__revision-confirm">
 												<span className="segl-bar__revision-question">
 													Replace the canvas for everyone?
@@ -233,10 +238,7 @@ export function HistoryControl({
 							})}
 						</ol>
 					)}
-					{rows.length > 0 && !canRestore && <p className="segl-bar__history-note">{NEEDS_CODE}</p>}
-					{rows.length > 0 && canRestore && !connected && (
-						<p className="segl-bar__history-note">{NEEDS_CONNECTION}</p>
-					)}
+					{rows.length > 0 && note !== null && <p className="segl-bar__history-note">{note}</p>}
 					{problem !== null && (
 						<p className="segl-bar__history-problem" role="alert">
 							{problem}

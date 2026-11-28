@@ -17,6 +17,9 @@
 /** What a connection without a label is called in the list. */
 export const UNNAMED = 'Unnamed';
 
+/** What the bar says for a few seconds when the server refuses a follow that would close a loop (T19). */
+export const CANNOT_FOLLOW = "Can't follow: they follow you";
+
 /** The count is connections, so two tabs of one browser are two. */
 export function presenceLabel(count: number): string {
 	return count === 1 ? '1 connection on this slot' : `${count} connections on this slot`;

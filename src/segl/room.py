@@ -42,7 +42,15 @@ from typing import Any
 
 from segl.assets import MEDIA_TYPES, is_hash
 from segl.names import MAX_NAME_LENGTH, title_case_name
-from segl.reconcile import BadElement, Element, adopt_element, check_element, ordered, winners
+from segl.reconcile import (
+    BadElement,
+    Element,
+    adopt_element,
+    check_element,
+    live_count,
+    ordered,
+    winners,
+)
 
 _CLIENT_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
@@ -148,6 +156,13 @@ class Snapshot:
         """Return the scene document as it is stored: the head's own, with these elements."""
         return encode({**self.document, "elements": self.elements})
 
+    def live(self) -> int | None:
+        """Return how many live elements the snapshot holds, for the rule on a big delete.
+
+        None when they cannot be counted. A worker thread may call this.
+        """
+        return live_count(self.elements)
+
 
 @dataclass(frozen=True)
 class Hello:
@@ -209,6 +224,8 @@ class Connection:
         # The room sets this when the connection joins.
         self.id = ""
         self.cursor: dict[str, Any] | None = None
+        # What this connection has selected in slot 9's diagram, or None (T19).
+        self.selection: dict[str, Any] | None = None
         # The connection whose view this one follows, or None (T18).
         self.following: Connection | None = None
         # The number of this connection's newest message that is waiting to
@@ -371,15 +388,18 @@ class Room:
         files: Iterable[FileEntry] = (),
         max_scene_bytes: int | None = None,
         start: str | None = None,
+        version: str | None = None,
     ) -> None:
         """``document`` is the stored scene document, with its element list emptied.
 
         ``files`` is the slot's file list. ``max_scene_bytes`` is the most the
         elements may come to, as JSON, or None for no limit. ``start`` begins
         each of the room's marks, so that no other process's mark is one of
-        them. It is picked here when it is not given.
+        them. It is picked here when it is not given. ``version`` is the
+        server's, which ``welcome`` carries (T19).
         """
         self.start = start if start is not None else new_start()
+        self.version = version
         self.count = 0
         # The count at each element's and each file's last change, by id. One
         # the room started with has none: it is in the head, at count 0.
@@ -423,6 +443,7 @@ class Room:
         files: Iterable[FileEntry] = (),
         max_scene_bytes: int | None = None,
         start: str | None = None,
+        version: str | None = None,
     ) -> Room:
         """Build the room from the stored scene document of the slot's head."""
         document, elements = parse_scene(scene_json)
@@ -435,6 +456,7 @@ class Room:
             files=files,
             max_scene_bytes=max_scene_bytes,
             start=start,
+            version=version,
         )
 
     def mark(self) -> str:
@@ -471,6 +493,22 @@ class Room:
         """Take back a snapshot that was not written: the room is dirty again."""
         self.dirty = True
         self._new_files = snapshot.files + self._new_files
+
+    def live_counter(self) -> Callable[[], int | None]:
+        """Return a count of the live elements the room holds now, for a worker thread to call.
+
+        The saver counts the head this way when the room starts and after a
+        restore or an import, for the rule on a big delete.
+        """
+        live = live_count(self.elements.values())
+        return lambda: live
+
+    def may_restore(self, connection_id: object) -> bool:
+        """Whether a restore may go ahead, sent by the connection with this id.
+
+        A whiteboard has no pen, and reads no id: always. Slot 9 reads it.
+        """
+        return True
 
     def take_waiting(self) -> list[tuple[Connection, int]]:
         """Return each connection waiting to hear of a save, with the number it is told."""
@@ -512,6 +550,7 @@ class Room:
                 "editEndsIn": connection.edit_ends_in(),
                 "connectionId": connection.id,
                 "participants": [other.participant() for other in self.connections.values()],
+                "version": self.version,
             }
         )
         connection.send(self._scene(self._since(mark)))

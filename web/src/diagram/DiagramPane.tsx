@@ -34,7 +34,7 @@ export interface DiagramPaneProps {
 	onFrame: (frame: DiagramFrameLike | null) => void;
 	/** Takes the person's edits. */
 	onEdit: (edit: DiagramEdit) => void;
-	/** Takes where the person looks and points, for follow mode and cursors (T18). */
+	/** Takes where the person looks and points (T18), and what they select (T19). */
 	watcher: FrameWatcher;
 }
 
@@ -60,7 +60,8 @@ export default function DiagramPane({ rootUrl, onFrame, onEdit, watcher }: Diagr
 			onEdit: (edit) => edits.current(edit),
 			onView: (view) => watching.current.onView(view),
 			onPointer: (cursor) => watching.current.onPointer(cursor),
-			onLooked: () => watching.current.onLooked()
+			onLooked: () => watching.current.onLooked(),
+			onSelection: (selection) => watching.current.onSelection(selection)
 		});
 		const listen = (event: MessageEvent) => frame.handle(event);
 		window.addEventListener('message', listen);

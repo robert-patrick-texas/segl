@@ -4,6 +4,25 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
+Slot 9 gets History and restore, and each person sees what the others have selected. A browser that loads the whole diagram again keeps its page, its view, and its selection, and waits for a drag to end. A page left open while segl is updated says to reload.
+
+### New
+
+- History on slot 9 (D-001, T-028). The bar's History lists the diagram's revisions with their marks, and any of them can be put back for everyone, which can itself be undone. While someone holds the pen, only the holder restores: the others' History shows no Restore, and the server refuses a restore from anyone else with `pen_held`. The diagram as it was before a big delete, one that leaves fewer than 90% of its shapes and links, is kept, as on the whiteboards.
+- The others' selections on slot 9 (D-006, T-029). Each browser outlines the shapes and links each other person has selected, in that person's cursor color, on the page of the diagram they are on. An outline follows its shape, and is never part of the diagram. A browser that comes later sees the selections already made.
+- The update notice (S-022, T-030). A page open while segl is updated says `segl updated`, with a `Reload` button, on every slot. The page never reloads by itself. A page has to know the notice to show it, so it shows from the update after this release on.
+
+### Changed
+
+- A whole-diagram load on slot 9, to put a drifted browser right or after a restore, waits until no label is being typed and no press is held (D-003, T-027). It then keeps the person's page of the diagram, as well as the scale and the scroll, and the shapes they had selected. Before, a load during a drag dropped the drag, and the shape stayed where it was, and a load returned to the first page.
+- A follow the server refuses because it would close a loop now says so in the bar, `Can't follow: they follow you`, for five seconds (S-021, T-025).
+- The protocol: `welcome` carries the server's `version`, a restore of slot 9 names the sender's `connectionId`, and slot 9 has a new socket message, `selection` (`docs/API.md`).
+
+### Fixed
+
+- On slot 9, a label editor did not open on a new shape when a whole-diagram load came during drawio's short insert animation: the selection then held a shape the diagram no longer had. segl's `PostConfig.js` now swaps such a shape for the diagram's own.
+- segl's `PostConfig.js` said a label editor was open when drawio had opened none, which could hold a whole-diagram load until the next label edit.
+
 ## 0.8.0 — 2026-11-27
 
 Follow mode: press a name in the bar and follow that person's view, on every slot, and on slot 9 the others follow whoever takes the pen. Slot 9 shows each person's cursor, as the whiteboards do. Behind nginx, a POST no longer gets an occasional 502.

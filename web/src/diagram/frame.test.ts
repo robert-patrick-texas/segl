@@ -18,8 +18,12 @@ import {
 	DiagramFrame,
 	drawioAddress,
 	EMBED_PARAMETERS,
+	parseSelection,
+	SELECTION_LIMIT,
 	viewOf,
-	type DiagramEdit
+	type DiagramEdit,
+	type FrameSelection,
+	type Selection
 } from './frame.ts';
 
 const ORIGIN = 'https://dev.example.com';
@@ -30,12 +34,18 @@ class FakeWindow {
 	readonly origins: string[] = [];
 	/** segl's own messages, which go as objects and not as text. */
 	readonly objects: Record<string, unknown>[] = [];
+	/** Both kinds in the order posted: drawio's action, or segl's message. */
+	readonly order: string[] = [];
 
 	postMessage(message: unknown, targetOrigin: string): void {
 		if (typeof message === 'string') {
-			this.posted.push(JSON.parse(message) as Record<string, unknown>);
+			const action = JSON.parse(message) as Record<string, unknown>;
+			this.posted.push(action);
+			this.order.push(String(action['action']));
 		} else {
-			this.objects.push(message as Record<string, unknown>);
+			const own = message as Record<string, unknown>;
+			this.objects.push(own);
+			this.order.push(`segl:${String(own['segl'])}`);
 		}
 		this.origins.push(targetOrigin);
 	}
@@ -50,6 +60,7 @@ function setUp() {
 	const edits: DiagramEdit[] = [];
 	const views: View[] = [];
 	const pointers: Cursor[] = [];
+	const selections: (Selection | null)[] = [];
 	let looks = 0;
 	const frame = new DiagramFrame({
 		target: () => window,
@@ -57,15 +68,23 @@ function setUp() {
 		onEdit: (edit) => edits.push(edit),
 		onView: (view) => views.push(view),
 		onPointer: (cursor) => pointers.push(cursor),
-		onLooked: () => (looks += 1)
+		onLooked: () => (looks += 1),
+		onSelection: (selection) => selections.push(selection)
 	});
 	/** drawio said something. */
 	const say = (message: unknown, source: unknown = window, origin = ORIGIN) =>
 		frame.handle({ source, origin, data: JSON.stringify(message) });
-	return { window, edits, frame, say, views, pointers, looks: () => looks };
+	return { window, edits, frame, say, views, pointers, selections, looks: () => looks };
 }
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+/** Whether a promise settles within a short, bounded wait. */
+const settles = (promise: Promise<unknown>, ms = 50) =>
+	Promise.race([
+		promise.then(() => true),
+		new Promise<boolean>((resolve) => setTimeout(() => resolve(false), ms))
+	]);
 
 describe('the adapter takes messages only from its own frame', () => {
 	test('a message from another window or another origin is ignored', async () => {
@@ -305,10 +324,25 @@ describe('a person’s view and typing', () => {
 			xml: '<m/>',
 			scale: 2,
 			translate: { x: 10, y: 20 },
-			scroll: { left: 300, top: 100 }
+			scroll: { left: 300, top: 100 },
+			currentPage: 2,
+			pageId: 'page-3'
 		});
 
-		expect(await view).toEqual({ scale: 2, x: 140, y: 30 });
+		expect(await view).toEqual({ scale: 2, x: 140, y: 30, page: 'page-3' });
+	});
+
+	test('the view names no page when PostConfig.js gave no page id', () => {
+		const answer = { scale: 1, translate: { x: 0, y: 0 }, scroll: { left: 0, top: 0 } };
+
+		for (const pageId of [undefined, null, '', 7, { id: 'p' }]) {
+			expect(viewOf({ ...answer, currentPage: 0, pageId })).toEqual({
+				scale: 1,
+				x: 0,
+				y: 0,
+				page: null
+			});
+		}
 	});
 
 	test('an answer without segl’s scroll gives no view', () => {
@@ -324,7 +358,7 @@ describe('a person’s view and typing', () => {
 		const { window, frame, say } = setUp();
 		say({ event: 'init' });
 
-		void frame.load('<m/>', false, { scale: 1.5, x: 40, y: 60 });
+		void frame.load('<m/>', false, { scale: 1.5, x: 40, y: 60, page: 'page-3' });
 
 		expect(window.take()).toEqual([
 			{
@@ -337,6 +371,230 @@ describe('a person’s view and typing', () => {
 				scroll: { x: 40, y: 60 }
 			}
 		]);
+	});
+
+	test('a load with a view first tells PostConfig.js the page and view to come back to', () => {
+		const { window, frame, say } = setUp();
+		say({ event: 'init' });
+		const view = { scale: 0.5, x: -10, y: 300, page: 'page-3' };
+
+		void frame.load('<m/>', false, view);
+
+		expect(window.objects).toEqual([{ segl: 'keep', view }]);
+		expect(window.order).toEqual(['segl:keep', 'load']);
+		expect(window.origins).toEqual([ORIGIN, ORIGIN]);
+	});
+
+	test('a load without a view, as at a join, keeps nothing', () => {
+		const { window, frame, say } = setUp();
+		say({ event: 'init' });
+
+		void frame.load('<m/>', true);
+
+		expect(window.objects).toEqual([]);
+		expect(window.order).toEqual(['load']);
+	});
+
+	test('the view to come back to goes just before its load, not when the load is asked', async () => {
+		const { window, frame, say } = setUp();
+		say({ event: 'init' });
+		const view = { scale: 1, x: 0, y: 0, page: 'p' };
+
+		const patched = frame.patch({ a: 1 }, null);
+		void frame.load('<m/>', false, view);
+		expect(window.order).toEqual(['patch']);
+
+		say({ event: 'patch' });
+		expect(await settles(patched)).toBe(true);
+		expect(window.order).toEqual(['patch', 'segl:keep', 'load']);
+	});
+});
+
+describe('a press in the frame (T19)', () => {
+	test('idle waits while a press is held, and settles at its end', async () => {
+		const { frame, say } = setUp();
+		let idle = false;
+
+		say({ event: 'press', pressed: true });
+		void frame.idle().then(() => (idle = true));
+		await flush();
+		expect(idle).toBe(false);
+
+		say({ event: 'press', pressed: false });
+		await flush();
+		expect(idle).toBe(true);
+	});
+
+	test('idle waits for both a press and a label editor to end', async () => {
+		const { frame, say } = setUp();
+		let idle = false;
+		say({ event: 'editing', editing: true });
+		say({ event: 'press', pressed: true });
+		void frame.idle().then(() => (idle = true));
+
+		say({ event: 'press', pressed: false });
+		await flush();
+		expect(idle).toBe(false);
+
+		say({ event: 'press', pressed: true });
+		say({ event: 'editing', editing: false });
+		await flush();
+		expect(idle).toBe(false);
+
+		say({ event: 'press', pressed: false });
+		await flush();
+		expect(idle).toBe(true);
+	});
+
+	test('a press report that is not true is no press', async () => {
+		const { frame, say } = setUp();
+
+		say({ event: 'press', pressed: true });
+		say({ event: 'press', pressed: 'yes' });
+
+		expect(await settles(frame.idle())).toBe(true);
+	});
+
+	test('a press from another window holds nothing', async () => {
+		const { frame, say } = setUp();
+
+		say({ event: 'press', pressed: true }, {});
+		say({ event: 'editing', editing: true }, {}, ORIGIN);
+
+		expect(await settles(frame.idle())).toBe(true);
+	});
+
+	test('a load waits for a press to end, and what comes after it waits too', async () => {
+		const { window, frame, say } = setUp();
+		say({ event: 'init' });
+		say({ event: 'press', pressed: true });
+
+		const loaded = frame.load('<m/>', false, { scale: 1, x: 0, y: 0, page: 'p' });
+		const patched = frame.patch({ a: 1 }, null);
+		await flush();
+		expect(window.order).toEqual([]);
+
+		say({ event: 'press', pressed: false });
+		expect(window.order).toEqual(['segl:keep', 'load']);
+		say({ event: 'load' });
+		expect(await settles(loaded)).toBe(true);
+		expect(window.order).toEqual(['segl:keep', 'load', 'patch']);
+		say({ event: 'patch' });
+		expect(await settles(patched)).toBe(true);
+	});
+
+	test('a load waits for a label editor to close, even without a view', async () => {
+		const { window, frame, say } = setUp();
+		say({ event: 'init' });
+		say({ event: 'editing', editing: true });
+
+		const loaded = frame.load('<m/>', false);
+		await flush();
+		expect(window.order).toEqual([]);
+
+		say({ event: 'editing', editing: false });
+		expect(window.order).toEqual(['load']);
+		say({ event: 'load' });
+		expect(await settles(loaded)).toBe(true);
+	});
+
+	test('a patch or an export is not held by a press', async () => {
+		const { window, frame, say } = setUp();
+		say({ event: 'init' });
+		say({ event: 'press', pressed: true });
+		say({ event: 'editing', editing: true });
+
+		const patched = frame.patch({ a: 1 }, null);
+		expect(window.order).toEqual(['patch']);
+		say({ event: 'patch' });
+		expect(await settles(patched)).toBe(true);
+		void frame.xml();
+		expect(window.order).toEqual(['patch', 'export']);
+	});
+});
+
+describe('selections (T19)', () => {
+	test('this browser’s selection reaches the page as PostConfig.js reports it', () => {
+		const { say, selections } = setUp();
+
+		say({ event: 'selection', selection: { page: 'page-3', cells: ['a', 'b'] } });
+		say({ event: 'selection', selection: null });
+
+		expect(selections).toEqual([{ page: 'page-3', cells: ['a', 'b'] }, null]);
+	});
+
+	test('a report that is not one, or from another window, is dropped', () => {
+		const { say, selections } = setUp();
+
+		say({ event: 'selection' });
+		say({ event: 'selection', selection: 'a' });
+		say({ event: 'selection', selection: ['a'] });
+		say({ event: 'selection', selection: { page: 'p' } });
+		say({ event: 'selection', selection: { page: 'p', cells: 'a' } });
+		say({ event: 'selection', selection: { page: 'p', cells: ['a'] } }, {});
+		say({ event: 'selection', selection: null }, undefined, 'https://other.example.net');
+
+		expect(selections).toEqual([]);
+	});
+
+	test('none, or more than 50 cells, is null', () => {
+		const many = Array.from({ length: SELECTION_LIMIT + 1 }, (_, i) => `c${i}`);
+
+		expect(SELECTION_LIMIT).toBe(50);
+		expect(parseSelection(null)).toBeNull();
+		expect(parseSelection({ page: 'p', cells: [] })).toBeNull();
+		expect(parseSelection({ page: 'p', cells: many })).toBeNull();
+		expect(parseSelection({ page: 'p', cells: many.slice(0, 50) })?.cells).toHaveLength(50);
+	});
+
+	test('an id the server would refuse is left out, and a page id becomes null', () => {
+		const long = 'x'.repeat(129);
+		const longest = 'y'.repeat(128);
+
+		expect(
+			parseSelection({ page: longest, cells: ['a', '', long, 7, null, longest, 'a'] })
+		).toEqual({ page: longest, cells: ['a', longest] });
+		for (const page of [long, '', 7, undefined, null]) {
+			expect(parseSelection({ page, cells: ['a'] })).toEqual({ page: null, cells: ['a'] });
+		}
+		expect(parseSelection({ page: 'p', cells: [long, '', 3] })).toBeNull();
+		for (const value of [undefined, 'a', 7, ['a'], {}, { cells: { 0: 'a' } }]) {
+			expect(parseSelection(value)).toBeUndefined();
+		}
+	});
+
+	test('the others’ selections go to the frame as segl’s own object', async () => {
+		const { window, frame, say } = setUp();
+		const shown: FrameSelection[] = [
+			{ id: 'b', color: 'hsl(0, 100%, 83%)', page: 'page-3', cells: ['c1', 'c2'] }
+		];
+		say({ event: 'init' });
+		await flush();
+
+		frame.showSelections(shown);
+		frame.showSelections([]);
+
+		expect(window.objects).toEqual([
+			{ segl: 'selections', selections: shown },
+			{ segl: 'selections', selections: [] }
+		]);
+		expect(window.origins).toEqual([ORIGIN, ORIGIN]);
+		// None of drawio's actions was posted for them.
+		expect(window.take()).toEqual([]);
+	});
+
+	test('a list given before drawio is ready goes once it is', async () => {
+		const { window, frame, say } = setUp();
+		const first: FrameSelection[] = [{ id: 'b', color: 'red', page: null, cells: ['c1'] }];
+		const last: FrameSelection[] = [{ id: 'c', color: 'blue', page: 'p', cells: ['c2'] }];
+
+		frame.showSelections(first);
+		frame.showSelections(last);
+		expect(window.objects).toEqual([]);
+
+		say({ event: 'init' });
+		await flush();
+		expect(window.objects).toEqual([{ segl: 'selections', selections: last }]);
 	});
 });
 

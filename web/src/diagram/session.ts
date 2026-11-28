@@ -38,8 +38,15 @@
  * the pen starts this browser following the new holder, once, unless it is
  * the holder. The person ends a follow by scrolling, zooming, or clicking in
  * the frame, and it ends when the pen comes back.
+ *
+ * Loads and selections (T19): a load that is not a join waits until no label
+ * is being typed and no press is held, and keeps the person's view and page.
+ * A restore by anyone sends every browser the whole diagram of a new epoch,
+ * which replaces what this page made of the old one. The frame reports this
+ * browser's selection, which goes to the others at most five times a second,
+ * and the session hands the others' to the frame in their cursor colors.
  */
-import { Leading } from '../collab/follow.ts';
+import { Leading, Refusal } from '../collab/follow.ts';
 import type { ClientMessage, Cursor, Participant, View } from '../collab/protocol.ts';
 import {
 	CURSOR_INTERVAL_MS,
@@ -52,8 +59,14 @@ import {
 	type SocketLike
 } from '../collab/session.ts';
 import { Throttle } from '../collab/throttle.ts';
-import { frameCursors } from './cursors.ts';
-import type { DiagramEdit, DiagramFrameLike } from './frame.ts';
+import { cursorColor, frameCursors } from './cursors.ts';
+import type {
+	DiagramEdit,
+	DiagramFrameLike,
+	DiagramView,
+	FrameSelection,
+	Selection
+} from './frame.ts';
 import {
 	parseDiagramMessage,
 	penOfWelcome,
@@ -76,6 +89,10 @@ export interface DiagramState {
 	pen: string | null;
 	/** The connection whose view this browser follows, or null (T18). */
 	following: string | null;
+	/** The server refused a follow in the last few seconds: it would close a loop (T19). */
+	followRefused: boolean;
+	/** The server's version, as the newest `welcome` said, or null when it said none (T19). */
+	version: string | null;
 }
 
 export const INITIAL_DIAGRAM_STATE: DiagramState = {
@@ -86,8 +103,13 @@ export const INITIAL_DIAGRAM_STATE: DiagramState = {
 	epoch: null,
 	participants: [],
 	pen: null,
-	following: null
+	following: null,
+	followRefused: false,
+	version: null
 };
+
+/** At most one `selection` in this time (T19). */
+export const SELECTION_INTERVAL_MS = 200;
 
 export interface DiagramSessionOptions {
 	/** `wss://dev.example.com/board/collab?slot=9`. */
@@ -177,6 +199,14 @@ export class DiagramSession {
 	private shown: View | null = null;
 	/** What the frame shows, as it last said. */
 	private looking: View | null = null;
+	private readonly refusal = new Refusal((followRefused) => this.setState({ followRefused }));
+	/** This browser's selection, as the frame last said. */
+	private selected: Selection | null = null;
+	private readonly selections = new Throttle<Selection | null>(SELECTION_INTERVAL_MS, (selection) =>
+		this.send({ type: 'selection', selection })
+	);
+	/** The others' selections, by connection id. */
+	private readonly theirs = new Map<string, Selection>();
 
 	constructor(options: DiagramSessionOptions) {
 		this.options = options;
@@ -191,12 +221,14 @@ export class DiagramSession {
 			await this.options.frame.load(this.options.xml, this.wantsReadOnly());
 			// What came before the frame could draw.
 			this.drawCursors();
+			this.drawSelections();
 		});
 		this.open();
 	}
 
 	stop(): void {
 		this.stopped = true;
+		this.refusal.stop();
 		clearTimeout(this.retryTimer);
 		clearTimeout(this.lockTimer);
 		const socket = this.socket;
@@ -263,6 +295,25 @@ export class DiagramSession {
 		if (this.live) this.cursors.push(cursor);
 	}
 
+	/**
+	 * The person's selection in the frame changed: null for none, or for more
+	 * than 50 cells. A viewer's goes too: it changes no diagram.
+	 */
+	selectionChanged(selection: Selection | null): void {
+		this.selected = selection;
+		if (this.live) this.selections.push(selection);
+	}
+
+	/** This browser's selection, as the frame last said, or null. */
+	selection(): Selection | null {
+		return this.selected;
+	}
+
+	/** Ask for the whole diagram and load it, as after a drift. It changes nothing in the diagram. */
+	repair(): void {
+		this.askWhole();
+	}
+
 	rename(displayName: string): void {
 		if (this.stopped) return;
 		if (this.live) this.send({ type: 'rename', displayName });
@@ -305,9 +356,12 @@ export class DiagramSession {
 		this.synced = false;
 		this.reloading = false;
 		this.cursors.cancel();
+		this.selections.cancel();
 		this.leading.reset();
 		this.peers.clear();
+		this.theirs.clear();
 		this.drawCursors();
+		this.drawSelections();
 	}
 
 	private dropped(): void {
@@ -372,7 +426,8 @@ export class DiagramSession {
 					title: message.title,
 					participants: message.participants,
 					pen: penOfWelcome(text),
-					following: null
+					following: null,
+					version: message.version
 				});
 				if (this.renameWaiting !== null) {
 					this.send({ type: 'rename', displayName: this.renameWaiting });
@@ -381,6 +436,8 @@ export class DiagramSession {
 				this.lockIn(message.editEndsIn);
 				this.keepReadOnly();
 				this.drawCursors();
+				// A new connection has no selection at the server: this browser's goes again.
+				if (this.selected !== null) this.selections.push(this.selected);
 				// Someone held the pen before this browser came.
 				this.penMoved(this.state.pen);
 				break;
@@ -425,8 +482,14 @@ export class DiagramSession {
 				});
 				break;
 			}
+			case 'selection':
+				if (message.selection === null) this.theirs.delete(message.connectionId);
+				else this.theirs.set(message.connectionId, message.selection);
+				this.drawSelections();
+				break;
 			case 'presence-end':
 				if (this.peers.delete(message.connectionId)) this.drawCursors();
+				if (this.theirs.delete(message.connectionId)) this.drawSelections();
 				this.setState({
 					participants: this.state.participants.filter(
 						(p) => p.connectionId !== message.connectionId
@@ -448,7 +511,11 @@ export class DiagramSession {
 				if (message.error === 'cannot_follow') {
 					// The server kept the follow there was: this one ends it too.
 					this.send({ type: 'follow', connectionId: null });
-					this.setState({ following: null });
+					// The bar says why, when a follow this browser asked for ended.
+					if (this.state.following !== null) {
+						this.setState({ following: null });
+						this.refusal.refused();
+					}
 					break;
 				}
 				this.refused(message.error, message.message);
@@ -491,15 +558,30 @@ export class DiagramSession {
 		joining: boolean
 	): Promise<void> {
 		const frame = this.options.frame;
-		// What this page made before a load: the load replaces it in the frame.
-		const made = new Set(this.unacked.keys());
+		// What this page made before a load, which the load replaced in the frame.
+		let made = new Set<string>();
 		if (message.whole) {
 			if (!joining) this.counts.reloads += 1;
 			this.reloading = false;
-			this.epoch = message.epoch;
-			// A repair keeps where the person was looking.
-			const view = joining ? null : await frame.view();
+			let view: DiagramView | null = null;
+			if (!joining) {
+				// A repair, or a restore by anyone, waits for the person: a load
+				// ends a label being typed, and a drag. It keeps where they were
+				// looking, on their page.
+				await frame.idle();
+				view = await frame.view();
+			}
 			await frame.load(message.xml ?? '', this.wantsReadOnly(), view);
+			if (message.epoch !== this.epoch) {
+				// A restore (D2-030): what this page made of the diagram that went
+				// goes with it, and nothing waits to be saved.
+				this.epoch = message.epoch;
+				this.unacked.clear();
+				this.copyAfterLoad = false;
+				this.savedSeq = this.seq;
+			}
+			// Every edit made before the load has reached this page by now.
+			made = new Set(this.unacked.keys());
 			this.base = message.count;
 			// Every patch after the copy, this page's own too: the load replaced them.
 			for (const entry of message.patches) {
@@ -507,6 +589,13 @@ export class DiagramSession {
 				this.mine.delete(entry.pid);
 				await frame.patch(entry.patch, null);
 				this.base = entry.n;
+			}
+			if (!joining) {
+				// What this page made before the load, which the server numbers
+				// after the copy it sent: the load replaced it in the frame.
+				for (const [pid, entry] of this.unacked) {
+					if (made.has(pid)) await frame.patch(entry.patch, null);
+				}
 			}
 		} else {
 			this.base = message.count;
@@ -521,6 +610,8 @@ export class DiagramSession {
 				this.copyAfterLoad = false;
 				this.send({ type: 'copy', epoch: this.epoch, base: this.base, xml: await frame.xml() });
 			}
+			// A restore moved the epoch on: an open History reads its list again.
+			this.setState(this.state.epoch === this.epoch ? {} : { epoch: this.epoch });
 			return;
 		}
 		// What this page made that the server never took: made while the
@@ -528,7 +619,7 @@ export class DiagramSession {
 		const waiting = () => [...this.unacked].filter(([pid]) => !this.sent.has(pid));
 		for (let left = waiting(); left.length > 0; left = waiting()) {
 			for (const [pid, entry] of left) {
-				if (message.whole && made.has(pid)) await frame.patch(entry.patch, null);
+				if (made.has(pid)) await frame.patch(entry.patch, null);
 				// Its checksum was of a diagram that has moved on since.
 				this.sendPatch(pid, entry.patch, null, await frame.xml());
 			}
@@ -599,6 +690,15 @@ export class DiagramSession {
 
 	private drawCursors(): void {
 		this.options.frame.showCursors(frameCursors(this.peers.values(), this.state.connectionId));
+	}
+
+	/** Hand the frame the others' selections, each in its person's cursor color. */
+	private drawSelections(): void {
+		const shown: FrameSelection[] = [];
+		for (const [id, { page, cells }] of this.theirs) {
+			shown.push({ id, color: cursorColor(id), page, cells });
+		}
+		this.options.frame.showSelections(shown);
 	}
 
 	/** Whether drawio's read-only view should be on: a viewer, or someone else holds the pen. */

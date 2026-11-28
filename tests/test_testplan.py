@@ -48,7 +48,7 @@ def test_the_table_has_every_row_of_the_test_plan_but_the_three_it_cannot_run() 
     # The two rows of the installed .deb, and the row of the dev container.
     assert elsewhere == {"T-017", "T-018", "T-021"}
     assert [row.name for row in table.rows] == [row for row in plan_rows() if row not in elsewhere]
-    assert len(plan_rows()) == 26
+    assert len(plan_rows()) == 30
 
 
 def test_every_row_names_a_test() -> None:
@@ -412,7 +412,7 @@ def test_the_command_passes_when_every_row_did(
     suites = Suites(*passing_reports())
     status, out = run_main(suites, capsys)
     assert status == 0, out
-    assert "All 23 rows passed." in out
+    assert "All 27 rows passed." in out
     for row in testplan.load_table().rows:
         assert re.search(rf"^  {row.name}  pass  \d+ pytest, \d+ browser$", out, flags=re.MULTILINE)
     assert "T-017  -     not run here: the .deb: deploy/debian/package-test.sh" in out
@@ -464,7 +464,7 @@ def test_the_command_fails_when_a_suite_failed_outside_the_rows(
     assert status == 1
     said = f"pytest exit {exits[0]}, browser tests exit {exits[1]}."
     assert f"Every row passed, but a suite did not: {said}" in out
-    assert "All 23 rows passed." not in out
+    assert "All 27 rows passed." not in out
 
 
 def test_the_command_fails_every_browser_row_when_the_browser_tests_left_no_report(

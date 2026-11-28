@@ -27,7 +27,9 @@
  * follow mode and cursors (T18) it reports the view, the pointer, and the
  * person's own scroll, zoom, or click, and it takes segl's own messages,
  * objects with a `segl` field, which drawio's handler never sees: a view to
- * show, and the others' cursors to draw.
+ * show, and the others' cursors to draw. For T19 it reports a press and this
+ * browser's selection, outlines the others' selections, and comes back to
+ * the page, the view, and the selection after a load.
  */
 import { parseView, type Cursor, type View } from '../collab/protocol.ts';
 import type { FrameCursor } from './cursors.ts';
@@ -54,11 +56,31 @@ export interface DiagramEdit {
 	xml: string;
 }
 
-/** Where a person is looking: the scale, and the diagram's point at the top left. */
+/** Where a person is looking: the scale, the diagram's point at the top left, and the page. */
 export interface DiagramView {
 	scale: number;
 	x: number;
 	y: number;
+	/** drawio's id of the page shown, or null when drawio named none. */
+	page: string | null;
+}
+
+/** What this browser has selected in the frame. */
+export interface Selection {
+	/** drawio's id of the page the cells are on, or null. */
+	page: string | null;
+	/** 1 to 50 cell ids. */
+	cells: readonly string[];
+}
+
+/** Another person's selection, as the frame outlines it. */
+export interface FrameSelection {
+	/** Their connection id. */
+	id: string;
+	/** Their cursor color, as for their cursor. */
+	color: string;
+	page: string | null;
+	cells: readonly string[];
 }
 
 /** What drawio said of a patch it applied. */
@@ -75,7 +97,9 @@ export interface DiagramFrameLike {
 	readonly ready: Promise<void>;
 	/**
 	 * Put a diagram in place of the frame's, with drawio's read-only view on
-	 * or off. With a view, the person keeps looking where they were.
+	 * or off. It waits until no label is edited and no press is held. With a
+	 * view, the person keeps looking where they were, on the same page, with
+	 * the cells they had selected that are still there.
 	 */
 	load(xml: string, readOnly: boolean, view?: DiagramView | null): Promise<void>;
 	/** Apply another browser's patch. With a checksum, drawio compares it. */
@@ -84,7 +108,7 @@ export interface DiagramFrameLike {
 	xml(): Promise<string>;
 	/** Return where the person is looking, or null when drawio did not say. */
 	view(): Promise<DiagramView | null>;
-	/** Settles when no label is being edited in the frame. */
+	/** Settles when no label is being edited and no press is held in the frame. */
 	idle(): Promise<void>;
 	/** Keep drawio's read-only view on, or off. */
 	setReadOnly(value: boolean): void;
@@ -95,6 +119,8 @@ export interface DiagramFrameLike {
 	showView(view: View | null): void;
 	/** Draw these cursors, and only these. */
 	showCursors(cursors: readonly FrameCursor[]): void;
+	/** Outline these selections, and only these. The frame draws them again after each patch and load. */
+	showSelections(selections: readonly FrameSelection[]): void;
 }
 
 /** What the person does in the frame, besides editing (T18). */
@@ -105,6 +131,8 @@ export interface FrameWatcher {
 	onPointer(cursor: Cursor): void;
 	/** The person scrolled, zoomed, or clicked in the frame themselves. */
 	onLooked(): void;
+	/** This browser's selection changed: null for none, or for more than 50 cells. */
+	onSelection(selection: Selection | null): void;
 }
 
 export interface FrameOptions extends Partial<FrameWatcher> {
@@ -129,11 +157,27 @@ export function drawioAddress(root: URL): string {
 	return new URL(`drawio/index.html?${EMBED_PARAMETERS}`, root).href;
 }
 
+/** The most cells a selection names: drawio's own sessions send none above it. */
+export const SELECTION_LIMIT = 50;
+
+/** The longest page or cell id the server takes. */
+const ID_LIMIT = 128;
+
 type Reply = Record<string, unknown>;
 
 interface Waiting {
 	event: string;
 	resolve(reply: Reply): void;
+}
+
+interface Queued {
+	action: Reply;
+	event: string;
+	resolve(reply: Reply): void;
+	/** Post it only once no label is edited and no press is held. */
+	whenIdle?: boolean;
+	/** One of segl's own messages to post just before it. */
+	before?: { segl: string } & Record<string, unknown>;
 }
 
 export class DiagramFrame implements DiagramFrameLike {
@@ -143,14 +187,17 @@ export class DiagramFrame implements DiagramFrameLike {
 	private isReady = false;
 	/** The actions posted and not yet answered: one at a time. */
 	private waiting: Waiting | null = null;
-	private queue: Array<{ action: Reply; event: string; resolve(reply: Reply): void }> = [];
+	private queue: Queued[] = [];
 	/** The read-only view the page wants, and the one drawio last said it has. */
 	private wantReadOnly = false;
 	private readOnly: boolean | null = null;
 	private toggling = false;
-	/** A label editor is open in the frame, and what waits for it to close. */
+	/** A label editor is open, or a press is held, in the frame, and what waits for neither. */
 	private editing = false;
+	private pressed = false;
 	private waitingIdle: Array<() => void> = [];
+	/** The others' selections, as last given: drawio is told them once it is ready. */
+	private selections: readonly FrameSelection[] | null = null;
 
 	constructor(options: FrameOptions) {
 		this.options = options;
@@ -178,6 +225,7 @@ export class DiagramFrame implements DiagramFrameLike {
 				if (!this.isReady) {
 					this.isReady = true;
 					this.markReady();
+					if (this.selections !== null) this.showSelections(this.selections);
 					this.next();
 				}
 				return;
@@ -191,10 +239,17 @@ export class DiagramFrame implements DiagramFrameLike {
 				return;
 			case 'editing':
 				this.editing = reply['editing'] === true;
-				if (!this.editing) {
-					for (const resolve of this.waitingIdle.splice(0)) resolve();
-				}
+				this.settle();
 				return;
+			case 'press':
+				this.pressed = reply['pressed'] === true;
+				this.settle();
+				return;
+			case 'selection': {
+				const selection = parseSelection(reply['selection']);
+				if (selection !== undefined) this.options.onSelection?.(selection);
+				return;
+			}
 			case 'view': {
 				const view = parseView(reply['view']);
 				if (view !== null) this.options.onView?.(view);
@@ -222,12 +277,17 @@ export class DiagramFrame implements DiagramFrameLike {
 	load(xml: string, readOnly: boolean, view: DiagramView | null = null): Promise<void> {
 		this.wantReadOnly = readOnly;
 		const action: Reply = { action: 'load', xml, autosave: 1, diffSync: true, readOnly };
+		// A load would end a label being typed, and a drag: it waits for both.
+		const when: Pick<Queued, 'whenIdle' | 'before'> = { whenIdle: true };
 		if (view !== null) {
-			// drawio scales, then scrolls this point of the diagram to the top left.
+			// drawio scales, then scrolls this point of the diagram to the top
+			// left, on the first page. PostConfig.js turns to the view's page
+			// after the load, sets the view there, and selects again.
 			action['scale'] = view.scale;
 			action['scroll'] = { x: view.x, y: view.y };
+			when.before = { segl: 'keep', view };
 		}
-		return this.post(action, 'load').then(() => undefined);
+		return this.post(action, 'load', when).then(() => undefined);
 	}
 
 	async patch(patch: DrawioPatch, checksum: number | null): Promise<PatchResult> {
@@ -253,7 +313,7 @@ export class DiagramFrame implements DiagramFrameLike {
 	}
 
 	idle(): Promise<void> {
-		if (!this.editing) return Promise.resolve();
+		if (this.isIdle()) return Promise.resolve();
 		return new Promise((resolve) => this.waitingIdle.push(resolve));
 	}
 
@@ -268,6 +328,22 @@ export class DiagramFrame implements DiagramFrameLike {
 
 	showCursors(cursors: readonly FrameCursor[]): void {
 		this.tellSegl({ segl: 'cursors', cursors });
+	}
+
+	showSelections(selections: readonly FrameSelection[]): void {
+		this.selections = selections;
+		this.tellSegl({ segl: 'selections', selections });
+	}
+
+	private isIdle(): boolean {
+		return !this.editing && !this.pressed;
+	}
+
+	/** No label is edited and no press is held: what waited for it goes on. */
+	private settle(): void {
+		if (!this.isIdle()) return;
+		for (const resolve of this.waitingIdle.splice(0)) resolve();
+		this.next();
 	}
 
 	/**
@@ -302,30 +378,54 @@ export class DiagramFrame implements DiagramFrameLike {
 		});
 	}
 
-	private post(action: Reply, event: string): Promise<Reply> {
+	private post(
+		action: Reply,
+		event: string,
+		when: Pick<Queued, 'whenIdle' | 'before'> = {}
+	): Promise<Reply> {
 		return new Promise((resolve) => {
-			this.queue.push({ action, event, resolve });
+			this.queue.push({ action, event, resolve, ...when });
 			this.next();
 		});
 	}
 
 	private next(): void {
 		if (this.waiting !== null || !this.isReady) return;
-		const item = this.queue.shift();
+		const item = this.queue[0];
+		if (item === undefined || (item.whenIdle === true && !this.isIdle())) return;
 		const target = this.options.target();
-		if (item === undefined || target === null) {
-			if (item !== undefined) this.queue.unshift(item);
-			return;
-		}
+		if (target === null) return;
+		this.queue.shift();
+		if (item.before !== undefined) target.postMessage(item.before, this.options.origin);
 		this.waiting = { event: item.event, resolve: item.resolve };
 		target.postMessage(JSON.stringify(item.action), this.options.origin);
 	}
 }
 
+function isId(value: unknown): value is string {
+	return typeof value === 'string' && value.length >= 1 && value.length <= ID_LIMIT;
+}
+
+/**
+ * Return the selection `PostConfig.js` reported: null for none, or for more
+ * than 50 cells, and undefined for a report that is not one. A page id the
+ * server would refuse becomes null, and such a cell id is left out, so the
+ * page never sends a selection the server refuses.
+ */
+export function parseSelection(value: unknown): Selection | null | undefined {
+	if (value === null) return null;
+	if (typeof value !== 'object' || Array.isArray(value)) return undefined;
+	const { page, cells } = value as Record<string, unknown>;
+	if (!Array.isArray(cells)) return undefined;
+	const kept = [...new Set(cells.filter(isId))];
+	if (kept.length === 0 || kept.length > SELECTION_LIMIT) return null;
+	return { page: isId(page) ? page : null, cells: kept };
+}
+
 /**
  * Return the view one of drawio's answers describes, or null. segl's
- * `PostConfig.js` adds `scroll` to them: the diagram's point at the top left
- * is the scroll over the scale, less the translation.
+ * `PostConfig.js` adds `scroll` and `pageId` to them: the diagram's point at
+ * the top left is the scroll over the scale, less the translation.
  */
 export function viewOf(reply: Reply): DiagramView | null {
 	const { scale, translate, scroll } = reply;
@@ -337,9 +437,11 @@ export function viewOf(reply: Reply): DiagramView | null {
 	if (![x, y, left, top].every((value) => typeof value === 'number' && Number.isFinite(value))) {
 		return null;
 	}
+	const { pageId } = reply;
 	return {
 		scale,
 		x: (left as number) / scale - (x as number),
-		y: (top as number) / scale - (y as number)
+		y: (top as number) / scale - (y as number),
+		page: typeof pageId === 'string' && pageId !== '' ? pageId : null
 	};
 }

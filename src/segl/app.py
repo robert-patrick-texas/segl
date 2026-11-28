@@ -36,7 +36,7 @@ from segl.access import LOCK_SECONDS, Access, CodeLimit
 from segl.assets import MEDIA_TYPES, AssetStore
 from segl.collab import Rooms, serve
 from segl.config import Settings
-from segl.diagram import DIAGRAM_SLOT
+from segl.diagram import DIAGRAM_SLOT, PEN_HELD, PenHeld
 from segl.importing import ImportedFile, InvalidDocument, NotJson, TooLarge, read_document
 from segl.names import AllocationLimit, load_display_names, retry_after
 from segl.networks import InternalNetworks
@@ -64,7 +64,8 @@ MAX_TITLE_LENGTH = 80
 # The largest body of a title change. A title is at most 80 characters.
 _TITLE_BODY_BYTES = 4096
 
-# The largest body of a restore: a revision number and a display name.
+# The largest body of a restore: a revision number, a display name, and a
+# connection id.
 _RESTORE_BODY_BYTES = 4096
 
 # The largest body of an access code. A code is at most 256 characters.
@@ -88,9 +89,9 @@ _ASSET_HEADERS = {
 }
 
 
-# What a restore or an import of slot 9 is told: History and Import come to
-# Diagram mode in a later task (D2-039).
-_DIAGRAM_MODE = "Slot 9 is Diagram mode, which has no restore or import yet."
+# What an import of slot 9 is told: Import comes to Diagram mode in a later
+# task (D2-039).
+_DIAGRAM_MODE = "Slot 9 is Diagram mode, which has no import yet."
 
 
 class _AskAgain(StaticFiles):
@@ -518,8 +519,6 @@ def create_app(
         number = _slot_number(n)
         if not may_edit(request):
             return _error(403, "view_only", NEEDS_CODE)
-        if number == DIAGRAM_SLOT:
-            return _error(409, "diagram_mode", _DIAGRAM_MODE)
         body = await _json_object(request, _RESTORE_BODY_BYTES)
         if isinstance(body, JSONResponse):
             return body
@@ -534,8 +533,13 @@ def create_app(
         # Who restored, for the history row: the label the browser stores, as
         # `hello` carries it. A request has no other name.
         label = stored_name(body.get("displayName")) or SYSTEM_LABEL
-        # Written, then sent to the slot's room as a `scene` of the new epoch.
-        replacement = await rooms.restore(number, chosen, label)
+        # Written, then sent to the slot's room as a `scene` of the new epoch,
+        # or on slot 9 a whole `diagram`. Slot 9 reads which connection sent
+        # the request: while another holds the pen, only the holder restores.
+        try:
+            replacement = await rooms.restore(number, chosen, label, body.get("connectionId"))
+        except PenHeld:
+            return _error(409, "pen_held", PEN_HELD)
         return JSONResponse(
             {
                 "revision": replacement.revision,

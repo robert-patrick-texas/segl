@@ -799,25 +799,26 @@ def test_clearing_slot_9_gives_it_the_empty_diagram(repository: Repository) -> N
     assert (cleared.epoch, repository.list_revisions(9)) == (2, [])
 
 
-@pytest.mark.parametrize("route", ["restore", "import"])
-def test_slot_9_has_no_restore_or_import_yet(repository: Repository, route: str) -> None:
+def test_slot_9_has_no_import_yet(repository: Repository) -> None:
     client = TestClient(create_app(make_settings(), repository))
 
-    reply = client.post(f"/api/v1/slots/9/{route}", json={"revision": 1})
+    reply = client.post("/api/v1/slots/9/import", json={"type": "excalidraw", "elements": []})
 
     assert reply.status_code == 409
     assert reply.json()["error"] == "diagram_mode"
+    # Slot 9's restore is tests/test_diagram_history.py's (T19).
 
 
-def test_a_viewer_is_told_view_only_before_diagram_mode(repository: Repository) -> None:
+@pytest.mark.parametrize("route", ["restore", "import"])
+def test_a_viewer_is_told_view_only_before_diagram_mode(repository: Repository, route: str) -> None:
     client = TestClient(create_app(make_settings(**GATED), repository))
 
-    reply = client.post("/api/v1/slots/9/restore", json={"revision": 1})
+    reply = client.post(f"/api/v1/slots/9/{route}", json={"revision": 1})
 
     assert (reply.status_code, reply.json()["error"]) == (403, "view_only")
     assert (
         client.post(
-            "/api/v1/slots/9/restore", json={"revision": 1}, headers={PASS_HEADER: issue_pass()}
+            "/api/v1/slots/9/import", json={"revision": 1}, headers={PASS_HEADER: issue_pass()}
         ).json()["error"]
         == "diagram_mode"
     )

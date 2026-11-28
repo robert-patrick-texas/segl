@@ -39,7 +39,7 @@ from collections.abc import Callable, Sequence
 
 from starlette.concurrency import run_in_threadpool
 
-from segl.reconcile import Element, live_count
+from segl.reconcile import Element
 from segl.repository import SYSTEM_LABEL, Flush, Replacement, Repository, SlotFile
 from segl.room import FileEntry, Room, Snapshot, encode
 
@@ -82,8 +82,12 @@ class Saver:
         self._closing = False
         # The head holds a scene that the newest history row does not.
         self._unrecorded = False
-        # How many live elements the head holds. The room starts as the head.
-        self._head_live = live_count(room.elements.values())
+        # How many live elements the head holds, or None when they cannot be
+        # counted: slot 9's are its shapes and links. When the head changes
+        # other than by a flush, the next write counts it, in its worker
+        # thread. The room starts as the head.
+        self._head_live: int | None = None
+        self._count_head: Callable[[], int | None] | None = room.live_counter()
         self._task: asyncio.Task[None] | None = None
         # Held by whatever is writing the slot: a flush, or a replacement.
         self._lock = asyncio.Lock()
@@ -181,7 +185,7 @@ class Saver:
         # Nobody is told `saved`: the new epoch tells every browser that
         # what it sent for the old scene has nothing left to wait for.
         arrive(replacement.epoch)
-        self._head_live = live_count(room.elements.values())
+        self._count_head = room.live_counter()
         return replacement
 
     def _on_empty(self) -> None:
@@ -274,13 +278,16 @@ class Saver:
             self._room.slot, scene(), editor_label, files=_slot_files(files), kept=kept
         )
 
-    def _write(self, snapshot: Snapshot, record: bool) -> tuple[Flush, int]:
+    def _write(self, snapshot: Snapshot, record: bool) -> tuple[Flush, int | None]:
         """Write one snapshot. Return what the flush did, and the snapshot's live elements.
 
         This runs in a worker thread, under the lock, so the head's count is
-        not changed meanwhile.
+        not changed meanwhile. A scene whose live elements, or the head's,
+        cannot be counted is written with no row kept before it.
         """
-        live = live_count(snapshot.elements)
+        if self._count_head is not None:
+            self._head_live, self._count_head = self._count_head(), None
+        head, live = self._head_live, snapshot.live()
         flush = self._repository.flush_head(
             self._room.slot,
             snapshot.epoch,
@@ -288,7 +295,7 @@ class Saver:
             snapshot.editor_label or SYSTEM_LABEL,
             history_seconds=0 if record else self._history_seconds,
             files=_slot_files(snapshot.files),
-            before_delete=deletes_most(self._head_live, live),
+            before_delete=head is not None and live is not None and deletes_most(head, live),
         )
         return flush, live
 

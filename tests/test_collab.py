@@ -56,6 +56,7 @@ from segl.assets import AssetStore
 from segl.collab import Rooms, _Outbox, parse_message
 from segl.repository import Repository, Slot
 from segl.room import encode
+from segl.versions import app_version
 
 # A pass a segl with ``GATED`` takes, issued as the tests are collected.
 PASS = issue_pass()
@@ -116,6 +117,7 @@ def test_hello_is_answered_with_a_welcome_and_the_scene(client: TestClient) -> N
         "viewOnly": False,
         "editEndsIn": None,
         "connectionId": me["connectionId"],
+        "version": app_version(),
     }
     assert me["displayName"] == "Guest1"
     assert scene == {
@@ -126,6 +128,16 @@ def test_hello_is_answered_with_a_welcome_and_the_scene(client: TestClient) -> N
         "elements": [],
         "files": [],
     }
+
+
+@pytest.mark.parametrize("slot", [3, 9])
+def test_welcome_carries_the_servers_version(client: TestClient, slot: int) -> None:
+    # A page built for another version says segl was updated (T19).
+    with client.websocket_connect(f"/collab?slot={slot}") as socket:
+        welcome, _ = hello(socket)
+
+    assert welcome["version"] == app_version()
+    assert welcome["version"] == client.get("/api/v1/version").json()["version"]
 
 
 def test_the_room_starts_from_the_slots_stored_head(

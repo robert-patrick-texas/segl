@@ -13,14 +13,18 @@
 // limitations under the License.
 
 /**
- * A read-only handle on Diagram mode, at `window.SEGL_DIAGRAM`.
+ * A handle on Diagram mode, at `window.SEGL_DIAGRAM`.
  *
  * drawio draws in its own frame, so the browser tests and the measures of
  * D2-040 read the diagram through this: `xml()` asks the frame for its whole
  * diagram, and `counts()` says how often this page found its diagram had
  * drifted and loaded the whole of it again. `view()` is the area the frame
- * shows, as it last said, for follow mode (T18). It changes nothing, and
- * shows nothing the page's own user cannot already see.
+ * shows, as it last said, for follow mode (T18), and `selection()` what this
+ * browser has selected, as the frame last said (T19). `repair()` asks for the
+ * whole diagram and loads it, as after a drift: it waits until no label is
+ * being typed and no press is held, and keeps the view, the page, and the
+ * selection. None of it changes the diagram, or shows anything the page's own
+ * user cannot already see.
  */
 import type { DiagramFrameLike } from './frame.ts';
 import type { DiagramSession } from './session.ts';
@@ -32,6 +36,10 @@ export interface DiagramHandle {
 	counts(): string;
 	/** `{ x, y, width, height, page }` of the frame, as JSON text, or `null`. */
 	view(): string;
+	/** Load the whole diagram again, as after a drift. */
+	repair(): void;
+	/** `{ page, cells }` this browser has selected, as JSON text, or `null`. */
+	selection(): string;
 }
 
 declare global {
@@ -45,7 +53,9 @@ export function installDiagramHandle(frame: DiagramFrameLike, session: DiagramSe
 	const handle: DiagramHandle = {
 		xml: () => frame.xml(),
 		counts: () => JSON.stringify(session.counts),
-		view: () => JSON.stringify(session.view())
+		view: () => JSON.stringify(session.view()),
+		repair: () => session.repair(),
+		selection: () => JSON.stringify(session.selection())
 	};
 	window.SEGL_DIAGRAM = handle;
 	return () => {

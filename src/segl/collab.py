@@ -40,7 +40,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from segl.access import Access
 from segl.assets import AssetStore
 from segl.config import Settings
-from segl.diagram import DIAGRAM_SLOT, DiagramRoom
+from segl.diagram import DIAGRAM_SLOT, DiagramRoom, PenHeld
 from segl.origin import refuse_websocket
 from segl.reconcile import Element
 from segl.repository import SLOT_NUMBERS, Replacement, Repository, Slot
@@ -55,6 +55,7 @@ from segl.room import (
     parse_hello,
 )
 from segl.saver import Saver
+from segl.versions import app_version
 
 # How long a new connection has to say hello.
 HELLO_SECONDS = 10.0
@@ -91,6 +92,8 @@ class Rooms:
         self._savers: dict[int, Saver] = {}
         self._locks = {number: asyncio.Lock() for number in SLOT_NUMBERS}
         self._starts = {number: new_start() for number in SLOT_NUMBERS}
+        # The version this process runs, which `welcome` carries, read once (T19).
+        self._version = app_version()
 
     def written(self, slot: int) -> tuple[int, int] | None:
         """Return the epoch and count of a slot's newest head write that finished.
@@ -149,19 +152,27 @@ class Rooms:
                 room.retitle(renamed.title)
             return renamed
 
-    async def restore(self, slot: int, revision: int, editor_label: str) -> Replacement:
+    async def restore(
+        self, slot: int, revision: int, editor_label: str, connection_id: object = None
+    ) -> Replacement:
         """Put one of a slot's revisions in place of its scene, at a new epoch.
 
         The scene that is replaced is written first, with a history row, so it
         can be restored in its turn. Every connection on the slot is then sent
         the restored scene (docs/ARCHITECTURE.md, collaboration).
+        ``connection_id`` is the connection the request names, which only
+        slot 9 reads: while another connection holds its pen, only the holder
+        restores.
 
         Raises:
             RevisionNotFound: When the slot has no such revision.
+            PenHeld: When another connection holds slot 9's pen. Nothing is written.
         """
         # A slot nobody has opened since segl started has a room made for it:
         # one path, whoever is or is not connected.
-        await self.room(slot)
+        room = await self.room(slot)
+        if not room.may_restore(connection_id):
+            raise PenHeld
         # Read before anything is written. Recording the scene that is going
         # may be the row that drops the oldest one, which may be this one.
         found = await run_in_threadpool(self._repository.get_revision, slot, revision)
@@ -200,6 +211,7 @@ class Rooms:
                 head.scene_json,
                 max_scene_bytes=self._settings.max_scene_bytes,
                 start=self._starts[slot],
+                version=self._version,
             )
             return diagram, head.saved_at
         files = [
@@ -214,6 +226,7 @@ class Rooms:
             files=files,
             max_scene_bytes=self._settings.max_scene_bytes,
             start=self._starts[slot],
+            version=self._version,
         )
         return room, head.saved_at
 

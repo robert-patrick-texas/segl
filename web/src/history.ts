@@ -18,6 +18,7 @@
  * why one was kept, and for a restore that was refused. No React and no
  * editor here.
  */
+import { DIAGRAM_SLOT } from './slots.ts';
 
 /**
  * Why the server kept a revision: its scene is the one from just before a
@@ -138,6 +139,46 @@ export const NEEDS_CODE = 'Restoring needs an access code.';
 /** What the list says while this browser is not in the slot's room. */
 export const NEEDS_CONNECTION = 'Restoring waits for the connection.';
 
+/** What the list says on slot 9 while another connection holds the pen (T19). */
+export const NEEDS_PEN = 'Restoring needs the pen.';
+
+export interface RestoreFacts {
+	/** This browser may edit. */
+	canRestore: boolean;
+	/** Another connection holds slot 9's pen: only the holder restores. */
+	penHeld: boolean;
+	/** This browser is in the slot's room, and would see a restore. */
+	connected: boolean;
+}
+
+/** Return why the list's Restore buttons are gone or wait, or null when they work. */
+export function restoreNote({ canRestore, penHeld, connected }: RestoreFacts): string | null {
+	if (!canRestore) return NEEDS_CODE;
+	if (penHeld) return NEEDS_PEN;
+	if (!connected) return NEEDS_CONNECTION;
+	return null;
+}
+
+/** The body of `POST api/v1/slots/{n}/restore`. */
+export interface RestoreBody {
+	revision: number;
+	displayName: string | null;
+	/** On slot 9, this page's connection, so the server knows whether it holds the pen. */
+	connectionId?: string;
+}
+
+/** Return what a restore sends. Only slot 9 names the connection: its pen decides who restores. */
+export function restoreBody(
+	slot: number,
+	revision: number,
+	displayName: string | null,
+	connectionId: string | null
+): RestoreBody {
+	const body: RestoreBody = { revision, displayName };
+	if (slot === DIAGRAM_SLOT && connectionId !== null) body.connectionId = connectionId;
+	return body;
+}
+
 /**
  * Return what to tell a person whose restore failed. `error` is what the
  * call threw: an `ApiError` carries the server's code.
@@ -148,6 +189,8 @@ export function restoreProblem(error: unknown): string {
 			? (error as { code: unknown }).code
 			: null;
 	if (code === 'view_only') return NEEDS_CODE;
+	// Someone else took slot 9's pen since the list was read.
+	if (code === 'pen_held') return NEEDS_PEN;
 	// The rules the server keeps revisions by dropped it since the list was read.
 	if (code === 'revision_not_found') return 'That version is no longer kept.';
 	if (error instanceof Error && error.message !== '') return error.message;

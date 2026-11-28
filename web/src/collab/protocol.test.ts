@@ -28,7 +28,8 @@ const welcome = {
 	participants: [
 		{ connectionId: 'c1', displayName: 'Guest1' },
 		{ connectionId: 'c2', displayName: null }
-	]
+	],
+	version: '0.9.0'
 };
 const rectangle = { id: 'a', version: 1, versionNonce: 5, type: 'rectangle' };
 const png = { id: 'f'.repeat(40), hash: 'a'.repeat(64), mimeType: 'image/png' };
@@ -52,6 +53,16 @@ describe('parseServerMessage', () => {
 			const sent = editEndsIn === undefined ? without : { ...welcome, editEndsIn };
 
 			expect(parse(sent)).toEqual({ ...welcome, editEndsIn: null });
+		}
+	);
+
+	test.each([undefined, null, '', 9, ['0.9.0']])(
+		'a welcome with %j where the version goes is still a welcome, of no known version',
+		(version) => {
+			const { version: _left, ...without } = welcome;
+			const sent = version === undefined ? without : { ...welcome, version };
+
+			expect(parse(sent)).toEqual({ ...welcome, version: null });
 		}
 	);
 

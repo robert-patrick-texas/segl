@@ -42,7 +42,7 @@ export interface Diagram {
 	onPen: (take: boolean) => void;
 	/** Follow this connection's view, or stop: null (T18). For the bar. */
 	onFollow: (connectionId: string | null) => void;
-	/** Give this to the frame: where the person looks and points. */
+	/** Give this to the frame: where the person looks and points, and what they select. */
 	watcher: FrameWatcher;
 }
 
@@ -128,7 +128,8 @@ export function useDiagram({
 		() => ({
 			onView: (view) => session.current?.viewChanged(view),
 			onPointer: (cursor) => session.current?.pointer(cursor),
-			onLooked: () => session.current?.looked()
+			onLooked: () => session.current?.looked(),
+			onSelection: (selection) => session.current?.selectionChanged(selection)
 		}),
 		[]
 	);

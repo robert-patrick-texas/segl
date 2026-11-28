@@ -24,6 +24,40 @@ import { Throttle } from './throttle.ts';
 /** At most one `view` in this time. */
 export const VIEW_INTERVAL_MS = 200;
 
+/** How long the bar says why a follow did not start (T19). */
+export const REFUSED_FOLLOW_MS = 5000;
+
+type Timer = ReturnType<typeof setTimeout>;
+
+/**
+ * A follow the server refused with `cannot_follow`, which the bar says for a
+ * few seconds. `show` takes true when it starts, and false when it ends.
+ */
+export class Refusal {
+	private readonly show: (shown: boolean) => void;
+	private timer: Timer | undefined;
+
+	constructor(show: (shown: boolean) => void) {
+		this.show = show;
+	}
+
+	/** Say it, for the whole time again if it is being said. */
+	refused(): void {
+		clearTimeout(this.timer);
+		this.show(true);
+		this.timer = setTimeout(() => {
+			this.timer = undefined;
+			this.show(false);
+		}, REFUSED_FOLLOW_MS);
+	}
+
+	/** The session stops: nothing more is said. */
+	stop(): void {
+		clearTimeout(this.timer);
+		this.timer = undefined;
+	}
+}
+
 /** Whether two views show the same area of the same page. */
 export function sameView(a: View, b: View): boolean {
 	return (

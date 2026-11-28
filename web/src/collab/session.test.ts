@@ -15,7 +15,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { beats, type WireElement } from './elements.ts';
 import { RETRY_MS, type CanvasFile, type FileRef, type FileTransport } from './files.ts';
-import { VIEW_INTERVAL_MS } from './follow.ts';
+import { REFUSED_FOLLOW_MS, VIEW_INTERVAL_MS } from './follow.ts';
 import type { Participant, View } from './protocol.ts';
 import {
 	CollabSession,
@@ -252,6 +252,7 @@ function welcome(
 		participants?: unknown[];
 		epoch?: number;
 		editEndsIn?: number | null;
+		version?: string;
 	} = {}
 ): void {
 	socket.receive({
@@ -262,7 +263,8 @@ function welcome(
 		viewOnly: options.viewOnly ?? false,
 		editEndsIn: options.editEndsIn ?? null,
 		connectionId: 'me',
-		participants: options.participants ?? [ME]
+		participants: options.participants ?? [ME],
+		...(options.version === undefined ? {} : { version: options.version })
 	});
 }
 
@@ -327,7 +329,9 @@ describe('joining', () => {
 			// Not until the scene has come: the canvas is still the page's own load.
 			epoch: null,
 			participants: [OTHER, ME],
-			following: null
+			following: null,
+			followRefused: false,
+			version: null
 		});
 	});
 
@@ -1209,6 +1213,26 @@ describe("this browser's name", () => {
 
 		expect(harness.sockets).toHaveLength(1);
 		expect(harness.state().status).toBe('disconnected');
+	});
+});
+
+describe('the server’s version (T19)', () => {
+	test('each welcome says the server’s version, and one without says none', () => {
+		const harness = start();
+		const socket = harness.socket();
+		socket.open();
+		expect(harness.state().version).toBeNull();
+
+		welcome(socket, { version: '0.9.0' });
+		expect(harness.state().version).toBe('0.9.0');
+
+		socket.drop();
+		expect(harness.state().version).toBe('0.9.0');
+		vi.advanceTimersByTime(RETRY_DELAYS_MS[0]!);
+		const next = harness.socket();
+		next.open();
+		welcome(next);
+		expect(harness.state().version).toBeNull();
 	});
 });
 
@@ -2299,6 +2323,41 @@ describe('follow mode (T18)', () => {
 		expect(socket.take()).toEqual([{ type: 'follow', connectionId: null }]);
 		expect(harness.state().following).toBeNull();
 		expect(harness.editor.followed).toBeNull();
+	});
+
+	test('a refused follow is said for five seconds', () => {
+		const { harness, socket } = together();
+		harness.session.follow('other');
+
+		socket.receive({ type: 'error', error: 'cannot_follow', message: 'No.' });
+		expect(harness.state().followRefused).toBe(true);
+		vi.advanceTimersByTime(REFUSED_FOLLOW_MS - 1);
+		expect(harness.state().followRefused).toBe(true);
+		vi.advanceTimersByTime(1);
+
+		expect(harness.state().followRefused).toBe(false);
+	});
+
+	test('a refusal of a follow that already ended with its leader says nothing', () => {
+		const { harness, socket } = together();
+		harness.session.follow('other');
+		socket.receive({ type: 'presence-end', connectionId: 'other' });
+
+		socket.receive({ type: 'error', error: 'cannot_follow', message: 'No.' });
+
+		expect(harness.states.some((state) => state.followRefused)).toBe(false);
+	});
+
+	test('a stopped session says nothing more of a refused follow', () => {
+		const { harness, socket } = together();
+		harness.session.follow('other');
+		socket.receive({ type: 'error', error: 'cannot_follow', message: 'No.' });
+		const said = harness.states.length;
+
+		harness.session.stop();
+		vi.advanceTimersByTime(REFUSED_FOLLOW_MS);
+
+		expect(harness.states.length).toBe(said);
 	});
 
 	test('the view goes out only while someone follows: at once, then five a second', () => {

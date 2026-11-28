@@ -14,11 +14,12 @@
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { View } from '../collab/protocol.ts';
+import { REFUSED_FOLLOW_MS } from '../collab/follow.ts';
 import { CURSOR_INTERVAL_MS, RETRY_DELAYS_MS, type SocketLike } from '../collab/session.ts';
 import { cursorColor, type FrameCursor } from './cursors.ts';
-import type { DiagramFrameLike, DiagramView, PatchResult } from './frame.ts';
+import type { DiagramFrameLike, DiagramView, FrameSelection, PatchResult } from './frame.ts';
 import type { DrawioPatch, NumberedPatch } from './protocol.ts';
-import { DiagramSession, type DiagramState } from './session.ts';
+import { DiagramSession, SELECTION_INTERVAL_MS, type DiagramState } from './session.ts';
 
 const URL = 'wss://dev.example.com/board/collab?slot=9';
 const HEAD = '<mxfile>head</mxfile>';
@@ -70,20 +71,29 @@ class FakeFrame implements DiagramFrameLike {
 	endEditing: (() => void) | null = null;
 	views: (DiagramView | null)[] = [];
 
+	/** What the person does while drawio loads the next diagram. */
+	duringLoad: (() => void) | null = null;
+
 	async load(xml: string, readOnly: boolean, view: DiagramView | null = null): Promise<void> {
 		this.calls.push(`load ${xml}${readOnly ? ' read-only' : ''}`);
 		this.views.push(view);
 		this.diagram = xml;
+		const during = this.duringLoad;
+		this.duringLoad = null;
+		during?.();
 	}
 
 	async view(): Promise<DiagramView | null> {
-		return { scale: 1.5, x: 40, y: 60 };
+		return { scale: 1.5, x: 40, y: 60, page: 'page-3' };
 	}
 
 	editing: Promise<void> | null = null;
+	/** While a press is held in the frame: what lets it go. */
+	pressing: Promise<void> | null = null;
+	release: (() => void) | null = null;
 
 	idle(): Promise<void> {
-		return this.editing ?? Promise.resolve();
+		return Promise.all([this.editing, this.pressing]).then(() => undefined);
 	}
 
 	/** A person starts typing a label. */
@@ -96,9 +106,23 @@ class FakeFrame implements DiagramFrameLike {
 		});
 	}
 
+	/** A person presses the mouse button in the frame, to drag. */
+	press(): void {
+		this.pressing = new Promise((resolve) => {
+			this.release = () => {
+				this.pressing = null;
+				resolve();
+			};
+		});
+	}
+
+	/** What the person does while drawio applies the patch of this label. */
+	readonly during = new Map<string, () => void>();
+
 	async patch(patch: DrawioPatch, checksum: number | null): Promise<PatchResult> {
 		this.calls.push(`patch ${String(patch['label'])}`);
 		this.checksums.push(checksum);
+		this.during.get(String(patch['label']))?.();
 		return this.results.shift() ?? { mismatch: false, error: null };
 	}
 
@@ -120,6 +144,13 @@ class FakeFrame implements DiagramFrameLike {
 
 	showCursors(cursors: readonly FrameCursor[]): void {
 		this.drawn.push([...cursors]);
+	}
+
+	/** The others' selections outlined each time, in order. */
+	readonly outlined: FrameSelection[][] = [];
+
+	showSelections(selections: readonly FrameSelection[]): void {
+		this.outlined.push([...selections]);
 	}
 }
 
@@ -266,6 +297,29 @@ describe('joining', () => {
 		]);
 	});
 
+	test('a join’s whole diagram loads without a view', async () => {
+		const socket = start();
+		await settle();
+		socket.receive(welcome());
+		socket.receive(whole('<mxfile>copy</mxfile>', 5));
+		await settle();
+
+		expect(frame.calls.slice(1)).toEqual(['load <mxfile>copy</mxfile>']);
+		expect(frame.views.at(-1)).toBeNull();
+	});
+
+	test('an edit that reaches the page while a join loads is applied again after it, and sent', async () => {
+		const socket = start();
+		await settle();
+		socket.receive(welcome());
+		frame.duringLoad = () => edit('typed', '<mxfile>typed</mxfile>');
+		socket.receive(whole('<mxfile>copy</mxfile>', 5));
+		await settle();
+
+		expect(frame.calls.slice(1)).toEqual(['load <mxfile>copy</mxfile>', 'patch typed']);
+		expect(socket.take()).toMatchObject([{ type: 'patch', pid: 'mine-1', base: 5 }]);
+	});
+
 	test('a whole diagram replaces the frame’s, with every patch after it', async () => {
 		const socket = start();
 		socket.receive(welcome());
@@ -353,8 +407,8 @@ describe('patches as they come', () => {
 
 		expect(frame.calls).toEqual(['patch b1', 'load <mxfile>copy</mxfile>', 'patch b2']);
 		expect(JSON.parse(JSON.stringify(session.counts))).toEqual({ mismatches: 1, reloads: 1 });
-		// The person keeps looking where they were.
-		expect(frame.views.at(-1)).toEqual({ scale: 1.5, x: 40, y: 60 });
+		// The person keeps looking where they were, on their page.
+		expect(frame.views.at(-1)).toEqual({ scale: 1.5, x: 40, y: 60, page: 'page-3' });
 	});
 
 	test('the whole diagram is asked for only once no label is being edited', async () => {
@@ -778,5 +832,380 @@ describe('follow mode and cursors (T18)', () => {
 		session.follow('third');
 		socket.drop();
 		expect(states.at(-1)?.following).toBeNull();
+	});
+});
+
+/** The whole diagram of another epoch, as every browser gets it after a restore. */
+function restored(xml: string, epoch: number, count = 0, patches: NumberedPatch[] = []) {
+	return { type: 'diagram', epoch, whole: true, mark: `s.${epoch}.${count}`, count, xml, patches };
+}
+
+describe('loads and restores (T19)', () => {
+	async function joined(): Promise<FakeSocket> {
+		const socket = start();
+		socket.receive(welcome());
+		socket.receive(since(0));
+		await settle();
+		socket.take();
+		frame.calls.length = 0;
+		return socket;
+	}
+
+	test('a repair waits for a press to end, as for a label, and loads with the view and its page', async () => {
+		const socket = await joined();
+		frame.results = [{ mismatch: true, error: null }];
+		frame.press();
+
+		socket.receive(live(numbered(1, 'b1')));
+		await settle();
+		expect(socket.take()).toEqual([]);
+
+		frame.release?.();
+		await settle();
+		expect(socket.take()).toEqual([{ type: 'reload' }]);
+		socket.receive(whole('<mxfile>copy</mxfile>', 1));
+		await settle();
+
+		expect(frame.calls).toEqual(['patch b1', 'load <mxfile>copy</mxfile>']);
+		expect(frame.views.at(-1)).toEqual({ scale: 1.5, x: 40, y: 60, page: 'page-3' });
+	});
+
+	test('a whole diagram that comes during a press is loaded after the release, and the patches after it wait', async () => {
+		const socket = await joined();
+		frame.press();
+
+		socket.receive(restored('<mxfile>restored</mxfile>', 2));
+		socket.receive({ ...live(numbered(1, 'b1')), epoch: 2 });
+		await settle();
+		expect(frame.calls).toEqual([]);
+
+		frame.release?.();
+		await settle();
+		expect(frame.calls).toEqual(['load <mxfile>restored</mxfile>', 'patch b1']);
+	});
+
+	test('a restore by anyone loads the new epoch with the view and the page, and the epoch follows', async () => {
+		const socket = await joined();
+
+		socket.receive(restored('<mxfile>restored</mxfile>', 2, 4));
+		await settle();
+		expect(frame.calls).toEqual(['load <mxfile>restored</mxfile>']);
+		expect(frame.views.at(-1)).toEqual({ scale: 1.5, x: 40, y: 60, page: 'page-3' });
+		expect(states.at(-1)?.epoch).toBe(2);
+
+		// A patch of the diagram that went is not applied. One of the new epoch is.
+		socket.receive(live(numbered(5, 'old')));
+		socket.receive({ ...live(numbered(5, 'new')), epoch: 2 });
+		await settle();
+		expect(frame.calls.slice(1)).toEqual(['patch new']);
+		edit('next');
+		expect(socket.take()).toMatchObject([{ type: 'patch', epoch: 2, base: 5, pid: 'mine-1' }]);
+	});
+
+	test('a restore drops what this page made of the diagram that went, and nothing waits to be saved', async () => {
+		const socket = await joined();
+		socket.receive({ type: 'saved', epoch: 1, savedAt: '2026-11-27T10:00:00.000Z', seq: 0 });
+		edit('lost');
+		expect(states.at(-1)?.status).toBe('saving');
+		socket.take();
+
+		socket.receive(restored('<mxfile>restored</mxfile>', 2));
+		await settle();
+		expect(states.at(-1)?.status).toBe('saved');
+		expect(frame.calls).toEqual(['load <mxfile>restored</mxfile>']);
+
+		// Its number comes back from the old epoch: still not applied, and not sent again.
+		socket.receive(live(numbered(1, 'mine-1')));
+		await settle();
+		expect(frame.calls).toEqual(['load <mxfile>restored</mxfile>']);
+		expect(socket.take()).toEqual([]);
+	});
+
+	test('a restore seen at a join drops what this page made offline', async () => {
+		vi.useFakeTimers();
+		const first = await joined();
+		edit('offline');
+		first.drop();
+
+		vi.advanceTimersByTime(RETRY_DELAYS_MS[0]!);
+		const second = sockets.at(-1)!;
+		second.open();
+		second.receive(welcome('me-2', { epoch: 3 }));
+		second.receive(restored('<mxfile>restored</mxfile>', 3));
+		await settle();
+
+		expect(frame.calls.slice(-1)).toEqual(['load <mxfile>restored</mxfile>']);
+		expect(second.take()).toEqual([]);
+		expect(states.at(-1)?.epoch).toBe(3);
+	});
+
+	test('an edit made before a repair’s load, which the server numbers after it, is applied again', async () => {
+		const socket = await joined();
+		frame.results = [{ mismatch: true, error: null }];
+		socket.receive(live(numbered(1, 'b1')));
+		await settle();
+		expect(socket.take()).toEqual([{ type: 'reload' }]);
+
+		// The drag ends after the question went: the whole diagram does not hold it.
+		edit('drag');
+		socket.receive(whole('<mxfile>copy</mxfile>', 1));
+		await settle();
+		expect(frame.calls).toEqual(['patch b1', 'load <mxfile>copy</mxfile>', 'patch drag']);
+
+		// Its number comes back after the load: it is this page's own, and not applied twice.
+		socket.receive(live(numbered(2, 'mine-1')));
+		await settle();
+		expect(frame.calls.slice(3)).toEqual([]);
+	});
+
+	test('a drag that ends while a repair’s diagram waits for the release is applied again after the load', async () => {
+		const socket = await joined();
+		frame.results = [{ mismatch: true, error: null }];
+		socket.receive(live(numbered(1, 'b1')));
+		await settle();
+		expect(socket.take()).toEqual([{ type: 'reload' }]);
+
+		// The person presses before the whole diagram comes, and lets go after.
+		frame.press();
+		socket.receive(whole('<mxfile>copy</mxfile>', 1));
+		await settle();
+		expect(frame.calls).toEqual(['patch b1']);
+		frame.release?.();
+		edit('drag');
+		await settle();
+
+		expect(frame.calls).toEqual(['patch b1', 'load <mxfile>copy</mxfile>', 'patch drag']);
+	});
+
+	test('a restore while a copy waits for a repair sends no copy', async () => {
+		const socket = await joined();
+		edit('a');
+		socket.take();
+		frame.results = [{ mismatch: false, error: 'no such cell' }];
+		socket.receive(live(numbered(1, 'b1')));
+		await settle();
+		expect(socket.take()).toEqual([{ type: 'reload' }]);
+		// Its own patch comes back, not exact: a copy would follow the repair's load.
+		socket.receive(live(numbered(2, 'mine-1', false)));
+
+		socket.receive(restored('<mxfile>restored</mxfile>', 2));
+		await settle();
+
+		expect(socket.take()).toEqual([]);
+	});
+
+	test('an edit made after a repair’s load is not applied again', async () => {
+		const socket = await joined();
+		frame.results = [{ mismatch: true, error: null }];
+		socket.receive(live(numbered(1, 'b1')));
+		await settle();
+		socket.take();
+
+		// The person draws on the loaded diagram while drawio applies the patch after the copy.
+		frame.during.set('b2', () => edit('after'));
+		socket.receive(whole('<mxfile>copy</mxfile>', 1, [numbered(2, 'b2')]));
+		await settle();
+
+		expect(frame.calls).toEqual(['patch b1', 'load <mxfile>copy</mxfile>', 'patch b2']);
+	});
+
+	test('the handle’s repair asks for the whole diagram once, as after a drift', async () => {
+		const socket = await joined();
+
+		session.repair();
+		session.repair();
+		await settle();
+		expect(socket.take()).toEqual([{ type: 'reload' }]);
+		socket.receive(whole('<mxfile>copy</mxfile>', 0));
+		await settle();
+
+		expect(frame.calls).toEqual(['load <mxfile>copy</mxfile>']);
+		expect(JSON.parse(JSON.stringify(session.counts))).toEqual({ mismatches: 0, reloads: 1 });
+	});
+});
+
+describe('selections (T19)', () => {
+	const ON = { page: 'page-3', cells: ['a', 'b'] };
+	const OTHER = { connectionId: 'other', displayName: 'Bravo2' };
+	const THIRD = { connectionId: 'third', displayName: null };
+
+	test('this browser’s selection goes at once, then at most once every 200 ms, the newest winning', () => {
+		vi.useFakeTimers();
+		const socket = start();
+		socket.receive(welcome());
+		socket.take();
+
+		session.selectionChanged(ON);
+		session.selectionChanged({ page: 'page-3', cells: ['c'] });
+		session.selectionChanged(null);
+		expect(socket.take()).toEqual([{ type: 'selection', selection: ON }]);
+		vi.advanceTimersByTime(SELECTION_INTERVAL_MS - 1);
+		expect(socket.take()).toEqual([]);
+		vi.advanceTimersByTime(1);
+		expect(socket.take()).toEqual([{ type: 'selection', selection: null }]);
+		expect(SELECTION_INTERVAL_MS).toBe(200);
+	});
+
+	test('a viewer’s selection goes too', () => {
+		const socket = start();
+		socket.receive(welcome('me', { viewOnly: true }));
+		socket.take();
+
+		session.selectionChanged(ON);
+
+		expect(socket.take()).toEqual([{ type: 'selection', selection: ON }]);
+	});
+
+	test('a selection made while the socket is down goes once it is live, and again on the next connection', () => {
+		vi.useFakeTimers();
+		const first = start();
+		session.selectionChanged(ON);
+		expect(first.take()).toEqual([]);
+		expect(session.selection()).toEqual(ON);
+
+		first.receive(welcome());
+		expect(first.take()).toEqual([{ type: 'selection', selection: ON }]);
+		first.drop();
+		vi.advanceTimersByTime(RETRY_DELAYS_MS[0]!);
+		const second = sockets.at(-1)!;
+		second.open();
+		second.receive(welcome('me-2'));
+
+		expect(second.take()).toEqual([{ type: 'selection', selection: ON }]);
+	});
+
+	test('after a reconnect for a new name or pass, the selection goes at once', () => {
+		vi.useFakeTimers();
+		const first = start();
+		first.receive(welcome());
+		session.selectionChanged(ON);
+		expect(first.take()).toEqual([{ type: 'selection', selection: ON }]);
+
+		session.reconnect();
+		const second = sockets.at(-1)!;
+		second.open();
+		second.receive(welcome('me-2'));
+
+		expect(second.take()).toEqual([{ type: 'selection', selection: ON }]);
+	});
+
+	test('nothing selected is not said again on a new connection', () => {
+		const socket = start();
+		session.selectionChanged(null);
+		socket.receive(welcome());
+
+		expect(socket.take()).toEqual([]);
+		expect(session.selection()).toBeNull();
+	});
+
+	test('the others’ selections reach the frame in their cursor colors, and go with them', () => {
+		const socket = start();
+		socket.receive(
+			welcome('me', { participants: [{ connectionId: 'me', displayName: 'Alpha1' }, OTHER, THIRD] })
+		);
+
+		socket.receive({ type: 'selection', connectionId: 'other', selection: ON });
+		socket.receive({
+			type: 'selection',
+			connectionId: 'third',
+			selection: { page: null, cells: ['z'] }
+		});
+		expect(frame.outlined.at(-1)).toEqual([
+			{ id: 'other', color: cursorColor('other'), page: 'page-3', cells: ['a', 'b'] },
+			{ id: 'third', color: cursorColor('third'), page: null, cells: ['z'] }
+		]);
+
+		// Another selection takes the place of the first. Nothing selected takes it away.
+		socket.receive({
+			type: 'selection',
+			connectionId: 'other',
+			selection: { page: 'page-1', cells: ['q'] }
+		});
+		socket.receive({ type: 'selection', connectionId: 'third', selection: null });
+		expect(frame.outlined.at(-1)).toEqual([
+			{ id: 'other', color: cursorColor('other'), page: 'page-1', cells: ['q'] }
+		]);
+
+		socket.receive({ type: 'presence-end', connectionId: 'other' });
+		expect(frame.outlined.at(-1)).toEqual([]);
+	});
+
+	test('the others’ selections go with a dropped socket', () => {
+		const socket = start();
+		socket.receive(welcome());
+		socket.receive({ type: 'selection', connectionId: 'other', selection: ON });
+		expect(frame.outlined.at(-1)).toHaveLength(1);
+
+		socket.drop();
+
+		expect(frame.outlined.at(-1)).toEqual([]);
+	});
+
+	test('a selection that came before the frame could draw is drawn after its first load', async () => {
+		const socket = start();
+		socket.receive(welcome());
+		socket.receive({ type: 'selection', connectionId: 'other', selection: ON });
+		const before = frame.outlined.length;
+		await settle();
+
+		expect(frame.outlined.length).toBe(before + 1);
+		expect(frame.outlined.at(-1)).toEqual([
+			{ id: 'other', color: cursorColor('other'), page: 'page-3', cells: ['a', 'b'] }
+		]);
+	});
+});
+
+describe('the bar’s notices (T19)', () => {
+	const ME = { connectionId: 'me', displayName: 'Alpha1' };
+	const OTHER = { connectionId: 'other', displayName: 'Bravo2' };
+
+	test('welcome’s version is in the state, and none is null', () => {
+		const socket = start();
+		expect(states.at(-1)?.version ?? null).toBeNull();
+
+		socket.receive(welcome('me', { version: '0.9.0' }));
+		expect(states.at(-1)?.version).toBe('0.9.0');
+		socket.receive(welcome('me', { version: undefined }));
+		expect(states.at(-1)?.version).toBeNull();
+	});
+
+	test('a refused follow is said for five seconds', () => {
+		vi.useFakeTimers();
+		const socket = start();
+		socket.receive(welcome('me', { participants: [ME, OTHER] }));
+		session.follow('other');
+
+		socket.receive({ type: 'error', error: 'cannot_follow', message: 'No.' });
+		expect(states.at(-1)?.followRefused).toBe(true);
+		vi.advanceTimersByTime(REFUSED_FOLLOW_MS - 1);
+		expect(states.at(-1)?.followRefused).toBe(true);
+		vi.advanceTimersByTime(1);
+
+		expect(states.at(-1)?.followRefused).toBe(false);
+	});
+
+	test('a refusal of a follow that already ended says nothing', () => {
+		const socket = start();
+		socket.receive(welcome('me', { participants: [ME, OTHER] }));
+		session.follow('other');
+		socket.receive({ type: 'presence-end', connectionId: 'other' });
+
+		socket.receive({ type: 'error', error: 'cannot_follow', message: 'No.' });
+
+		expect(states.some((state) => state.followRefused)).toBe(false);
+	});
+
+	test('a stopped session says nothing more of a refused follow', () => {
+		vi.useFakeTimers();
+		const socket = start();
+		socket.receive(welcome('me', { participants: [ME, OTHER] }));
+		session.follow('other');
+		socket.receive({ type: 'error', error: 'cannot_follow', message: 'No.' });
+		const said = states.length;
+
+		session.stop();
+		vi.advanceTimersByTime(REFUSED_FOLLOW_MS);
+
+		expect(states.length).toBe(said);
 	});
 });

@@ -22,8 +22,21 @@
  * The two browsers of a test have the same size of window, so the follower's
  * view is the leader's, to the pixel.
  */
-import { expect, type Page } from '@playwright/test';
-import { drawio, openDiagram } from './diagram.ts';
+import { expect, type Locator, type Page } from '@playwright/test';
+import {
+	area,
+	diagramCounts,
+	drawio,
+	expectLoads,
+	onDiagram,
+	onScreen,
+	openDiagram,
+	overDiagram,
+	repair,
+	settled,
+	zoomDiagram,
+	type Area
+} from './diagram.ts';
 import { joinSlot, openPeople, SLOTS, test } from './pages.ts';
 
 interface BoardView {
@@ -32,14 +45,6 @@ interface BoardView {
 	zoom: number;
 	width: number;
 	height: number;
-}
-
-interface Area {
-	x: number;
-	y: number;
-	width: number;
-	height: number;
-	page: string | null;
 }
 
 async function boardView(page: Page): Promise<BoardView> {
@@ -76,28 +81,12 @@ async function boardFits(follower: Page, leader: Page): Promise<string> {
 	return fits(boardArea(mine), boardArea(theirs), mine.zoom);
 }
 
-async function area(page: Page): Promise<Area> {
-	return JSON.parse(await page.evaluate(() => window.SEGL_DIAGRAM!.view())) as Area;
-}
-
 async function frameFits(follower: Page, leader: Page): Promise<string> {
 	const [mine, theirs] = await Promise.all([area(follower), area(leader)]);
 	const width = await drawio(follower)
 		.locator('.geDiagramContainer')
 		.evaluate((el) => el.clientWidth);
 	return fits(mine, theirs, width / mine.width);
-}
-
-/** What `read` says once it stops changing: the same twice, 300 ms apart. */
-async function settled<T>(page: Page, read: () => Promise<T>): Promise<T> {
-	let before = JSON.stringify(await read());
-	for (let tries = 0; tries < 20; tries += 1) {
-		await page.waitForTimeout(300);
-		const now = JSON.stringify(await read());
-		if (now === before) return JSON.parse(now) as T;
-		before = now;
-	}
-	throw new Error('the view did not settle');
 }
 
 /** Press a name in the bar's list of who is here. */
@@ -116,28 +105,37 @@ function following(page: Page) {
 	return page.locator('header.segl-bar .segl-bar__following');
 }
 
-async function overCanvas(page: Page): Promise<void> {
-	const canvas = (await page.locator('.excalidraw canvas.interactive').boundingBox())!;
-	await page.mouse.move(canvas.x + 640, canvas.y + 400);
-}
-
-async function overDiagram(page: Page): Promise<{ x: number; y: number }> {
-	const box = (await drawio(page).locator('.geDiagramContainer').boundingBox())!;
-	const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-	await page.mouse.move(point.x, point.y);
-	return point;
+/** What the bar says for a few seconds of a follow the server refused as a loop (T19). */
+function refusal(page: Page): Locator {
+	return page.locator('header.segl-bar').getByText(/^Can[’']t follow: they follow you$/);
 }
 
 /**
- * Zoom drawio's diagram one step by the wheel, as a person holding Ctrl does.
- * The tests' browser says it is on Windows, where drawio zooms on a plain
- * mouse wheel too, unless the wheel looks like a trackpad's.
+ * The one followed presses the follower's name, which would close a loop.
+ * The server refuses it: that bar says why for a few seconds, its follow
+ * ends at once, and the follow there was stays.
  */
-async function zoomDiagram(page: Page, deltaY: number): Promise<void> {
-	await overDiagram(page);
-	await page.keyboard.down('Control');
-	await page.mouse.wheel(0, deltaY);
-	await page.keyboard.up('Control');
+async function closeLoop(
+	follower: Page,
+	leader: Page,
+	sign: (page: Page) => Locator
+): Promise<void> {
+	await press(leader, 'Tester');
+
+	await expect(refusal(leader)).toBeVisible();
+	await expect(sign(leader)).toBeHidden();
+	await expect(sign(follower)).toBeVisible();
+	// It stays a few seconds, then goes.
+	await leader.waitForTimeout(2_000);
+	await expect(refusal(leader)).toBeVisible();
+	await expect(refusal(leader)).toBeHidden({ timeout: 8_000 });
+	await expect(sign(leader)).toBeHidden();
+	await expect(sign(follower)).toBeVisible();
+}
+
+async function overCanvas(page: Page): Promise<void> {
+	const canvas = (await page.locator('.excalidraw canvas.interactive').boundingBox())!;
+	await page.mouse.move(canvas.x + 640, canvas.y + 400);
 }
 
 test.describe('on a whiteboard', () => {
@@ -215,6 +213,19 @@ test.describe('on a whiteboard', () => {
 		await expect(badge(page)).toBeHidden();
 		await expect(await openPeople(page)).toHaveText(['Testeryou']);
 	});
+
+	test('a follow that would close a loop is refused, and the bar says why', async ({
+		page,
+		person
+	}) => {
+		const leader = await person('Bea');
+		await joinSlot(page, SLOTS.follow);
+		await joinSlot(leader, SLOTS.follow);
+		await press(page, 'Bea');
+		await expect(badge(page)).toBeVisible();
+
+		await closeLoop(page, leader, badge);
+	});
 });
 
 test.describe('on slot 9', () => {
@@ -271,27 +282,32 @@ test.describe('on slot 9', () => {
 		await following(page).click();
 		await expect(following(page)).toBeHidden();
 	});
+
+	test('a follow that would close a loop is refused, and the bar says why', async ({
+		page,
+		person
+	}) => {
+		const leader = await person('Bea');
+		await openDiagram(page);
+		await openDiagram(leader);
+		await press(page, 'Bea');
+		await expect(following(page)).toHaveText(/Following Bea/);
+
+		await closeLoop(page, leader, following);
+	});
 });
 
 test.describe('cursors on slot 9', () => {
-	/** Where a frame shows a point of the diagram, on the screen. */
-	async function onScreen(page: Page, point: { x: number; y: number }) {
-		const container = drawio(page).locator('.geDiagramContainer');
-		const box = (await container.boundingBox())!;
-		const width = await container.evaluate((el) => el.clientWidth);
-		const view = await area(page);
-		const scale = width / view.width;
-		return { x: box.x + (point.x - view.x) * scale, y: box.y + (point.y - view.y) * scale };
-	}
-
-	/** The point of the diagram at this place on a frame's screen. */
-	async function onDiagram(page: Page, place: { x: number; y: number }) {
-		const container = drawio(page).locator('.geDiagramContainer');
-		const box = (await container.boundingBox())!;
-		const width = await container.evaluate((el) => el.clientWidth);
-		const view = await area(page);
-		const scale = width / view.width;
-		return { x: view.x + (place.x - box.x) / scale, y: view.y + (place.y - box.y) / scale };
+	/**
+	 * How far the frame's one cursor is from where the frame shows this point
+	 * of the diagram, in pixels, rounded. It never throws, for `expect.poll`.
+	 */
+	async function cursorOff(watcher: Page, point: { x: number; y: number }): Promise<number[]> {
+		const cursor = drawio(watcher).locator('.segl-cursor');
+		const box = await cursor.boundingBox({ timeout: 2_000 }).catch(() => null);
+		if (box === null) return [Infinity, Infinity];
+		const expected = await onScreen(watcher, point);
+		return [Math.round(Math.abs(box.x - expected.x)), Math.round(Math.abs(box.y - expected.y))];
 	}
 
 	test('each browser shows the other’s cursor with its name, on the point under the other’s pointer', async ({
@@ -361,5 +377,39 @@ test.describe('cursors on slot 9', () => {
 
 		await other.close();
 		await expect(cursor).toHaveCount(0);
+	});
+
+	test('the cursors stay on their points across a whole-diagram load', async ({ page, person }) => {
+		const other = await person('Bea');
+		await openDiagram(page);
+		await openDiagram(other);
+		// One looks two steps in: a load that lost its view would move the cursor it shows.
+		await zoomDiagram(page, -400);
+		await zoomDiagram(page, -400);
+		await settled(page, () => area(page));
+
+		const points = new Map<Page, { x: number; y: number }>();
+		for (const mover of [page, other]) {
+			const place = await overDiagram(mover);
+			await mover.mouse.move(place.x - 37, place.y + 23);
+			points.set(mover, await onDiagram(mover, { x: place.x - 37, y: place.y + 23 }));
+		}
+		const pairs = [
+			[page, other],
+			[other, page]
+		] as const;
+		for (const [watcher, mover] of pairs) {
+			await expect.poll(() => cursorOff(watcher, points.get(mover)!)).toEqual([0, 0]);
+		}
+		const [mine, theirs] = await Promise.all([diagramCounts(page), diagramCounts(other)]);
+
+		await Promise.all([repair(page), repair(other)]);
+
+		await expectLoads(page, mine.reloads + 1);
+		await expectLoads(other, theirs.reloads + 1);
+		for (const [watcher, mover] of pairs) {
+			await expect(drawio(watcher).locator('.segl-cursor')).toBeVisible();
+			await expect.poll(() => cursorOff(watcher, points.get(mover)!)).toEqual([0, 0]);
+		}
 	});
 });

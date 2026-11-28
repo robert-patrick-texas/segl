@@ -13,13 +13,17 @@
 // limitations under the License.
 
 import { expect, test } from 'vitest';
-import { presenceLabel } from './presence.ts';
+import { CANNOT_FOLLOW, presenceLabel } from './presence.ts';
 import { statusLabel } from './status.ts';
 
 test('the count is named as connections', () => {
 	expect(presenceLabel(1)).toBe('1 connection on this slot');
 	expect(presenceLabel(2)).toBe('2 connections on this slot');
 	expect(presenceLabel(10)).toBe('10 connections on this slot');
+});
+
+test('a refused follow says why in a short phrase', () => {
+	expect(CANNOT_FOLLOW).toBe("Can't follow: they follow you");
 });
 
 test('each state of the connection has its words', () => {

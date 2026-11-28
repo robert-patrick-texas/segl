@@ -18,6 +18,7 @@
  * whiteboards' (`../collab/protocol.ts`).
  */
 import { markOf, parseServerMessage, type ServerMessage } from '../collab/protocol.ts';
+import type { Selection } from './frame.ts';
 
 /** A drawio patch, as drawio's diff sync makes it. segl does not read one. */
 export type DrawioPatch = Record<string, unknown>;
@@ -49,7 +50,9 @@ export type DiagramMessage =
 	  }
 	| ({ type: 'patch'; epoch: number; mark: string | null } & NumberedPatch)
 	/** Who holds the pen now: a connection id, or null when it is free. */
-	| { type: 'pen'; holder: string | null };
+	| { type: 'pen'; holder: string | null }
+	/** What another connection has selected now, or null for nothing (T19). */
+	| { type: 'selection'; connectionId: string; selection: Selection | null };
 
 /** What the server sends on slot 9: one of the above, or a whiteboard's message. */
 export type SlotNineMessage = DiagramMessage | ServerMessage;
@@ -69,7 +72,9 @@ export type DiagramClientMessage =
 	  }
 	| { type: 'copy'; epoch: number; base: number; xml: string }
 	| { type: 'reload' }
-	| { type: 'pen'; take: boolean };
+	| { type: 'pen'; take: boolean }
+	/** What this browser has selected, or null: nothing, or more than 50 cells. */
+	| { type: 'selection'; selection: Selection | null };
 
 type Fields = Record<string, unknown>;
 
@@ -88,6 +93,27 @@ function numbered(value: unknown): NumberedPatch | null {
 	if (checksum !== null && !Number.isInteger(checksum)) return null;
 	if (typeof exact !== 'boolean') return null;
 	return { n, pid, patch, checksum: checksum as number | null, exact };
+}
+
+/** The most cells a selection names: more than this is sent as none. */
+export const MAX_SELECTED = 50;
+
+/** The longest page or cell id a selection names. */
+const MAX_ID_LENGTH = 128;
+
+function isId(value: unknown): value is string {
+	return typeof value === 'string' && value.length >= 1 && value.length <= MAX_ID_LENGTH;
+}
+
+/** Return a selection a message carries, null for none, or undefined when it is not one. */
+function selectionOf(value: unknown): Selection | null | undefined {
+	if (value === null) return null;
+	if (!isFields(value)) return undefined;
+	const { page, cells } = value;
+	if (page !== null && !isId(page)) return undefined;
+	if (!Array.isArray(cells) || cells.length < 1 || cells.length > MAX_SELECTED) return undefined;
+	if (!cells.every(isId)) return undefined;
+	return { page, cells };
 }
 
 function holderOf(value: unknown): string | null | undefined {
@@ -135,6 +161,14 @@ export function parseDiagramMessage(text: unknown): SlotNineMessage | null {
 		case 'pen': {
 			const holder = holderOf(message['holder']);
 			return holder === undefined ? null : { type: 'pen', holder };
+		}
+		case 'selection': {
+			const { connectionId } = message;
+			const selection = selectionOf(message['selection']);
+			if (typeof connectionId !== 'string' || connectionId === '' || selection === undefined) {
+				return null;
+			}
+			return { type: 'selection', connectionId, selection };
 		}
 		default:
 			return parseServerMessage(text);
