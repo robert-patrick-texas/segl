@@ -773,3 +773,82 @@ As built (2026-11-27):
 - The cursors: `js/PostConfig.js` draws each as the whiteboards' editor does, its arrow outlined in white and the name in a box. The color rule is a copy of the editor's `getClientColor` in `web/src/diagram/cursors.ts`, which the package does not export, and a Vitest test reads the rule from the editor's build and holds the copy to it for 503 ids. A page id may be 1 to 128 characters, or null. `web/scripts/drawio.test.ts` held segl's drawio files to no color at all: it now holds them to no color on drawio's shapes.
 - One throttle (`web/src/collab/throttle.ts`) sends the cursors on both canvases and the views, in place of the whiteboard session's own cursor timer.
 - For the browser tests, `window.SEGL_CANVAS.view()` gives the canvas's `width` and `height`, and `window.SEGL_DIAGRAM.view()` the area the frame shows. The whiteboard tests use slot 2, `SLOTS.follow`, and draw nothing.
+
+## T19 — Diagram mode's polish, and the update notice
+
+- Status: next
+- Requires: T18
+- Requirements: D-001 (History on slot 9), D-003 (a load keeps the page and waits for a press), D-005 and S-005 (slot 9's history and a big delete there), S-002 and S-021 (the gaps T18 left), a new row for the others' selections on slot 9, and a new row for the update notice
+- Read: `docs/DECISIONS.md` D2-011, D2-030, D2-039, D2-040, and D2-041, `docs/API.md` (`welcome`, `presence`, the restore route, and Diagram mode), `docs/DATA-MODEL.md` (the flush rules and restore), `src/segl/diagram.py`, `src/segl/saver.py`, `src/segl/collab.py` (`restore`), `src/segl/app.py` (the restore route), `web/src/diagram/`, `web/src/bar/` (`SeglBar.tsx` and `HistoryControl.tsx`), `web/drawio/js/PostConfig.js`, drawio's `js/diagramly/EditorUi.js` (the embed `load` action, `createLoadMessage`, and `getFileData`), `js/diagramly/P2PCollab.js` (`selectionChangeListener` and its `selectionChange` case), `Graph.prototype.highlightCell` in `js/diagramly/Editor.js`, and the STATUS entries of T17 and T18
+
+Added on 2026-11-27 at the user's request, while the production network team tests slot 9. It takes up what T17 and T18 left (D2-040, D2-041) and the roadmap's History on slot 9. After it, a load that puts a drifted browser right keeps the person's page and waits for their drag. Slot 9 has History and restore. Each person sees what the others have selected. A page left open across an update says to reload.
+
+What a person can do after it:
+
+- Keep working on page 3 of a diagram when their browser drifts and loads the whole diagram again. They stay on page 3, at the same scale and scroll, with the same shapes selected.
+- Finish a drag. A load waits until the mouse button is up.
+- Open History on slot 9, see the diagram's revisions with their marks, and restore one for everyone. The diagram before a big delete is kept, as on the whiteboards.
+- See which shapes and links each other person has selected, outlined in that person's cursor color, on the page they are on.
+- See that segl was updated while the page was open, and reload with one press.
+- See why a follow did not start, when it would close a loop.
+
+The page across a load (D2-040):
+
+- Today: drawio's `load` action takes a scale and a scroll, and no page (`EditorUi.js`, `data.action == 'load'`), so a load opens the first page. The answer to `export`, which the page reads for the view, names the page by its index (`createLoadMessage`'s `currentPage`), not by its id.
+- segl's `js/PostConfig.js` adds the current page's id to that answer, as it adds the scroll. Before a repair's load, the page tells the frame which page and view to come back to. After the load, on drawio's `embedLoaded`, `js/PostConfig.js` turns to that page quietly with `selectPage(page, true)`, as follow mode does: no undo step, and no patch. It then sets the scale and the scroll on that page. When another browser has deleted the page, the person stays on the first page.
+- A follow shows the leader's view after a load, as now.
+- The risk, to try first: a turn and a view set after `embedLoaded` leave no undo step and send no patch, and the scale and scroll land on the turned page, not the first. If drawio cannot do it, stop and say what it does.
+
+A press across a load (D2-040; T17 did not measure it):
+
+- Measure first. In a browser, start a drag of a shape, have a load come while the button is down, then end the drag. Record what happens to the shape and the drag. Run T17's labelled measure again (four browsers, labels on about half the shapes), and count the inserts whose label editor did not open: 25 of 208 in T17. Find the cause. T17's reading, that a load cleared the selection, was not checked.
+- `js/PostConfig.js` tells the page when a press starts and ends in the frame. drawio's graph sets `isMouseDown` on a press and clears it on the release (`mxGraph.prototype.isEventIgnored`, which `fireMouseEvent` calls). The page asks for the whole diagram only when no label is being typed and no press is held, as `idle()` now waits for a label. While it waits, the others' patches wait too, as they do for a label today.
+- After the load, `js/PostConfig.js` selects again, by id, the cells that were selected and are still there. A selection is not part of the diagram, so this sends no patch.
+- D2-040 records the measures and the cause.
+
+History and restore on slot 9 (D-001, D-005, S-005):
+
+- Today: slot 9 keeps revisions by S-005's rules, and the history routes answer for it. The bar hides History on slot 9, and the restore route answers `409` with `diagram_mode`. `DiagramRoom` has no elements, so the saver keeps no revision before a big delete there.
+- The bar shows History on slot 9, as on the whiteboards. Import stays hidden (T20 or later).
+- A restore on slot 9 works as one on a whiteboard (D2-030). It keeps the diagram that goes, marked `restore`, starts a new epoch with the revision's diagram, and writes a revision of it. Every browser on slot 9 loads the restored diagram, and keeps its view and its page when that page is still there. A patch of the old epoch is refused, as a whiteboard change is after a restore.
+- The pen: while someone holds it, only the holder restores. The others' History shows no Restore, and the server refuses a restore from anyone else with `pen_held`. The restore request names its connection, so the server can tell who sent it.
+- A big delete on slot 9: the server counts the shapes and links in the copy it keeps, drawio's cells with `vertex="1"` or `edge="1"` on every page. The saver's 90% rule then keeps the diagram before a big delete, marked `delete`, as on the whiteboards. drawio's `autosave` writes pages plain: `getFileData` compresses only when `Editor.defaultCompressed` is set, and segl does not set it. Check that with a diagram imported through drawio's own menu. The XML comes from a browser: count it without expanding entities, off the event loop. A diagram the server cannot count gets no `delete` row, and is still saved.
+
+The others' selections on slot 9 (a new row):
+
+- drawio's own sessions show them (`P2PCollab.js`). When the selection changes, they wait 300 ms, then send the page's id and the selected cells' ids, or no ids when more than 50 cells are selected. The receiver outlines each cell with `graph.highlightCell(cell, color, 60000, 70, 3)`, which fades out after a minute. That code runs only through drawio's relay server, which segl does not run (D-002).
+- segl's `js/PostConfig.js` reports this browser's selection when it changes: the page's id, and the selected cells' ids, or none when more than 50 are selected, as drawio's sessions do. The page sends it on the socket at most a few times a second. Whether it rides in `presence` or in a message of its own is this task's call, written in `docs/API.md`. The server checks it as it checks a cursor (a page id, and at most 50 cell ids, each text of 1 to 128 characters) and passes it to the others. The server keeps each connection's newest selection, so a browser that comes later sees the selections already made.
+- The frame outlines each cell the others have selected, in that person's cursor color, and only on its page. It uses drawio's `mxCellHighlight`, as `highlightCell` does, but the outline lasts as long as the cell stays selected. It follows the cell when the cell moves. It goes when the cell is deleted, when its person selects something else, or when that person leaves slot 9. When a patch or a load replaces the cells, the frame draws the outlines again.
+- A selection is presence, not drawing, as a cursor is. It goes in no patch and changes no diagram, and segl still sets no color on the diagram (D2-038, D2-039).
+- The As built list says whether drawio's read-only view lets a viewer, or a watcher while another holds the pen, select, and what the others then see.
+
+The gaps T18 left (S-002, S-021):
+
+- A browser test of a viewer's cursor on slot 9, shown in an editor's frame.
+- A browser test that the cursors stay on their points across a whole-diagram load.
+- A follow refused with `cannot_follow` now ends without a word, on every slot. The bar says why, in a short phrase such as `Can't follow: they follow you`, for a few seconds.
+
+The update notice (a new row):
+
+- Today a page left open across `segl update` reconnects and runs its old code. By reading the code, and not run: a page of 0.6.0 open on slot 9 across the update to 0.7.0 would have each change it made answered `unknown_type`, with no word, until a reload (0.7.0's publish entry).
+- `welcome` carries the server's version, `version`, as `segl --version` prints it from `versions.toml`. The page compares it with the version it was built with (`__SEGL_VERSION__`). When the two differ, the bar says `segl updated`, with a `Reload` button. The page does not reload by itself: a person may be typing.
+- Only a page built with this task knows the field. A page of 0.8.0 shows nothing at the update to the release that carries T19. The notice first shows at the update after that.
+
+Tests:
+
+- pytest: `welcome` carries `version`. A restore on slot 9 starts a new epoch, keeps the diagram that went marked `restore`, and sends every connection the restored diagram. A patch of the old epoch is then refused. While another holds the pen, a restore from someone else is refused with `pen_held`. A big delete on slot 9 keeps a `delete` row, and a diagram the server cannot count is still saved. A selection reaches the others, a browser that joins gets the selections already made, a selection whose page or cell ids are not short text is refused with `bad_message`, and a selection goes when its person leaves.
+- Vitest: a repair's load waits for a press to end, as for a label, and tells the frame the page to come back to. The bar shows History on slot 9, and no Restore while another holds the pen. A selection goes out at most a few times a second, and the others' reach the frame with their colors. The update notice shows only when the versions differ. A refused follow shows its phrase.
+- Browser: on a diagram with three pages, a browser on page 3 drifts, loads, and stays on page 3 at the same view, with its selection kept. A load that comes during a drag waits for the release, and every browser keeps the drag's move. A restore from History on slot 9 reaches both browsers, each on its own page. Each browser sees the other's selection outlined on its page and not on another page. The outline follows a moved shape, and goes when the other selects nothing. A viewer's cursor shows in an editor's frame, and the cursors stay on their points across a load. A page whose `welcome` names another version shows the notice, and `Reload` loads the page again (Playwright's `routeWebSocket` can change the message).
+- Four new rows in `docs/TEST-PLAN.md`, each with its row in `tests/testplan.toml`: T-027 for a load that keeps the page and waits for a press, T-028 for History and restore on slot 9, T-029 for the others' selections on slot 9, and T-030 for the update notice. T-025 and T-026 gain the gaps above.
+
+Documents: `docs/REQUIREMENTS.md` (D-001 and D-003 as built, and two new rows), `docs/TEST-PLAN.md` (T-025 to T-030), `tests/testplan.toml`, `docs/API.md` (`version` in `welcome`, the selection, and the restore route on slot 9 with `pen_held`), `docs/DATA-MODEL.md` (a big delete on slot 9), `docs/ARCHITECTURE.md` (Diagram mode's loads, selections, and `js/PostConfig.js`), D2-040 with the measures, D2-041 amended as built, the status in `README.md`, and `CHANGELOG.md`.
+
+Acceptance: T-027 to T-030 pass, and T-001 through T-026 still pass by `scripts/e2e.py`. ruff, ty, and the web checks pass.
+
+Out of scope, for T20 or later at the user's word of 2026-11-27:
+
+- segl's 12 device kinds and 5 link kinds in drawio's library, with no color set by segl. The recommendation: each object's record as drawio's own data on its shape, edited in drawio's Edit Data dialog, in place of a segl panel in the frame.
+- Import of `.drawio` files on slot 9. The team already imports through drawio's own menu. segl's Import would replace the whole diagram for everyone and keep the old one in History.
+- A pen that frees itself after a time, and a second diagram slot.
+- A smaller package: drawio files that nothing loads (`js/integrate.min.js`, `js/libavoid-js/`), against D2-039's rule that segl serves drawio as released.
+- Noted while writing this task: the others' selections on the whiteboards. The pinned editor's `Collaborator` type has `selectedElementIds`, and segl does not send it.

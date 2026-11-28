@@ -22,7 +22,9 @@ On 2026-11-26 the user put collaboration first and queued three tasks before nam
 2. T17, Diagram mode on slot 9: drawio's editor with live co-editing, and the pen for one editor at a time while the others watch (D2-039). It measures how well co-editing works. Built on 2026-11-27: co-editing kept every shape in every run, and D2-040 records the measures and how a drifted browser is put right.
 3. T18, follow mode: click a name and follow that person's view, on every slot. In Diagram mode, everyone else follows whoever takes the pen until they scroll, zoom, or click. It is not a presentation mode. Added on 2026-11-27: T18 also shows the others' cursors in Diagram mode, as on the whiteboards. Built on 2026-11-27 (D2-041).
 
-Diagram mode's polish comes next, as a task written from T17's decision (D2-040): History and restore on slot 9, `.drawio` import, and segl's device and link kinds in drawio's library, with no color set by segl. D2-040 adds what T17 left: a browser put right after drift returns to the first page of a diagram with several pages, and what a load does to a drag under way was not measured. Then named interfaces, and then P2.
+On 2026-11-27 the user queued T19, Diagram mode's polish, from T17's decision (D2-040) and what T18 left. A load that puts a drifted browser right keeps the person's page, where today it returns to the first page of a diagram with several pages. It also waits for a drag under way, which T17 did not measure. Slot 9 gets History and restore, and each person sees what the others have selected. The gaps T18 left get their tests, and a refused follow says why. A page left open across an update says to reload.
+
+For T20 or later, at the user's word of 2026-11-27: segl's device and link kinds in drawio's library, with no color set by segl; Import of `.drawio` files on slot 9; a pen that frees itself after a time; a second diagram slot; and a smaller package. Then named interfaces, and then P2.
 
 ## P2 — Inventory files and protected workspaces (L-002, L-004)
 
