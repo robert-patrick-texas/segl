@@ -4,7 +4,9 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
-Follow mode: press a name in the bar and follow that person's view, on every slot, and on slot 9 the others follow whoever takes the pen. Slot 9 shows each person's cursor, as the whiteboards do.
+## 0.8.0 — 2026-11-27
+
+Follow mode: press a name in the bar and follow that person's view, on every slot, and on slot 9 the others follow whoever takes the pen. Slot 9 shows each person's cursor, as the whiteboards do. Behind nginx, a POST no longer gets an occasional 502.
 
 ### New
 
