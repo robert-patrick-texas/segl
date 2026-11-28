@@ -151,6 +151,11 @@ export interface RestoreFacts {
 	connected: boolean;
 }
 
+/** Return the question a restore asks before it replaces the slot for everyone: on slot 9, its diagram. */
+export function restoreQuestion(diagram: boolean): string {
+	return diagram ? 'Replace the diagram for everyone?' : 'Replace the canvas for everyone?';
+}
+
 /** Return why the list's Restore buttons are gone or wait, or null when they work. */
 export function restoreNote({ canRestore, penHeld, connected }: RestoreFacts): string | null {
 	if (!canRestore) return NEEDS_CODE;

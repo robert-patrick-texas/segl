@@ -27,6 +27,7 @@ import {
 	KEPT_PHRASES,
 	restoreNote,
 	restoreProblem,
+	restoreQuestion,
 	whenLabel,
 	type HistoryRow,
 	type RevisionInfo
@@ -44,6 +45,8 @@ export interface HistoryControlProps {
 	canRestore: boolean;
 	/** On slot 9, another connection holds the pen: only the holder restores. */
 	penHeld: boolean;
+	/** Slot 9, Diagram mode: a restore replaces the diagram, not a canvas. */
+	diagram: boolean;
 	/** False while this browser is not in the slot's room, and would not see a restore. */
 	connected: boolean;
 	/** Read the slot's revisions from the server, newest first. */
@@ -61,6 +64,7 @@ export function HistoryControl({
 	epoch,
 	canRestore,
 	penHeld,
+	diagram,
 	connected,
 	onLoad,
 	onRestore
@@ -211,7 +215,7 @@ export function HistoryControl({
 										{offered && chosen === row.revision && (
 											<span className="segl-bar__revision-confirm">
 												<span className="segl-bar__revision-question">
-													Replace the canvas for everyone?
+													{restoreQuestion(diagram)}
 												</span>
 												<button
 													type="button"

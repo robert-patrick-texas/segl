@@ -390,10 +390,16 @@ export async function openHistory(page: Page): Promise<Locator> {
 	return panel.getByRole('listitem');
 }
 
-/** Restore one row of the open history: the press, and the press that confirms it. */
-export async function restoreRow(row: Locator): Promise<void> {
+/**
+ * Restore one row of the open history: the press, and the press that confirms
+ * it. The question names what goes: a whiteboard's canvas, or slot 9's diagram.
+ */
+export async function restoreRow(
+	row: Locator,
+	what: 'canvas' | 'diagram' = 'canvas'
+): Promise<void> {
 	await row.getByRole('button', { name: /^Restore the version of / }).click();
-	await expect(row).toContainText('Replace the canvas for everyone?');
+	await expect(row).toContainText(`Replace the ${what} for everyone?`);
 	await row.getByRole('button', { name: 'Restore it' }).click();
 }
 

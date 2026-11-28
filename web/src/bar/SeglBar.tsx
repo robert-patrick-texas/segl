@@ -174,6 +174,7 @@ export function SeglBar({
 				epoch={epoch}
 				canRestore={canEdit}
 				penHeld={penHeld}
+				diagram={diagram !== undefined}
 				connected={connected}
 				onLoad={onLoadHistory}
 				onRestore={onRestore}

@@ -8,7 +8,7 @@ Slot 9 gets History and restore, and each person sees what the others have selec
 
 ### New
 
-- History on slot 9 (D-001, T-028). The bar's History lists the diagram's revisions with their marks, and any of them can be put back for everyone, which can itself be undone. While someone holds the pen, only the holder restores: the others' History shows no Restore, and the server refuses a restore from anyone else with `pen_held`. The diagram as it was before a big delete, one that leaves fewer than 90% of its shapes and links, is kept, as on the whiteboards.
+- History on slot 9 (D-001, T-028). The bar's History lists the diagram's revisions with their marks, and any of them can be put back for everyone, which can itself be undone. Before it does, it asks `Replace the diagram for everyone?`. While someone holds the pen, only the holder restores: the others' History shows no Restore, and the server refuses a restore from anyone else with `pen_held`. The diagram as it was before a big delete, one that leaves fewer than 90% of its shapes and links, is kept, as on the whiteboards.
 - The others' selections on slot 9 (D-006, T-029). Each browser outlines the shapes and links each other person has selected, in that person's cursor color, on the page of the diagram they are on. An outline follows its shape, and is never part of the diagram. A browser that comes later sees the selections already made.
 - The update notice (S-022, T-030). A page open while segl is updated says `segl updated`, with a `Reload` button, on every slot. The page never reloads by itself. A page has to know the notice to show it, so it shows from the update after this release on.
 

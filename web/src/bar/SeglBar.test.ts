@@ -54,11 +54,12 @@ function props(change: Partial<SeglBarProps> = {}): SeglBarProps {
 }
 
 vi.mock('./HistoryControl.tsx', () => ({
-	HistoryControl: ({ canRestore, penHeld, connected }: HistoryControlProps) =>
+	HistoryControl: ({ canRestore, penHeld, diagram, connected }: HistoryControlProps) =>
 		createElement('div', {
 			'data-testid': 'history',
 			'data-can-restore': String(canRestore),
 			'data-pen-held': String(penHeld),
+			'data-diagram': String(diagram),
 			'data-connected': String(connected)
 		})
 }));
@@ -77,6 +78,7 @@ test('a whiteboard’s bar shows History and Import, and no pen', () => {
 	expect(html).toContain('data-testid="history"');
 	expect(html).toContain('segl-bar__import');
 	expect(html).not.toContain('segl-bar__pen');
+	expect(html).toContain('data-diagram="false"');
 });
 
 test('slot 9’s bar shows History beside the pen, and no Import', () => {
@@ -85,6 +87,8 @@ test('slot 9’s bar shows History beside the pen, and no Import', () => {
 	expect(html).toContain('data-testid="history"');
 	expect(html).not.toContain('segl-bar__import');
 	expect(html.indexOf('segl-bar__pen')).toBeLessThan(html.indexOf('data-testid="history"'));
+	// A restore there asks about the diagram, not a canvas.
+	expect(html).toContain('data-diagram="true"');
 });
 
 test('History on slot 9 offers no Restore while another connection holds the pen', () => {

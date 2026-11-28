@@ -22,6 +22,7 @@ import {
 	parseRevisions,
 	restoreBody,
 	restoreNote,
+	restoreQuestion,
 	restoreProblem,
 	whenLabel,
 	type RevisionInfo
@@ -228,6 +229,11 @@ test('History says why it offers no Restore: no code, someone else’s pen, then
 	expect(restoreNote({ ...facts, connected: false })).toBe(NEEDS_CONNECTION);
 	expect(restoreNote({ ...facts, penHeld: true, connected: false })).toBe(NEEDS_PEN);
 	expect(restoreNote({ canRestore: false, penHeld: true, connected: false })).toBe(NEEDS_CODE);
+});
+
+test('a restore asks about the diagram on slot 9, and about the canvas on a whiteboard', () => {
+	expect(restoreQuestion(true)).toBe('Replace the diagram for everyone?');
+	expect(restoreQuestion(false)).toBe('Replace the canvas for everyone?');
 });
 
 test('a restore on slot 9 names this page’s connection, and one on a whiteboard does not', () => {

@@ -505,7 +505,7 @@ test('a restore from History on slot 9 reaches both browsers, each on its own pa
 
 	const rows = await openHistory(page);
 	const restored = page.waitForRequest((asked) => asked.url().endsWith('/restore'));
-	await restoreRow(rows.and(page.locator(`[data-revision="${first.revision}"]`)));
+	await restoreRow(rows.and(page.locator(`[data-revision="${first.revision}"]`)), 'diagram');
 	// The restore names its connection, so the server can tell the pen holder's.
 	expect((await restored).postDataJSON()).toEqual({
 		revision: first.revision,
