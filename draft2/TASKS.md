@@ -776,7 +776,7 @@ As built (2026-11-27):
 
 ## T19 — Diagram mode's polish, and the update notice
 
-- Status: next
+- Status: done
 - Requires: T18
 - Requirements: D-001 (History on slot 9), D-003 (a load keeps the page and waits for a press), D-005 and S-005 (slot 9's history and a big delete there), S-002 and S-021 (the gaps T18 left), a new row for the others' selections on slot 9, and a new row for the update notice
 - Read: `docs/DECISIONS.md` D2-011, D2-030, D2-039, D2-040, and D2-041, `docs/API.md` (`welcome`, `presence`, the restore route, and Diagram mode), `docs/DATA-MODEL.md` (the flush rules and restore), `src/segl/diagram.py`, `src/segl/saver.py`, `src/segl/collab.py` (`restore`), `src/segl/app.py` (the restore route), `web/src/diagram/`, `web/src/bar/` (`SeglBar.tsx` and `HistoryControl.tsx`), `web/drawio/js/PostConfig.js`, drawio's `js/diagramly/EditorUi.js` (the embed `load` action, `createLoadMessage`, and `getFileData`), `js/diagramly/P2PCollab.js` (`selectionChangeListener` and its `selectionChange` case), `Graph.prototype.highlightCell` in `js/diagramly/Editor.js`, and the STATUS entries of T17 and T18
