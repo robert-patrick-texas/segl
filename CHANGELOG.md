@@ -4,6 +4,8 @@ Summarized history of changes to source and documents. Newest release first. The
 
 ## Unreleased
 
+## 0.9.0 — 2026-11-28
+
 Slot 9 gets History and restore, and each person sees what the others have selected. A browser that loads the whole diagram again keeps its page, its view, and its selection, and waits for a drag to end. A page left open while segl is updated says to reload.
 
 ### New
